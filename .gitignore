@@ -1,0 +1,6 @@
+# Built place files (build them with `rojo build`)
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+sourcemap.json
