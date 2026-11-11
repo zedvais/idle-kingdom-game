@@ -36,11 +36,6 @@ GameConfig.HoldingMaxLevel = 50
 GameConfig.OfflineRate = 0.5
 GameConfig.OfflineMaxSeconds = 8 * 60 * 60
 
--- Warband: you always fight, plus one soldier per unlocked slot.
-GameConfig.MaxSoldierSlots = 10
-GameConfig.SoldierSlotBaseCost = 2000
-GameConfig.SoldierSlotCostGrowth = 2.5
-
 -- Foes: seconds before a beaten foe can be fought again, and the health
 -- you need before you are allowed to attack.
 GameConfig.FoeCooldownSeconds = 15 * 60
@@ -90,36 +85,68 @@ GameConfig.Holdings = {
 }
 
 ---------------------------------------------------------------------------
--- Warband: soldiers you can hire into your slots
+-- Rarity: every soldier and piece of gear rolls one of these.
+-- chance is a weight (bigger means more common), stats multiplies the
+-- item's attack and defense, and price multiplies its cost.
 ---------------------------------------------------------------------------
 
-GameConfig.Soldiers = {
-	{ id = "militia", name = "Militia", cost = 500, attack = 2, defense = 2 },
-	{ id = "archer", name = "Archer", cost = 4000, attack = 6, defense = 3 },
-	{ id = "knight", name = "Knight", cost = 30000, attack = 12, defense = 14 },
-	{ id = "mage", name = "Battle Mage", cost = 200000, attack = 30, defense = 15 },
+GameConfig.Rarities = {
+	{ id = "Common", chance = 500, stats = 1, price = 1, color = Color3.fromRGB(190, 190, 185) },
+	{ id = "Uncommon", chance = 280, stats = 1.4, price = 1.6, color = Color3.fromRGB(110, 200, 110) },
+	{ id = "Rare", chance = 140, stats = 2, price = 3, color = Color3.fromRGB(90, 150, 240) },
+	{ id = "Epic", chance = 60, stats = 3, price = 6, color = Color3.fromRGB(180, 100, 230) },
+	{ id = "Legendary", chance = 18, stats = 4.5, price = 12, color = Color3.fromRGB(245, 165, 50) },
+	{ id = "Mythic", chance = 2, stats = 7, price = 30, color = Color3.fromRGB(240, 70, 90) },
 }
 
 ---------------------------------------------------------------------------
--- Armory: gear. You and each soldier use one weapon, one armor and one
--- mount, and the best pieces you own are used automatically.
+-- Market: restocks for everyone at the same moment
 ---------------------------------------------------------------------------
 
-GameConfig.Gear = {
-	{ id = "rustysword", slot = "Weapon", name = "Rusty Sword", cost = 300, attack = 1, defense = 0 },
-	{ id = "ironspear", slot = "Weapon", name = "Iron Spear", cost = 2500, attack = 3, defense = 0 },
-	{ id = "longsword", slot = "Weapon", name = "Steel Longsword", cost = 15000, attack = 7, defense = 0 },
-	{ id = "greataxe", slot = "Weapon", name = "Runed Greataxe", cost = 120000, attack = 16, defense = 0 },
-	{ id = "jerkin", slot = "Armor", name = "Padded Jerkin", cost = 300, attack = 0, defense = 1 },
-	{ id = "chainmail", slot = "Armor", name = "Chainmail", cost = 2500, attack = 0, defense = 3 },
-	{ id = "plate", slot = "Armor", name = "Plate Harness", cost = 15000, attack = 0, defense = 7 },
-	{ id = "wyrmscale", slot = "Armor", name = "Wyrmscale Mail", cost = 120000, attack = 0, defense = 16 },
-	{ id = "mule", slot = "Mount", name = "Pack Mule", cost = 1000, attack = 1, defense = 1 },
-	{ id = "warhorse", slot = "Mount", name = "Warhorse", cost = 12000, attack = 4, defense = 4 },
-	{ id = "griffin", slot = "Mount", name = "Griffin", cost = 150000, attack = 11, defense = 11 },
+GameConfig.MarketRestockSeconds = 5 * 60
+GameConfig.MarketSize = 8
+GameConfig.MarketSoldierShare = 0.35 -- share of the stock that is soldiers
+-- Item levels roll from the player's level plus or minus these amounts,
+-- so some items are a goal to level up for.
+GameConfig.MarketLevelBelow = 2
+GameConfig.MarketLevelAbove = 3
+
+-- Selling or releasing gives back this share of the price.
+GameConfig.SellShare = 0.25
+GameConfig.MaxGearOwned = 40
+
+-- Stats and price grow with the item's level.
+GameConfig.ItemStatGrowth = 0.15 -- +15% stats per level
+GameConfig.ItemPriceGrowth = 1.18 -- x1.18 price per level
+
+---------------------------------------------------------------------------
+-- Warband: you always fight, plus one soldier per unlocked slot
+---------------------------------------------------------------------------
+
+GameConfig.MaxSoldierSlots = 10
+GameConfig.SoldierSlotBaseCost = 2000
+GameConfig.SoldierSlotCostGrowth = 2.5
+
+-- Soldier classes. attack and defense are at item level 1, Common.
+GameConfig.SoldierClasses = {
+	{ id = "Militia", attack = 2, defense = 2, price = 400 },
+	{ id = "Archer", attack = 4, defense = 1, price = 500 },
+	{ id = "Knight", attack = 2, defense = 4, price = 550 },
+	{ id = "Battle Mage", attack = 5, defense = 1, price = 650 },
 }
+
+---------------------------------------------------------------------------
+-- Gear: one weapon, one armor and one mount for you and for each soldier.
+-- The best pieces you own are used automatically.
+---------------------------------------------------------------------------
 
 GameConfig.GearSlots = { "Weapon", "Armor", "Mount" }
+
+GameConfig.GearTypes = {
+	Weapon = { attack = 2, defense = 0, price = 250, names = { "Sword", "Spear", "War Axe", "Mace", "Longbow", "Halberd" } },
+	Armor = { attack = 0, defense = 2, price = 250, names = { "Jerkin", "Chainmail", "Brigandine", "Plate Harness", "Scale Mail" } },
+	Mount = { attack = 1, defense = 1, price = 300, names = { "Mule", "Pony", "Warhorse", "Elk", "Griffin" } },
+}
 
 ---------------------------------------------------------------------------
 -- Foes: turn by turn fights that cost stamina
@@ -158,6 +185,27 @@ end
 -- Gold per hour for one holding at `level`.
 function GameConfig.getHoldingIncome(holding, level: number): number
 	return holding.income * level
+end
+
+function GameConfig.getRarity(id: string)
+	for _, rarity in GameConfig.Rarities do
+		if rarity.id == id then
+			return rarity
+		end
+	end
+	return GameConfig.Rarities[1]
+end
+
+-- Attack or defense for an item at `level` with the given rarity.
+function GameConfig.getItemStat(base: number, level: number, rarity): number
+	if base <= 0 then
+		return 0
+	end
+	return math.max(1, math.floor(base * (1 + GameConfig.ItemStatGrowth * (level - 1)) * rarity.stats + 0.5))
+end
+
+function GameConfig.getItemPrice(base: number, level: number, rarity): number
+	return math.floor(base * GameConfig.ItemPriceGrowth ^ (level - 1) * rarity.price)
 end
 
 -- Gold for the next soldier slot when you already have `slots` of them.

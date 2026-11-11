@@ -8,7 +8,7 @@ local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local PlayerData = {}
 
 -- Change this name to wipe everyone's progress (useful during testing).
-local STORE_NAME = "IdleKingdom_v2"
+local STORE_NAME = "IdleKingdom_v3"
 
 local store = nil
 do
@@ -40,8 +40,10 @@ local function newData()
 		quests = {}, -- [questId] = times completed
 		holdings = {}, -- [holdingId] = level
 		soldierSlots = 1,
-		soldiers = {}, -- list of soldier ids
-		gear = {}, -- [gearId] = how many owned
+		soldiers = {}, -- list of soldier items in the warband
+		gear = {}, -- list of owned gear items
+		nextItemId = 1,
+		market = { window = -1, items = {} },
 		foes = {}, -- [foeId] = { health = number, readyAt = os.time() value }
 		lastSeen = 0,
 	}

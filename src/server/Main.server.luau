@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
+local Market = require(script.Parent.Market)
 local PlayerData = require(script.Parent.PlayerData)
 
 local AUTOSAVE_SECONDS = 60
@@ -44,8 +45,6 @@ end
 local skillById = indexById(GameConfig.Skills)
 local questById = indexById(GameConfig.Quests)
 local holdingById = indexById(GameConfig.Holdings)
-local soldierById = indexById(GameConfig.Soldiers)
-local gearById = indexById(GameConfig.Gear)
 local foeById = indexById(GameConfig.Foes)
 
 ---------------------------------------------------------------------------
@@ -61,46 +60,47 @@ local function skillTotal(data, skillId: string): number
 	return (data.skills[skillId] or 0) * skillById[skillId].amount
 end
 
--- Attack and defense from the best gear, one piece per slot for you and
--- for each soldier.
-local function getGearBonus(data): (number, number)
+local function itemPower(item): number
+	return item.attack + item.defense
+end
+
+-- The gear actually in use: the best pieces per slot, one for you and one
+-- for each soldier. Returns attack, defense, and a set of the item ids used.
+local function getGearInUse(data): (number, number, { [string]: boolean })
 	local members = 1 + #data.soldiers
 	local attack, defense = 0, 0
+	local used = {}
 
 	for _, slot in GameConfig.GearSlots do
 		local pieces = {}
-		for _, gear in GameConfig.Gear do
-			if gear.slot == slot then
-				for _ = 1, math.min(data.gear[gear.id] or 0, members) do
-					table.insert(pieces, gear)
-				end
+		for _, item in data.gear do
+			if item.slot == slot then
+				table.insert(pieces, item)
 			end
 		end
 		table.sort(pieces, function(a, b)
-			return a.attack + a.defense > b.attack + b.defense
+			return itemPower(a) > itemPower(b)
 		end)
 		for index = 1, math.min(#pieces, members) do
 			attack += pieces[index].attack
 			defense += pieces[index].defense
+			used[pieces[index].uid] = true
 		end
 	end
 
-	return attack, defense
+	return attack, defense, used
 end
 
 local function getStats(data)
 	local attack = GameConfig.BaseAttack + skillTotal(data, "attack")
 	local defense = GameConfig.BaseDefense + skillTotal(data, "defense")
 
-	for _, soldierId in data.soldiers do
-		local soldier = soldierById[soldierId]
-		if soldier then
-			attack += soldier.attack
-			defense += soldier.defense
-		end
+	for _, soldier in data.soldiers do
+		attack += soldier.attack
+		defense += soldier.defense
 	end
 
-	local gearAttack, gearDefense = getGearBonus(data)
+	local gearAttack, gearDefense = getGearInUse(data)
 
 	local incomePerHour = 0
 	local holdingsOwned = 0
@@ -134,6 +134,13 @@ local function refresh(player: Player)
 	local stats = getStats(data)
 	local now = os.time()
 
+	-- Restock the Market when a new window starts.
+	local window = Market.currentWindow()
+	if data.market.window ~= window then
+		data.market = Market.roll(player.UserId, window, data.level)
+	end
+	local _, _, gearInUse = getGearInUse(data)
+
 	local foes = {}
 	for _, foe in GameConfig.Foes do
 		local record = data.foes[foe.id]
@@ -160,6 +167,9 @@ local function refresh(player: Player)
 		soldierSlots = data.soldierSlots,
 		soldiers = data.soldiers,
 		gear = data.gear,
+		gearInUse = gearInUse,
+		market = data.market.items,
+		marketRestock = Market.secondsUntilRestock(),
 		foes = foes,
 	})
 
@@ -287,48 +297,56 @@ function actions.Slot(player: Player, data)
 	end
 end
 
-function actions.Hire(player: Player, data, id: string)
-	local soldier = soldierById[id]
-	if not soldier then
+-- Buys item number `id` ("1" to "8") from the Market.
+function actions.Buy(player: Player, data, id: string)
+	local index = tonumber(id)
+	local item = index and data.market.items[index]
+	if not item or item.sold then
+		return
+	end
+	if data.level < item.level then
+		sendToast(player, `You need level {item.level} to buy this.`)
+		return
+	end
+	if item.kind == "Soldier" and #data.soldiers >= data.soldierSlots then
+		sendToast(player, "Your warband is full. Release a soldier or unlock a slot.")
+		return
+	end
+	if item.kind == "Gear" and #data.gear >= GameConfig.MaxGearOwned then
+		sendToast(player, "Your armory is full. Sell some gear first.")
+		return
+	end
+	if not spendGold(player, data, item.price) then
 		return
 	end
 
-	-- With a full warband, the new soldier replaces the weakest one.
-	local replaceIndex = nil
-	if #data.soldiers >= data.soldierSlots then
-		local weakestPower = math.huge
-		for index, soldierId in data.soldiers do
-			local other = soldierById[soldierId]
-			local power = if other then other.attack + other.defense else 0
-			if power < weakestPower then
-				weakestPower = power
-				replaceIndex = index
-			end
-		end
-		if not replaceIndex or weakestPower >= soldier.attack + soldier.defense then
-			sendToast(player, "Your warband is full. Unlock another slot first.")
-			return
-		end
-	end
+	item.sold = true
+	local owned = table.clone(item)
+	owned.sold = nil
+	owned.uid = "i" .. data.nextItemId
+	data.nextItemId += 1
 
-	if spendGold(player, data, soldier.cost) then
-		if replaceIndex then
-			data.soldiers[replaceIndex] = id
-			sendToast(player, `A {soldier.name} replaced your weakest soldier.`)
-		else
-			table.insert(data.soldiers, id)
-			sendToast(player, `A {soldier.name} joined your warband.`)
-		end
+	if owned.kind == "Soldier" then
+		table.insert(data.soldiers, owned)
+		sendToast(player, `A {owned.rarity} {owned.name} joined your warband.`)
+	else
+		table.insert(data.gear, owned)
+		sendToast(player, `You bought a {owned.rarity} {owned.name}.`)
 	end
 end
 
-function actions.Gear(player: Player, data, id: string)
-	local gear = gearById[id]
-	if not gear then
-		return
-	end
-	if spendGold(player, data, gear.cost) then
-		data.gear[id] = (data.gear[id] or 0) + 1
+-- Sells a piece of gear or releases a soldier, for part of its price.
+function actions.Sell(player: Player, data, id: string)
+	for _, list in { data.gear, data.soldiers } do
+		for index, item in list do
+			if item.uid == id then
+				table.remove(list, index)
+				local refund = math.floor(item.price * GameConfig.SellShare)
+				data.gold += refund
+				sendToast(player, `{item.rarity} {item.name} gone for {Format.short(refund)} gold.`)
+				return
+			end
+		end
 	end
 end
 

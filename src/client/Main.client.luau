@@ -175,7 +175,7 @@ addCorner(main, 8)
 local pageTitle = makeText(main, UDim2.new(1, -24, 0, 30), UDim2.fromOffset(12, 4), COLOR_HEADER, 20)
 pageTitle.Font = Enum.Font.GothamBold
 
-local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Warband", "Armory", "Foes" }
+local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Armory", "Foes" }
 local railButtons = {}
 local pages = {}
 
@@ -294,37 +294,62 @@ for _, holding in GameConfig.Holdings do
 	end)
 end
 
--- Warband.
+-- Rarity colors, for names shown with rich text.
+local function rarityName(item): string
+	local rarity = GameConfig.getRarity(item.rarity)
+	local color = rarity.color
+	local hex = string.format("#%02X%02X%02X", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
+	return `<font color="{hex}"><b>{item.rarity}</b></font> {item.name}`
+end
+
+-- A row whose text can show rarity colors.
+local function makeItemRow(page: Instance, order: number)
+	local info, button = makeRow(page, order, 52, true)
+	info.RichText = true
+	return { info = info, button = button }
+end
+
+-- Market: a fixed number of rows that are refilled each restock.
+local marketSummary = makeRow(pages.Market, nextOrder(), 50, false)
+local marketRows = {}
+for index = 1, GameConfig.MarketSize do
+	local row = makeItemRow(pages.Market, nextOrder())
+	marketRows[index] = row
+	row.button.Activated:Connect(function()
+		send("Buy", tostring(index))
+	end)
+end
+
+-- Warband: your soldiers, each with a Release button.
 local warbandSummary, slotButton = makeRow(pages.Warband, nextOrder(), 74, true)
 slotButton.Activated:Connect(function()
 	send("Slot")
 end)
-makeHeading(pages.Warband, nextOrder(), "Hire soldiers")
 local soldierRows = {}
-for _, soldier in GameConfig.Soldiers do
-	local info, button = makeRow(pages.Warband, nextOrder(), 52, true)
-	soldierRows[soldier.id] = { info = info, button = button }
-	button.Activated:Connect(function()
-		send("Hire", soldier.id)
+for index = 1, GameConfig.MaxSoldierSlots do
+	local row = makeItemRow(pages.Warband, nextOrder())
+	row.uid = nil
+	soldierRows[index] = row
+	row.button.Activated:Connect(function()
+		if row.uid then
+			send("Sell", row.uid)
+		end
 	end)
 end
 
--- Armory, grouped by gear slot.
-local armoryNote = makeRow(pages.Armory, nextOrder(), 50, false)
-armoryNote.Text = "Your best gear is used automatically: one weapon, one armor and one mount for you and for each soldier."
-armoryNote.TextColor3 = COLOR_DIM
+-- Armory: your gear, each with a Sell button.
+local armorySummary = makeRow(pages.Armory, nextOrder(), 50, false)
+armorySummary.TextColor3 = COLOR_DIM
 local gearRows = {}
-for _, slot in GameConfig.GearSlots do
-	makeHeading(pages.Armory, nextOrder(), slot .. "s")
-	for _, gear in GameConfig.Gear do
-		if gear.slot == slot then
-			local info, button = makeRow(pages.Armory, nextOrder(), 52, true)
-			gearRows[gear.id] = { info = info, button = button }
-			button.Activated:Connect(function()
-				send("Gear", gear.id)
-			end)
+for index = 1, GameConfig.MaxGearOwned do
+	local row = makeItemRow(pages.Armory, nextOrder())
+	row.uid = nil
+	gearRows[index] = row
+	row.button.Activated:Connect(function()
+		if row.uid then
+			send("Sell", row.uid)
 		end
-	end
+	end)
 end
 
 -- Foes, grouped by band.
@@ -355,6 +380,10 @@ local function formatWait(seconds: number): string
 		return `{math.ceil(seconds / 60)}m`
 	end
 	return `{seconds}s`
+end
+
+local function formatClock(seconds: number): string
+	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
 
 local function statText(attack: number, defense: number): string
@@ -440,37 +469,68 @@ local function draw(state)
 		end
 	end
 
-	-- Warband
-	local counts = {}
-	for _, soldierId in state.soldiers do
-		counts[soldierId] = (counts[soldierId] or 0) + 1
-	end
-	local roster = {}
-	for _, soldier in GameConfig.Soldiers do
-		if counts[soldier.id] then
-			table.insert(roster, `{counts[soldier.id]} {soldier.name}`)
+	-- Market
+	marketSummary.Text = `New stock in {formatClock(state.marketRestock)}\nItems roll around your level. Rarer items are stronger and cost more.`
+	for index, row in marketRows do
+		local item = state.market[index]
+		if not item then
+			row.info.Parent.Visible = false
+			continue
+		end
+		row.info.Parent.Visible = true
+		row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}`
+		if item.sold then
+			setButton(row.button, "Sold", false, COLOR_BUY)
+		elseif state.level < item.level then
+			setButton(row.button, `Level {item.level}`, false, COLOR_BUY)
+		else
+			setButton(row.button, `Buy\n{Format.short(item.price)}`, gold >= item.price, COLOR_BUY)
 		end
 	end
-	local rosterText = if #roster > 0 then table.concat(roster, ", ") else "nobody yet"
-	warbandSummary.Text = `You lead the warband.  Soldier slots: {#state.soldiers} / {state.soldierSlots}\n`
-		.. `Soldiers: {rosterText}\nTotal attack {stats.attack}, defense {stats.defense}`
+
+	-- Warband
+	warbandSummary.Text = `You lead the warband, plus {#state.soldiers} / {state.soldierSlots} soldiers.\n`
+		.. `Buy soldiers in the Market. Total attack {stats.attack}, defense {stats.defense}`
 	if state.soldierSlots >= GameConfig.MaxSoldierSlots then
 		setButton(slotButton, "Max slots", false, COLOR_BUY)
 	else
 		local slotCost = GameConfig.getSlotCost(state.soldierSlots)
 		setButton(slotButton, `New slot\n{Format.short(slotCost)}`, gold >= slotCost, COLOR_BUY)
 	end
-	for _, soldier in GameConfig.Soldiers do
-		local row = soldierRows[soldier.id]
-		row.info.Text = `{soldier.name}  (you have {counts[soldier.id] or 0})\n{statText(soldier.attack, soldier.defense)}`
-		setButton(row.button, `Hire\n{Format.short(soldier.cost)}`, gold >= soldier.cost, COLOR_BUY)
+	local soldiers = table.clone(state.soldiers)
+	table.sort(soldiers, function(a, b)
+		return a.attack + a.defense > b.attack + b.defense
+	end)
+	for index, row in soldierRows do
+		local soldier = soldiers[index]
+		row.uid = if soldier then soldier.uid else nil
+		row.info.Parent.Visible = soldier ~= nil
+		if soldier then
+			row.info.Text = `{rarityName(soldier)}  Lv {soldier.level}\n{statText(soldier.attack, soldier.defense)}`
+			setButton(row.button, `Release\n+{Format.short(soldier.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
+		end
 	end
 
 	-- Armory
-	for _, gear in GameConfig.Gear do
-		local row = gearRows[gear.id]
-		row.info.Text = `{gear.name}  (you have {state.gear[gear.id] or 0})\n{statText(gear.attack, gear.defense)}`
-		setButton(row.button, `Buy\n{Format.short(gear.cost)}`, gold >= gear.cost, COLOR_BUY)
+	armorySummary.Text = `Gear {#state.gear} / {GameConfig.MaxGearOwned}. Your best weapon, armor and mount are used automatically, `
+		.. `one each for you and every soldier. Buy gear in the Market.`
+	local gear = table.clone(state.gear)
+	local slotOrder = { Weapon = 1, Armor = 2, Mount = 3 }
+	table.sort(gear, function(a, b)
+		if a.slot ~= b.slot then
+			return (slotOrder[a.slot] or 9) < (slotOrder[b.slot] or 9)
+		end
+		return a.attack + a.defense > b.attack + b.defense
+	end)
+	for index, row in gearRows do
+		local item = gear[index]
+		row.uid = if item then item.uid else nil
+		row.info.Parent.Visible = item ~= nil
+		if item then
+			local status = if state.gearInUse[item.uid] then "In use" else "Spare"
+			row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}   |   {status}`
+			setButton(row.button, `Sell\n+{Format.short(item.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
+		end
 	end
 
 	-- Foes
