@@ -1,7 +1,8 @@
--- Server entry point: runs the whole kingdom game loop.
--- The server owns every rule (gold, costs, battles) so players cannot cheat.
--- Players have no character. They watch their village from a fixed camera and
--- play by tapping buttons, which arrive here through the Action remote.
+-- Server entry point: runs every rule of the game.
+-- The game is played entirely through menus. The client sends a request on
+-- the Action remote ("do this quest", "buy this holding"), the server checks
+-- it and changes the player's data, then sends the new state back.
+-- Never trust numbers from the client: everything is worked out here.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -10,7 +11,6 @@ local RunService = game:GetService("RunService")
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local PlayerData = require(script.Parent.PlayerData)
-local PlotBuilder = require(script.Parent.PlotBuilder)
 
 local AUTOSAVE_SECONDS = 60
 local MAX_ACTIONS_PER_SECOND = 25
@@ -29,29 +29,27 @@ stateRemote.Name = "State"
 stateRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
--- Where each player's village goes. Two rows of four plots.
-local PLOT_ORIGINS = {}
-for row = 0, 1 do
-	for column = 0, 3 do
-		table.insert(PLOT_ORIGINS, Vector3.new(-180 + column * 120, 0, -125 + row * 250))
+local sessions = {} -- [Player] = { data, canSave, actionCount, regen }
+local random = Random.new()
+
+-- Quick lookups from an id to its settings.
+local function indexById(list)
+	local map = {}
+	for _, item in list do
+		map[item.id] = item
 	end
+	return map
 end
 
-local sessions = {} -- [Player] = { data, canSave, plot, slot, attackReadyAt, actionCount }
-local usedSlots = {} -- [slot index] = Player
-
-local buildingById = {}
-for _, building in GameConfig.Buildings do
-	buildingById[building.id] = building
-end
-
-local unitById = {}
-for _, unit in GameConfig.Units do
-	unitById[unit.id] = unit
-end
+local skillById = indexById(GameConfig.Skills)
+local questById = indexById(GameConfig.Quests)
+local holdingById = indexById(GameConfig.Holdings)
+local soldierById = indexById(GameConfig.Soldiers)
+local gearById = indexById(GameConfig.Gear)
+local foeById = indexById(GameConfig.Foes)
 
 ---------------------------------------------------------------------------
--- Small helpers
+-- Working out a player's numbers
 ---------------------------------------------------------------------------
 
 local function sendToast(player: Player, text: string)
@@ -59,236 +57,334 @@ local function sendToast(player: Player, text: string)
 	player:SetAttribute("ToastId", (player:GetAttribute("ToastId") or 0) + 1)
 end
 
-local function getEntry(data, buildingId: string)
-	local entry = data.buildings[buildingId]
-	if not entry then
-		entry = { level = 0, steward = false, stored = 0 }
-		data.buildings[buildingId] = entry
-	end
-	return entry
+local function skillTotal(data, skillId: string): number
+	return (data.skills[skillId] or 0) * skillById[skillId].amount
 end
 
-local function getIncome(data, building): number
-	local entry = getEntry(data, building.id)
-	return GameConfig.getBaseIncome(building, entry.level) * GameConfig.getLandMultiplier(data.landsConquered)
-end
+-- Attack and defense from the best gear, one piece per slot for you and
+-- for each soldier.
+local function getGearBonus(data): (number, number)
+	local members = 1 + #data.soldiers
+	local attack, defense = 0, 0
 
-local function getTotalIncome(data): number
-	local total = 0
-	for _, building in GameConfig.Buildings do
-		total += getIncome(data, building)
-	end
-	return total
-end
-
-local function getArmyPower(data): number
-	local power = 0
-	for _, unit in GameConfig.Units do
-		power += (data.units[unit.id] or 0) * unit.power
-	end
-	return power
-end
-
-local function claimSlot(player: Player): number
-	for slot = 1, #PLOT_ORIGINS do
-		if not usedSlots[slot] then
-			usedSlots[slot] = player
-			return slot
+	for _, slot in GameConfig.GearSlots do
+		local pieces = {}
+		for _, gear in GameConfig.Gear do
+			if gear.slot == slot then
+				for _ = 1, math.min(data.gear[gear.id] or 0, members) do
+					table.insert(pieces, gear)
+				end
+			end
+		end
+		table.sort(pieces, function(a, b)
+			return a.attack + a.defense > b.attack + b.defense
+		end)
+		for index = 1, math.min(#pieces, members) do
+			attack += pieces[index].attack
+			defense += pieces[index].defense
 		end
 	end
-	-- Server is fuller than the number of plots. Share the first plot spot.
-	return 1
+
+	return attack, defense
 end
 
----------------------------------------------------------------------------
--- Showing the current state: signs in the village and the player's menus
----------------------------------------------------------------------------
+local function getStats(data)
+	local attack = GameConfig.BaseAttack + skillTotal(data, "attack")
+	local defense = GameConfig.BaseDefense + skillTotal(data, "defense")
 
+	for _, soldierId in data.soldiers do
+		local soldier = soldierById[soldierId]
+		if soldier then
+			attack += soldier.attack
+			defense += soldier.defense
+		end
+	end
+
+	local gearAttack, gearDefense = getGearBonus(data)
+
+	local incomePerHour = 0
+	local holdingsOwned = 0
+	for _, holding in GameConfig.Holdings do
+		local level = data.holdings[holding.id] or 0
+		if level > 0 then
+			holdingsOwned += 1
+			incomePerHour += GameConfig.getHoldingIncome(holding, level)
+		end
+	end
+
+	return {
+		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy"),
+		maxStamina = GameConfig.BaseMaxStamina + skillTotal(data, "stamina"),
+		maxHealth = GameConfig.BaseMaxHealth + skillTotal(data, "health"),
+		attack = attack + gearAttack,
+		defense = defense + gearDefense,
+		holdingSlots = GameConfig.BaseHoldingSlots + skillTotal(data, "slots"),
+		holdingsOwned = holdingsOwned,
+		incomePerHour = incomePerHour,
+	}
+end
+
+-- Sends the player everything their menus need to draw.
 local function refresh(player: Player)
 	local session = sessions[player]
 	if not session then
 		return
 	end
 	local data = session.data
-	local plot = session.plot
+	local stats = getStats(data)
+	local now = os.time()
 
-	-- Everything the client needs to draw its menus, already worked out.
-	local state = {
-		gold = data.gold,
-		goldPerSecond = getTotalIncome(data),
-		armyPower = getArmyPower(data),
-		landsConquered = data.landsConquered,
-		attackWait = math.max(0, math.ceil(session.attackReadyAt - os.clock())),
-		plotOrigin = plot.origin,
-		buildings = {},
-		units = {},
-	}
-
-	for _, building in GameConfig.Buildings do
-		local view = plot.buildings[building.id]
-		local entry = getEntry(data, building.id)
-		local locked = data.landsConquered < building.requiresLands
-		local income = getIncome(data, building)
-
-		state.buildings[building.id] = {
-			level = entry.level,
-			steward = entry.steward,
-			stored = entry.stored,
-			capacity = income * GameConfig.StorageSeconds,
-			income = income,
-			upgradeCost = GameConfig.getUpgradeCost(building, entry.level),
-			stewardCost = GameConfig.getStewardCost(building),
-			locked = locked,
+	local foes = {}
+	for _, foe in GameConfig.Foes do
+		local record = data.foes[foe.id]
+		foes[foe.id] = {
+			health = if record then record.health else foe.health,
+			wait = if record then math.max(0, record.readyAt - now) else 0,
 		}
-
-		if locked then
-			view.label.Text = `{building.name} (locked)`
-			view.block.Transparency = 0.8
-		elseif entry.level == 0 then
-			view.label.Text = building.name
-			view.block.Transparency = 0.6
-		else
-			view.label.Text = `{building.name}  Lv {entry.level}`
-			view.block.Transparency = 0
-		end
 	end
 
-	for _, unit in GameConfig.Units do
-		local count = data.units[unit.id] or 0
-		state.units[unit.id] = count
-		plot.units[unit.id].label.Text = `{unit.name} x{Format.short(count)}`
-	end
-
-	local nextLand = GameConfig.Lands[data.landsConquered + 1]
-	plot.war.label.Text = if nextLand then `Next: {nextLand.name}` else "All conquered!"
-
-	stateRemote:FireClient(player, state)
+	stateRemote:FireClient(player, {
+		gold = data.gold,
+		level = data.level,
+		xp = data.xp,
+		xpNeeded = GameConfig.getXpNeeded(data.level),
+		skillPoints = data.skillPoints,
+		renown = data.renown,
+		energy = data.energy,
+		stamina = data.stamina,
+		health = data.health,
+		stats = stats,
+		skills = data.skills,
+		quests = data.quests,
+		holdings = data.holdings,
+		soldierSlots = data.soldierSlots,
+		soldiers = data.soldiers,
+		gear = data.gear,
+		foes = foes,
+	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
-	local goldStat = leaderstats and leaderstats:FindFirstChild("Gold")
-	if goldStat then
-		goldStat.Value = Format.short(data.gold)
+	if leaderstats then
+		local levelStat = leaderstats:FindFirstChild("Level")
+		local renownStat = leaderstats:FindFirstChild("Renown")
+		if levelStat then
+			levelStat.Value = data.level
+		end
+		if renownStat then
+			renownStat.Value = data.renown
+		end
 	end
+end
+
+local function addXp(player: Player, data, amount: number)
+	data.xp += amount
+	local leveled = false
+	while data.xp >= GameConfig.getXpNeeded(data.level) do
+		data.xp -= GameConfig.getXpNeeded(data.level)
+		data.level += 1
+		data.skillPoints += GameConfig.SkillPointsPerLevel
+		leveled = true
+	end
+	if leveled then
+		-- A level up refills everything.
+		local stats = getStats(data)
+		data.energy = math.max(data.energy, stats.maxEnergy)
+		data.stamina = math.max(data.stamina, stats.maxStamina)
+		data.health = math.max(data.health, stats.maxHealth)
+		sendToast(player, `Level {data.level}! You gained {GameConfig.SkillPointsPerLevel} skill points and a full refill.`)
+	end
+end
+
+local function spendGold(player: Player, data, cost: number): boolean
+	if data.gold < cost then
+		sendToast(player, `Not enough gold. You need {Format.short(cost)}.`)
+		return false
+	end
+	data.gold -= cost
+	return true
 end
 
 ---------------------------------------------------------------------------
 -- Player actions
 ---------------------------------------------------------------------------
 
-local function collect(player: Player, buildingId: string)
-	local session = sessions[player]
-	if not session then
+local actions = {}
+
+function actions.Quest(player: Player, data, id: string)
+	local quest = questById[id]
+	if not quest or data.level < quest.level then
 		return
 	end
-	local entry = getEntry(session.data, buildingId)
-	if entry.stored > 0 then
-		session.data.gold += entry.stored
-		entry.stored = 0
-		refresh(player)
+	if data.energy < quest.energy then
+		sendToast(player, "Not enough energy. It refills over time.")
+		return
+	end
+
+	local completions = data.quests[id] or 0
+	local rankBefore = GameConfig.getMasteryRank(completions)
+
+	data.energy -= quest.energy
+	data.gold += GameConfig.getQuestGold(quest, completions)
+	data.quests[id] = completions + 1
+
+	if GameConfig.getMasteryRank(completions + 1) > rankBefore then
+		sendToast(player, `Mastery rank up! {quest.name} now pays more gold.`)
+	end
+	addXp(player, data, quest.xp)
+end
+
+function actions.Holding(player: Player, data, id: string)
+	local holding = holdingById[id]
+	if not holding or data.level < holding.level then
+		return
+	end
+
+	local level = data.holdings[id] or 0
+	if level >= GameConfig.HoldingMaxLevel then
+		return
+	end
+	if level == 0 then
+		local stats = getStats(data)
+		if stats.holdingsOwned >= stats.holdingSlots then
+			sendToast(player, "No free holding slot. Spend skill points on Holding Slots.")
+			return
+		end
+	end
+
+	if spendGold(player, data, GameConfig.getHoldingCost(holding, level)) then
+		data.holdings[id] = level + 1
+		if level == 0 then
+			sendToast(player, `You now own the {holding.name}.`)
+		end
 	end
 end
 
-local function upgrade(player: Player, building)
-	local session = sessions[player]
-	if not session then
+function actions.Skill(player: Player, data, id: string)
+	local skill = skillById[id]
+	if not skill then
 		return
 	end
-	local data = session.data
-	if data.landsConquered < building.requiresLands then
-		return
-	end
-
-	collect(player, building.id)
-
-	local entry = getEntry(data, building.id)
-	local cost = GameConfig.getUpgradeCost(building, entry.level)
-	if data.gold < cost then
-		sendToast(player, `Not enough gold. You need {Format.short(cost)}.`)
+	if data.skillPoints < skill.cost then
+		sendToast(player, "Not enough skill points. Level up to earn more.")
 		return
 	end
 
-	data.gold -= cost
-	entry.level += 1
-	if entry.level == 1 then
-		sendToast(player, `{building.name} built!`)
-	elseif table.find(GameConfig.MilestoneLevels, entry.level) then
-		sendToast(player, `{building.name} reached level {entry.level}. Its income doubled!`)
+	data.skillPoints -= skill.cost
+	data.skills[id] = (data.skills[id] or 0) + 1
+
+	-- Raising a maximum also hands over the new points right away.
+	if id == "energy" or id == "stamina" or id == "health" then
+		data[id] += skill.amount
 	end
-	refresh(player)
 end
 
-local function hireSteward(player: Player, building)
-	local session = sessions[player]
-	if not session then
+function actions.Slot(player: Player, data)
+	if data.soldierSlots >= GameConfig.MaxSoldierSlots then
 		return
 	end
-	local data = session.data
-	local entry = getEntry(data, building.id)
-	if entry.level == 0 or entry.steward then
-		return
+	if spendGold(player, data, GameConfig.getSlotCost(data.soldierSlots)) then
+		data.soldierSlots += 1
 	end
-
-	collect(player, building.id)
-
-	local cost = GameConfig.getStewardCost(building)
-	if data.gold < cost then
-		sendToast(player, `Not enough gold. You need {Format.short(cost)}.`)
-		return
-	end
-
-	data.gold -= cost
-	entry.steward = true
-	sendToast(player, `A steward now runs the {building.name}.`)
-	refresh(player)
 end
 
-local function recruit(player: Player, unit, amount: number)
-	local session = sessions[player]
-	if not session then
-		return
-	end
-	local data = session.data
-	local cost = unit.cost * amount
-	if data.gold < cost then
-		sendToast(player, `Not enough gold. You need {Format.short(cost)}.`)
+function actions.Hire(player: Player, data, id: string)
+	local soldier = soldierById[id]
+	if not soldier then
 		return
 	end
 
-	data.gold -= cost
-	data.units[unit.id] = (data.units[unit.id] or 0) + amount
-	refresh(player)
+	-- With a full warband, the new soldier replaces the weakest one.
+	local replaceIndex = nil
+	if #data.soldiers >= data.soldierSlots then
+		local weakestPower = math.huge
+		for index, soldierId in data.soldiers do
+			local other = soldierById[soldierId]
+			local power = if other then other.attack + other.defense else 0
+			if power < weakestPower then
+				weakestPower = power
+				replaceIndex = index
+			end
+		end
+		if not replaceIndex or weakestPower >= soldier.attack + soldier.defense then
+			sendToast(player, "Your warband is full. Unlock another slot first.")
+			return
+		end
+	end
+
+	if spendGold(player, data, soldier.cost) then
+		if replaceIndex then
+			data.soldiers[replaceIndex] = id
+			sendToast(player, `A {soldier.name} replaced your weakest soldier.`)
+		else
+			table.insert(data.soldiers, id)
+			sendToast(player, `A {soldier.name} joined your warband.`)
+		end
+	end
 end
 
-local function attack(player: Player)
-	local session = sessions[player]
-	if not session then
+function actions.Gear(player: Player, data, id: string)
+	local gear = gearById[id]
+	if not gear then
 		return
 	end
-	local data = session.data
-	local land = GameConfig.Lands[data.landsConquered + 1]
-	if not land or os.clock() < session.attackReadyAt then
-		return
+	if spendGold(player, data, gear.cost) then
+		data.gear[id] = (data.gear[id] or 0) + 1
 	end
-
-	local power = getArmyPower(data)
-	if power >= land.power then
-		data.landsConquered += 1
-		sendToast(player, `Victory! {land.name} is yours. Gold income +{math.floor(land.bonus * 100)}%.`)
-	else
-		session.attackReadyAt = os.clock() + GameConfig.AttackCooldownSeconds
-		sendToast(player, `Defeat at {land.name}. You need {Format.short(land.power)} power and have {Format.short(power)}.`)
-	end
-	refresh(player)
 end
 
----------------------------------------------------------------------------
--- Joining and leaving
----------------------------------------------------------------------------
+function actions.Fight(player: Player, data, id: string)
+	local foe = foeById[id]
+	if not foe or data.level < foe.level then
+		return
+	end
 
--- The client asks for something. Never trust what it sends: check everything.
-actionRemote.OnServerEvent:Connect(function(player: Player, action, id, amount)
+	local now = os.time()
+	local record = data.foes[id]
+	if not record then
+		record = { health = foe.health, readyAt = 0 }
+		data.foes[id] = record
+	end
+
+	if record.readyAt > now then
+		sendToast(player, `{foe.name} is in hiding. Come back later.`)
+		return
+	end
+	if data.stamina < 1 then
+		sendToast(player, "Not enough stamina. It refills over time.")
+		return
+	end
+	if data.health < GameConfig.MinHealthToFight then
+		sendToast(player, `You are too wounded. Rest until you have {GameConfig.MinHealthToFight} health.`)
+		return
+	end
+
+	local stats = getStats(data)
+	data.stamina -= 1
+
+	local damage = math.max(1, math.floor((stats.attack - foe.defense * 0.5) * random:NextNumber(0.85, 1.15)))
+	record.health -= damage
+
+	if record.health <= 0 then
+		record.health = foe.health
+		record.readyAt = now + GameConfig.FoeCooldownSeconds
+		data.gold += foe.gold
+		data.renown += foe.renown
+		sendToast(player, `{foe.name} is defeated! +{Format.short(foe.gold)} gold, +{foe.xp} XP, +{foe.renown} renown.`)
+		addXp(player, data, foe.xp)
+		return
+	end
+
+	local hurt = math.max(1, math.floor((foe.attack - stats.defense * 0.5) * random:NextNumber(0.85, 1.15)))
+	data.health = math.max(0, data.health - hurt)
+	sendToast(player, `You hit for {damage}. {foe.name} hits back for {hurt}.`)
+end
+
+actionRemote.OnServerEvent:Connect(function(player: Player, action, id)
 	local session = sessions[player]
 	if not session or type(action) ~= "string" then
+		return
+	end
+	if id ~= nil and type(id) ~= "string" then
 		return
 	end
 
@@ -298,41 +394,31 @@ actionRemote.OnServerEvent:Connect(function(player: Player, action, id, amount)
 		return
 	end
 
-	if action == "Attack" then
-		attack(player)
-		return
-	end
-
-	if type(id) ~= "string" then
-		return
-	end
-
-	local building = buildingById[id]
-	local unit = unitById[id]
-	if action == "Collect" and building then
-		collect(player, building.id)
-	elseif action == "Upgrade" and building then
-		upgrade(player, building)
-	elseif action == "Steward" and building then
-		hireSteward(player, building)
-	elseif action == "Recruit" and unit then
-		recruit(player, unit, if amount == 10 then 10 else 1)
+	local handler = actions[action]
+	if handler then
+		handler(player, session.data, id or "")
+		refresh(player)
 	end
 end)
 
--- Gold earned by stewarded buildings while the player was away.
-local function grantOfflineGold(player: Player, data)
+---------------------------------------------------------------------------
+-- Joining and leaving
+---------------------------------------------------------------------------
+
+-- What the player earned and regained while they were away.
+local function applyTimeAway(player: Player, data)
 	if data.lastSeen <= 0 then
 		return
 	end
-	local seconds = math.clamp(os.time() - data.lastSeen, 0, GameConfig.OfflineMaxSeconds)
-	local perSecond = 0
-	for _, building in GameConfig.Buildings do
-		if getEntry(data, building.id).steward then
-			perSecond += getIncome(data, building)
-		end
-	end
-	local earned = math.floor(perSecond * GameConfig.OfflineRate * seconds)
+	local seconds = math.max(0, os.time() - data.lastSeen)
+	local stats = getStats(data)
+
+	data.energy = math.max(data.energy, math.min(stats.maxEnergy, data.energy + math.floor(seconds / GameConfig.EnergyRegenSeconds)))
+	data.stamina = math.max(data.stamina, math.min(stats.maxStamina, data.stamina + math.floor(seconds / GameConfig.StaminaRegenSeconds)))
+	data.health = math.max(data.health, math.min(stats.maxHealth, data.health + math.floor(seconds / GameConfig.HealthRegenSeconds)))
+
+	local paidSeconds = math.min(seconds, GameConfig.OfflineMaxSeconds)
+	local earned = math.floor(stats.incomePerHour / 3600 * paidSeconds * GameConfig.OfflineRate)
 	if earned > 0 then
 		data.gold += earned
 		player:SetAttribute("OfflineGold", earned)
@@ -342,10 +428,13 @@ end
 local function onPlayerAdded(player: Player)
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
-	local goldStat = Instance.new("StringValue")
-	goldStat.Name = "Gold"
-	goldStat.Value = "0"
-	goldStat.Parent = leaderstats
+	local levelStat = Instance.new("IntValue")
+	levelStat.Name = "Level"
+	levelStat.Value = 1
+	levelStat.Parent = leaderstats
+	local renownStat = Instance.new("IntValue")
+	renownStat.Name = "Renown"
+	renownStat.Parent = leaderstats
 	leaderstats.Parent = player
 
 	local data, canSave = PlayerData.load(player)
@@ -356,20 +445,14 @@ local function onPlayerAdded(player: Player)
 		sendToast(player, "Could not load your save. Progress in this visit will not be kept.")
 	end
 
-	grantOfflineGold(player, data)
-
-	local slot = claimSlot(player)
-	local plot = PlotBuilder.build(PLOT_ORIGINS[slot], player.DisplayName)
+	applyTimeAway(player, data)
 
 	sessions[player] = {
 		data = data,
 		canSave = canSave,
-		plot = plot,
-		slot = slot,
-		attackReadyAt = 0,
 		actionCount = 0,
+		regen = { energy = 0, stamina = 0, health = 0 },
 	}
-
 	refresh(player)
 end
 
@@ -379,13 +462,8 @@ local function onPlayerRemoving(player: Player)
 		return
 	end
 	sessions[player] = nil
-
 	if session.canSave then
 		PlayerData.save(player, session.data)
-	end
-	session.plot.model:Destroy()
-	if usedSlots[session.slot] == player then
-		usedSlots[session.slot] = nil
 	end
 end
 
@@ -406,8 +484,22 @@ game:BindToClose(function()
 end)
 
 ---------------------------------------------------------------------------
--- The idle loop: once a second, every building earns gold
+-- The idle loop: once a second, holdings pay out and bars refill
 ---------------------------------------------------------------------------
+
+-- Adds one point to a bar every `seconds` ticks, up to its maximum.
+local function regenerate(session, key: string, seconds: number, maximum: number)
+	local data = session.data
+	if data[key] >= maximum then
+		session.regen[key] = 0
+		return
+	end
+	session.regen[key] += 1
+	if session.regen[key] >= seconds then
+		session.regen[key] = 0
+		data[key] += 1
+	end
+end
 
 task.spawn(function()
 	while true do
@@ -415,18 +507,13 @@ task.spawn(function()
 		for player, session in sessions do
 			session.actionCount = 0
 			local data = session.data
-			for _, building in GameConfig.Buildings do
-				local entry = getEntry(data, building.id)
-				if entry.level > 0 then
-					local income = getIncome(data, building)
-					if entry.steward then
-						data.gold += income + entry.stored
-						entry.stored = 0
-					else
-						entry.stored = math.min(entry.stored + income, income * GameConfig.StorageSeconds)
-					end
-				end
-			end
+			local stats = getStats(data)
+
+			data.gold += stats.incomePerHour / 3600
+			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
+			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)
+			regenerate(session, "health", GameConfig.HealthRegenSeconds, stats.maxHealth)
+
 			refresh(player)
 		end
 	end

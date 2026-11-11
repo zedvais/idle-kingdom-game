@@ -20,36 +20,8 @@
       }
     },
     "Workspace": {
-      "Baseplate": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "Size": [
-            512,
-            4,
-            512
-          ],
-          "Position": [
-            0,
-            -2,
-            0
-          ],
-          "Color": [
-            0.35,
-            0.55,
-            0.3
-          ],
-          "Material": "Grass"
-        }
-      },
       "$properties": {
         "StreamingEnabled": false
-      }
-    },
-    "Lighting": {
-      "$properties": {
-        "ClockTime": 14,
-        "Brightness": 2
       }
     }
   }

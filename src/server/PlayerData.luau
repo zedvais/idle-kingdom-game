@@ -1,4 +1,4 @@
--- Loads and saves each player's kingdom with Roblox DataStores.
+-- Loads and saves each player's progress with Roblox DataStores.
 
 local DataStoreService = game:GetService("DataStoreService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,7 +8,7 @@ local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local PlayerData = {}
 
 -- Change this name to wipe everyone's progress (useful during testing).
-local STORE_NAME = "IdleKingdom_v1"
+local STORE_NAME = "IdleKingdom_v2"
 
 local store = nil
 do
@@ -29,42 +29,35 @@ end
 local function newData()
 	return {
 		gold = GameConfig.StartingGold,
-		buildings = {}, -- [buildingId] = { level, steward, stored }
-		units = {}, -- [unitId] = count
-		landsConquered = 0,
+		level = 1,
+		xp = 0,
+		skillPoints = 0,
+		renown = 0,
+		energy = GameConfig.BaseMaxEnergy,
+		stamina = GameConfig.BaseMaxStamina,
+		health = GameConfig.BaseMaxHealth,
+		skills = {}, -- [skillId] = times bought
+		quests = {}, -- [questId] = times completed
+		holdings = {}, -- [holdingId] = level
+		soldierSlots = 1,
+		soldiers = {}, -- list of soldier ids
+		gear = {}, -- [gearId] = how many owned
+		foes = {}, -- [foeId] = { health = number, readyAt = os.time() value }
 		lastSeen = 0,
 	}
 end
 
--- Fills in anything missing so old saves keep working when the game changes.
+-- Fills in anything missing or broken so old saves keep working when the
+-- game changes.
 local function repair(data)
 	local fresh = newData()
 	if type(data) ~= "table" then
 		return fresh
 	end
-	if type(data.gold) ~= "number" then
-		data.gold = fresh.gold
-	end
-	if type(data.buildings) ~= "table" then
-		data.buildings = {}
-	end
-	if type(data.units) ~= "table" then
-		data.units = {}
-	end
-	if type(data.landsConquered) ~= "number" then
-		data.landsConquered = 0
-	end
-	if type(data.lastSeen) ~= "number" then
-		data.lastSeen = 0
-	end
-	for _, entry in data.buildings do
-		if type(entry.level) ~= "number" then
-			entry.level = 0
+	for key, default in fresh do
+		if type(data[key]) ~= type(default) then
+			data[key] = default
 		end
-		if type(entry.stored) ~= "number" then
-			entry.stored = 0
-		end
-		entry.steward = entry.steward == true
 	end
 	return data
 end

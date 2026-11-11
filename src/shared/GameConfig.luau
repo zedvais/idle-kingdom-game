@@ -1,88 +1,168 @@
 -- Shared settings that both the server and the client read.
--- Every number here comes from the game design doc and is meant to be tuned.
+-- Every number here is a starting value meant to be tuned by play testing.
 
 local GameConfig = {}
 
 GameConfig.GameName = "Idle Kingdom"
 
--- Gold a brand new player starts with. Enough to build the Farm.
-GameConfig.StartingGold = 15
+---------------------------------------------------------------------------
+-- Starting values and timers
+---------------------------------------------------------------------------
 
--- Each building level costs this much more than the one before it.
-GameConfig.UpgradeCostGrowth = 1.15
+GameConfig.StartingGold = 300
+GameConfig.BaseMaxEnergy = 20
+GameConfig.BaseMaxStamina = 5
+GameConfig.BaseMaxHealth = 100
+GameConfig.BaseAttack = 3
+GameConfig.BaseDefense = 3
+GameConfig.BaseHoldingSlots = 3
 
--- Income doubles each time a building reaches one of these levels.
-GameConfig.MilestoneLevels = { 25, 50, 100 }
+-- Seconds to regain one point.
+GameConfig.EnergyRegenSeconds = 12
+GameConfig.StaminaRegenSeconds = 20
+GameConfig.HealthRegenSeconds = 5
 
--- A steward costs this many times the building's build cost.
-GameConfig.StewardCostMultiplier = 10
+GameConfig.SkillPointsPerLevel = 3
 
--- Without a steward a building holds this many seconds of gold, then stops.
-GameConfig.StorageSeconds = 60
+-- Doing a quest this many times earns one mastery rank. Each rank adds
+-- MasteryGoldBonus to that quest's gold (0.1 means +10%).
+GameConfig.MasteryPerRank = 25
+GameConfig.MaxMasteryRanks = 3
+GameConfig.MasteryGoldBonus = 0.1
 
--- While the player is away, stewarded buildings earn at this share of their
--- normal rate, for at most this many seconds.
+-- Holdings: each level costs more, and offline they earn at a reduced rate.
+GameConfig.HoldingCostGrowth = 1.25
+GameConfig.HoldingMaxLevel = 50
 GameConfig.OfflineRate = 0.5
-GameConfig.OfflineMaxSeconds = 2 * 60 * 60
+GameConfig.OfflineMaxSeconds = 8 * 60 * 60
 
--- Seconds a player waits before attacking again after a lost battle.
-GameConfig.AttackCooldownSeconds = 30
+-- Warband: you always fight, plus one soldier per unlocked slot.
+GameConfig.MaxSoldierSlots = 10
+GameConfig.SoldierSlotBaseCost = 2000
+GameConfig.SoldierSlotCostGrowth = 2.5
 
--- requiresLands = how many lands must be conquered before it can be built.
-GameConfig.Buildings = {
-	{ id = "Farm", name = "Farm", cost = 15, income = 1, requiresLands = 0, color = Color3.fromRGB(214, 181, 92) },
-	{ id = "LumberMill", name = "Lumber Mill", cost = 150, income = 8, requiresLands = 0, color = Color3.fromRGB(133, 94, 56) },
-	{ id = "Blacksmith", name = "Blacksmith", cost = 1500, income = 60, requiresLands = 0, color = Color3.fromRGB(90, 90, 100) },
-	{ id = "Tavern", name = "Tavern", cost = 15000, income = 450, requiresLands = 1, color = Color3.fromRGB(170, 85, 60) },
-	{ id = "Mine", name = "Mine", cost = 200000, income = 4000, requiresLands = 2, color = Color3.fromRGB(70, 110, 140) },
-	{ id = "Market", name = "Market", cost = 3000000, income = 40000, requiresLands = 3, color = Color3.fromRGB(150, 70, 150) },
+-- Foes: seconds before a beaten foe can be fought again, and the health
+-- you need before you are allowed to attack.
+GameConfig.FoeCooldownSeconds = 15 * 60
+GameConfig.MinHealthToFight = 20
+
+---------------------------------------------------------------------------
+-- Skills: what one skill point buys
+---------------------------------------------------------------------------
+
+GameConfig.Skills = {
+	{ id = "energy", name = "Max Energy", amount = 2, cost = 1, note = "+2 max energy" },
+	{ id = "stamina", name = "Max Stamina", amount = 1, cost = 1, note = "+1 max stamina" },
+	{ id = "health", name = "Max Health", amount = 10, cost = 1, note = "+10 max health" },
+	{ id = "attack", name = "Attack", amount = 1, cost = 1, note = "+1 attack" },
+	{ id = "defense", name = "Defense", amount = 1, cost = 1, note = "+1 defense" },
+	{ id = "slots", name = "Holding Slots", amount = 1, cost = 3, note = "+1 holding you can own" },
 }
 
-GameConfig.Units = {
-	{ id = "Militia", name = "Militia", cost = 100, power = 5, color = Color3.fromRGB(160, 140, 110) },
-	{ id = "Archer", name = "Archer", cost = 1000, power = 40, color = Color3.fromRGB(80, 140, 80) },
-	{ id = "Knight", name = "Knight", cost = 10000, power = 300, color = Color3.fromRGB(170, 170, 185) },
-	{ id = "Mage", name = "Mage", cost = 100000, power = 2500, color = Color3.fromRGB(95, 80, 190) },
+---------------------------------------------------------------------------
+-- Quests: spend energy, earn gold and experience
+---------------------------------------------------------------------------
+
+GameConfig.Quests = {
+	{ id = "patrol", region = "Oakvale", name = "Patrol the Village Road", level = 1, energy = 1, gold = 40, xp = 2 },
+	{ id = "chickens", region = "Oakvale", name = "Chase Off Chicken Thieves", level = 2, energy = 2, gold = 90, xp = 4 },
+	{ id = "graincart", region = "Oakvale", name = "Guard the Grain Cart", level = 3, energy = 3, gold = 150, xp = 7 },
+	{ id = "cellar", region = "Oakvale", name = "Clear Rats from the Cellar", level = 4, energy = 3, gold = 190, xp = 8 },
+	{ id = "taxman", region = "Oakvale", name = "Escort the Tax Collector", level = 5, energy = 4, gold = 270, xp = 11 },
+	{ id = "boar", region = "Oakvale", name = "Hunt the Marsh Boar", level = 6, energy = 5, gold = 370, xp = 14 },
+	{ id = "fort", region = "Greywatch", name = "Scout the Border Fort", level = 8, energy = 6, gold = 520, xp = 18 },
+	{ id = "caravan", region = "Greywatch", name = "Ambush a Smuggler Caravan", level = 10, energy = 7, gold = 700, xp = 23 },
+	{ id = "blockade", region = "Greywatch", name = "Break the Toll Blockade", level = 12, energy = 8, gold = 920, xp = 28 },
+	{ id = "hideout", region = "Greywatch", name = "Storm the Outlaw Hideout", level = 15, energy = 10, gold = 1400, xp = 38 },
 }
 
--- Lands are conquered in this order. bonus 0.25 means +25% gold forever.
-GameConfig.Lands = {
-	{ name = "Bandit Camp", power = 50, bonus = 0.25 },
-	{ name = "Wolfwood", power = 500, bonus = 0.25 },
-	{ name = "Rival Keep", power = 5000, bonus = 0.25 },
-	{ name = "Frozen Pass", power = 50000, bonus = 0.5 },
-	{ name = "Dragon's Roost", power = 500000, bonus = 1 },
+---------------------------------------------------------------------------
+-- Holdings: buy once, upgrade, earn gold every hour
+---------------------------------------------------------------------------
+
+GameConfig.Holdings = {
+	{ id = "field", name = "Wheat Field", level = 1, cost = 400, income = 360 },
+	{ id = "mill", name = "Water Mill", level = 3, cost = 1800, income = 1300 },
+	{ id = "tavern", name = "Roadside Tavern", level = 6, cost = 7500, income = 4800 },
+	{ id = "smithy", name = "Smithy", level = 10, cost = 28000, income = 16000 },
+	{ id = "quarry", name = "Stone Quarry", level = 15, cost = 100000, income = 52000 },
+	{ id = "market", name = "Market Hall", level = 20, cost = 380000, income = 180000 },
 }
 
--- Gold needed to go from `level` to `level + 1`. Level 0 means not built yet.
-function GameConfig.getUpgradeCost(building, level: number): number
-	return math.floor(building.cost * GameConfig.UpgradeCostGrowth ^ level)
+---------------------------------------------------------------------------
+-- Warband: soldiers you can hire into your slots
+---------------------------------------------------------------------------
+
+GameConfig.Soldiers = {
+	{ id = "militia", name = "Militia", cost = 500, attack = 2, defense = 2 },
+	{ id = "archer", name = "Archer", cost = 4000, attack = 6, defense = 3 },
+	{ id = "knight", name = "Knight", cost = 30000, attack = 12, defense = 14 },
+	{ id = "mage", name = "Battle Mage", cost = 200000, attack = 30, defense = 15 },
+}
+
+---------------------------------------------------------------------------
+-- Armory: gear. You and each soldier use one weapon, one armor and one
+-- mount, and the best pieces you own are used automatically.
+---------------------------------------------------------------------------
+
+GameConfig.Gear = {
+	{ id = "rustysword", slot = "Weapon", name = "Rusty Sword", cost = 300, attack = 1, defense = 0 },
+	{ id = "ironspear", slot = "Weapon", name = "Iron Spear", cost = 2500, attack = 3, defense = 0 },
+	{ id = "longsword", slot = "Weapon", name = "Steel Longsword", cost = 15000, attack = 7, defense = 0 },
+	{ id = "greataxe", slot = "Weapon", name = "Runed Greataxe", cost = 120000, attack = 16, defense = 0 },
+	{ id = "jerkin", slot = "Armor", name = "Padded Jerkin", cost = 300, attack = 0, defense = 1 },
+	{ id = "chainmail", slot = "Armor", name = "Chainmail", cost = 2500, attack = 0, defense = 3 },
+	{ id = "plate", slot = "Armor", name = "Plate Harness", cost = 15000, attack = 0, defense = 7 },
+	{ id = "wyrmscale", slot = "Armor", name = "Wyrmscale Mail", cost = 120000, attack = 0, defense = 16 },
+	{ id = "mule", slot = "Mount", name = "Pack Mule", cost = 1000, attack = 1, defense = 1 },
+	{ id = "warhorse", slot = "Mount", name = "Warhorse", cost = 12000, attack = 4, defense = 4 },
+	{ id = "griffin", slot = "Mount", name = "Griffin", cost = 150000, attack = 11, defense = 11 },
+}
+
+GameConfig.GearSlots = { "Weapon", "Armor", "Mount" }
+
+---------------------------------------------------------------------------
+-- Foes: turn by turn fights that cost stamina
+---------------------------------------------------------------------------
+
+GameConfig.Foes = {
+	{ id = "garrick", band = "Thornwood Bandits", name = "Garrick the Toll-Taker", level = 4, health = 60, attack = 8, defense = 2, gold = 3000, xp = 60, renown = 10 },
+	{ id = "hilda", band = "Thornwood Bandits", name = "Mad Hilda", level = 8, health = 220, attack = 16, defense = 8, gold = 10000, xp = 160, renown = 20 },
+	{ id = "aldous", band = "Thornwood Bandits", name = "Sir Aldous the Oathbreaker", level = 13, health = 600, attack = 28, defense = 18, gold = 32000, xp = 380, renown = 35 },
+	{ id = "vex", band = "Thornwood Bandits", name = "Baron Vex", level = 18, health = 1500, attack = 46, defense = 32, gold = 100000, xp = 800, renown = 60 },
+}
+
+---------------------------------------------------------------------------
+-- Formulas
+---------------------------------------------------------------------------
+
+-- Experience needed to go from `level` to the next one.
+function GameConfig.getXpNeeded(level: number): number
+	return math.floor(12 * level ^ 1.5 + 8)
 end
 
-function GameConfig.getStewardCost(building): number
-	return building.cost * GameConfig.StewardCostMultiplier
+function GameConfig.getMasteryRank(completions: number): number
+	return math.min(GameConfig.MaxMasteryRanks, math.floor(completions / GameConfig.MasteryPerRank))
 end
 
--- Gold per second for one building, before the land bonus.
-function GameConfig.getBaseIncome(building, level: number): number
-	local income = building.income * level
-	for _, milestone in GameConfig.MilestoneLevels do
-		if level >= milestone then
-			income *= 2
-		end
-	end
-	return income
+function GameConfig.getQuestGold(quest, completions: number): number
+	local bonus = 1 + GameConfig.getMasteryRank(completions) * GameConfig.MasteryGoldBonus
+	return math.floor(quest.gold * bonus)
 end
 
--- Gold multiplier from conquered lands. 1 means no bonus.
-function GameConfig.getLandMultiplier(landsConquered: number): number
-	local multiplier = 1
-	for index, land in GameConfig.Lands do
-		if index <= landsConquered then
-			multiplier += land.bonus
-		end
-	end
-	return multiplier
+-- Gold to buy a holding (level 0) or upgrade it from `level` to the next.
+function GameConfig.getHoldingCost(holding, level: number): number
+	return math.floor(holding.cost * GameConfig.HoldingCostGrowth ^ level)
+end
+
+-- Gold per hour for one holding at `level`.
+function GameConfig.getHoldingIncome(holding, level: number): number
+	return holding.income * level
+end
+
+-- Gold for the next soldier slot when you already have `slots` of them.
+function GameConfig.getSlotCost(slots: number): number
+	return math.floor(GameConfig.SoldierSlotBaseCost * GameConfig.SoldierSlotCostGrowth ^ slots)
 end
 
 return GameConfig
