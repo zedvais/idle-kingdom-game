@@ -17,19 +17,24 @@ function Market.secondsUntilRestock(): number
 	return (Market.currentWindow() + 1) * GameConfig.MarketRestockSeconds - os.time()
 end
 
-local function rollRarity(random: Random)
+-- Picks a rarity by Market odds, never below `minRank` (1 = Common).
+local function rollRarity(random: Random, minRank: number)
 	local total = 0
-	for _, rarity in GameConfig.Rarities do
-		total += rarity.chance
-	end
-	local roll = random:NextNumber(0, total)
-	for _, rarity in GameConfig.Rarities do
-		roll -= rarity.chance
-		if roll <= 0 then
-			return rarity
+	for index, rarity in GameConfig.Rarities do
+		if index >= minRank then
+			total += rarity.chance
 		end
 	end
-	return GameConfig.Rarities[1]
+	local roll = random:NextNumber(0, total)
+	for index, rarity in GameConfig.Rarities do
+		if index >= minRank and rarity.chance > 0 then
+			roll -= rarity.chance
+			if roll <= 0 then
+				return rarity
+			end
+		end
+	end
+	return GameConfig.Rarities[minRank]
 end
 
 local function rollLevel(random: Random, playerLevel: number): number
@@ -38,10 +43,12 @@ local function rollLevel(random: Random, playerLevel: number): number
 	return random:NextInteger(low, high)
 end
 
-local function rollGear(random: Random, playerLevel: number)
+-- One piece of gear rolled around `playerLevel`. Also used for quest drops
+-- and chests, which pass a minimum rarity.
+function Market.rollGear(random: Random, playerLevel: number, minRank: number?)
 	local slot = GameConfig.GearSlots[random:NextInteger(1, #GameConfig.GearSlots)]
 	local gearType = GameConfig.GearTypes[slot]
-	local rarity = rollRarity(random)
+	local rarity = rollRarity(random, minRank or 1)
 	local level = rollLevel(random, playerLevel)
 	return {
 		kind = "Gear",
@@ -61,7 +68,7 @@ function Market.roll(userId: number, window: number, playerLevel: number)
 	local random = Random.new(userId * 7919 + window * 104729 + playerLevel)
 	local items = {}
 	for _ = 1, GameConfig.MarketSize do
-		local item = rollGear(random, playerLevel)
+		local item = Market.rollGear(random, playerLevel)
 		item.sold = false
 		table.insert(items, item)
 	end

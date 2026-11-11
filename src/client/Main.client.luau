@@ -175,7 +175,7 @@ addCorner(main, 8)
 local pageTitle = makeText(main, UDim2.new(1, -24, 0, 30), UDim2.fromOffset(12, 4), COLOR_HEADER, 20)
 pageTitle.Font = Enum.Font.GothamBold
 
-local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Armory", "Foes" }
+local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Armory", "Foes", "Bank" }
 local railButtons = {}
 local pages = {}
 
@@ -188,7 +188,7 @@ local function showPage(name: string)
 end
 
 for index, name in PAGE_NAMES do
-	local button = makeButton(rail, UDim2.new(1, -12, 0, 36), UDim2.fromOffset(0, 0), COLOR_ROW)
+	local button = makeButton(rail, UDim2.new(1, -12, 0, 34), UDim2.fromOffset(0, 0), COLOR_ROW)
 	button.LayoutOrder = index
 	button.Text = name
 	railButtons[name] = button
@@ -256,8 +256,66 @@ local function nextOrder(): number
 	return order
 end
 
--- Keep: your numbers and where skill points are spent.
-local keepSummary = makeRow(pages.Keep, nextOrder(), 92, false)
+-- A region header that folds its rows away when clicked, like the
+-- reference's city bars. Returns a function that registers a row under it.
+local function makeRegionHeader(page: Instance, order: number, region)
+	local header = makeButton(page, UDim2.new(1, -10, 0, 40), UDim2.fromOffset(0, 0), Color3.fromRGB(44, 38, 28))
+	header.LayoutOrder = order
+	header.TextXAlignment = Enum.TextXAlignment.Left
+	header.TextColor3 = COLOR_HEADER
+	header.TextSize = 18
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = COLOR_HEADER
+	stroke.Transparency = 0.5
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = header
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0, 12)
+	padding.PaddingRight = UDim.new(0, 12)
+	padding.Parent = header
+
+	local open = region.level == 1
+	local rows = {}
+	local levelText = if region.level > 1 then `  (LEVEL {region.level}+)` else ""
+	local function update()
+		header.Text = `{if open then "-" else "+"}   {string.upper(region.id)}{levelText}`
+		for _, row in rows do
+			row.Visible = open
+		end
+	end
+	header.Activated:Connect(function()
+		open = not open
+		update()
+	end)
+	update()
+
+	return function(row: GuiObject)
+		table.insert(rows, row)
+		row.Visible = open
+	end
+end
+
+-- Keep: your home, your numbers, daily rewards and skills.
+local keepInfo, keepButton = makeRow(pages.Keep, nextOrder(), 74, true)
+keepButton.Activated:Connect(function()
+	send("Keep")
+end)
+local keepSummary = makeRow(pages.Keep, nextOrder(), 74, false)
+local breakdownText = makeRow(pages.Keep, nextOrder(), 96, false)
+breakdownText.TextColor3 = COLOR_DIM
+
+makeHeading(pages.Keep, nextOrder(), "Daily playtime rewards")
+local playtimeSummary = makeRow(pages.Keep, nextOrder(), 32, false)
+local rewardRows = {}
+for index, reward in GameConfig.PlaytimeRewards do
+	local info, button = makeRow(pages.Keep, nextOrder(), 46, true)
+	rewardRows[index] = { info = info, button = button }
+	button.Activated:Connect(function()
+		send("Claim", tostring(index))
+	end)
+	info.Text = `{reward.minutes} min: {reward.label}`
+end
+
 makeHeading(pages.Keep, nextOrder(), "Skills")
 local skillRows = {}
 for _, skill in GameConfig.Skills do
@@ -268,31 +326,100 @@ for _, skill in GameConfig.Skills do
 	end)
 end
 
--- Quests, grouped by region.
+-- Quests, in folding regions.
 local questRows = {}
-local lastRegion = nil
-for _, quest in GameConfig.Quests do
-	if quest.region ~= lastRegion then
-		lastRegion = quest.region
-		makeHeading(pages.Quests, nextOrder(), quest.region)
+local questBoost = makeRow(pages.Quests, nextOrder(), 30, false)
+questBoost.TextColor3 = COLOR_XP
+for _, region in GameConfig.Regions do
+	local addRow = makeRegionHeader(pages.Quests, nextOrder(), region)
+	for _, quest in GameConfig.Quests do
+		if quest.region == region.id then
+			local info, button = makeRow(pages.Quests, nextOrder(), 56, true)
+			info.RichText = true
+			addRow(info.Parent)
+			questRows[quest.id] = { info = info, button = button }
+			button.Activated:Connect(function()
+				send("Quest", quest.id)
+			end)
+		end
 	end
-	local info, button = makeRow(pages.Quests, nextOrder(), 52, true)
-	questRows[quest.id] = { info = info, button = button }
-	button.Activated:Connect(function()
-		send("Quest", quest.id)
-	end)
 end
 
--- Holdings.
+-- Holdings: what you have built, then what you can build, by region.
 local holdingSummary = makeRow(pages.Holdings, nextOrder(), 50, false)
-local holdingRows = {}
+makeHeading(pages.Holdings, nextOrder(), "Your lands")
+local ownedEmpty = makeRow(pages.Holdings, nextOrder(), 34, false)
+ownedEmpty.TextColor3 = COLOR_DIM
+ownedEmpty.Text = "Nothing built yet. Build a holding below."
+local ownedRows = {}
 for _, holding in GameConfig.Holdings do
-	local info, button = makeRow(pages.Holdings, nextOrder(), 52, true)
-	holdingRows[holding.id] = { info = info, button = button }
+	local info, button = makeRow(pages.Holdings, nextOrder(), 46, true)
+	ownedRows[holding.id] = { info = info, button = button }
 	button.Activated:Connect(function()
-		send("Holding", holding.id)
+		send("Demolish", holding.id)
 	end)
 end
+makeHeading(pages.Holdings, nextOrder(), "Build")
+local holdingRows = {}
+for _, region in GameConfig.Regions do
+	local addRow = makeRegionHeader(pages.Holdings, nextOrder(), region)
+	for _, holding in GameConfig.Holdings do
+		if holding.region == region.id then
+			local info, button = makeRow(pages.Holdings, nextOrder(), 52, true)
+			addRow(info.Parent)
+			holdingRows[holding.id] = { info = info, button = button }
+			button.Activated:Connect(function()
+				send("Holding", holding.id)
+			end)
+		end
+	end
+end
+
+-- Bank: move gold in and out. Gold in the bank is safe from raids.
+local bankSummary = makeRow(pages.Bank, nextOrder(), 74, false)
+local bankInputRow = makeFrame(pages.Bank, UDim2.new(1, -10, 0, 56), UDim2.fromOffset(0, 0), COLOR_ROW)
+bankInputRow.LayoutOrder = nextOrder()
+addCorner(bankInputRow, 6)
+local bankInput = Instance.new("TextBox")
+bankInput.Size = UDim2.new(1, -20, 1, -16)
+bankInput.Position = UDim2.fromOffset(10, 8)
+bankInput.BackgroundColor3 = Color3.fromRGB(20, 24, 22)
+bankInput.TextColor3 = COLOR_TEXT
+bankInput.PlaceholderText = "Amount, like 5000 or 2.5m"
+bankInput.PlaceholderColor3 = COLOR_DIM
+bankInput.Font = Enum.Font.GothamBold
+bankInput.TextSize = 20
+bankInput.Text = ""
+bankInput.ClearTextOnFocus = false
+bankInput.Parent = bankInputRow
+addCorner(bankInput, 6)
+
+local bankButtons = makeFrame(pages.Bank, UDim2.new(1, -10, 0, 96), UDim2.fromOffset(0, 0), COLOR_ROW)
+bankButtons.LayoutOrder = nextOrder()
+bankButtons.BackgroundTransparency = 1
+local function bankButton(text: string, x: number, y: number, color: Color3, callback)
+	local b = makeButton(bankButtons, UDim2.new(0.5, -5, 0, 44), UDim2.new(x, if x > 0 then 5 else 0, 0, y), color)
+	b.Text = text
+	b.TextSize = 16
+	b.Activated:Connect(callback)
+	return b
+end
+bankButton("Deposit", 0, 0, COLOR_GOLD, function()
+	send("Deposit", bankInput.Text)
+end).TextColor3 = Color3.fromRGB(35, 28, 10)
+bankButton("Withdraw", 0.5, 0, COLOR_SELECTED, function()
+	send("Withdraw", bankInput.Text)
+end)
+bankButton("Deposit all", 0, 50, COLOR_ROW, function()
+	send("Deposit", "all")
+end)
+bankButton("Withdraw all", 0.5, 50, COLOR_ROW, function()
+	send("Withdraw", "all")
+end)
+local bankNote = makeRow(pages.Bank, nextOrder(), 50, false)
+bankNote.TextColor3 = COLOR_DIM
+bankNote.Text = `Depositing costs a {math.floor(GameConfig.BankFee * 100)}% fee. You spend gold on hand, so withdraw before buying. `
+	.. "Once raids arrive, only gold on hand can be stolen."
 
 local function formatClock(seconds: number): string
 	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
@@ -456,7 +583,7 @@ local function draw(state)
 	nameLabel.Text = `Lv {state.level}  {player.DisplayName}`
 	setBar(xpBar, state.xp, state.xpNeeded, `XP {state.xp} / {state.xpNeeded}`)
 	goldLabel.Text = `{Format.short(gold)} gold`
-	incomeLabel.Text = `+{Format.short(stats.incomePerHour)} per hour`
+	incomeLabel.Text = `+{Format.short(stats.incomePerHour)}/hr   |   Banked {Format.short(state.banked)}`
 	setBar(energyBar, state.energy, stats.maxEnergy, `Energy {state.energy} / {stats.maxEnergy}`)
 	setBar(staminaBar, state.stamina, stats.maxStamina, `Stamina {state.stamina} / {stats.maxStamina}`)
 	setBar(healthBar, state.health, stats.maxHealth, `Health {state.health} / {stats.maxHealth}`)
@@ -465,29 +592,73 @@ local function draw(state)
 	railButtons.Keep.Text = if state.skillPoints > 0 then `Keep ({state.skillPoints})` else "Keep"
 
 	-- Keep
-	keepSummary.Text = `Attack {stats.attack}   |   Defense {stats.defense}   |   Renown {Format.short(state.renown)}\n`
-		.. `Holdings {stats.holdingsOwned} / {stats.holdingSlots}   |   Soldiers {stats.crewSize} / {#state.crew}\n`
+	local keep = GameConfig.KeepLevels[state.keep]
+	local nextKeep = GameConfig.KeepLevels[state.keep + 1]
+	local keepText = `<b>{string.upper(keep.name)}</b>   Keep level {state.keep} of {#GameConfig.KeepLevels}\n`
+		.. `Income, attack and defense +{math.floor(keep.bonus * 100)}%`
+	if nextKeep then
+		keepText ..= `\nNext: {nextKeep.name}, +{math.floor(nextKeep.bonus * 100)}%`
+		if state.level < nextKeep.level then
+			setButton(keepButton, `Level {nextKeep.level}\n{Format.short(nextKeep.cost)}`, false, COLOR_BUY)
+		else
+			setButton(keepButton, `Upgrade\n{Format.short(nextKeep.cost)}`, gold >= nextKeep.cost, COLOR_BUY)
+		end
+	else
+		setButton(keepButton, "Max level", false, COLOR_BUY)
+	end
+	keepInfo.RichText = true
+	keepInfo.Text = keepText
+
+	keepSummary.Text = `Attack {Format.short(stats.attack)}   |   Defense {Format.short(stats.defense)}   |   Renown {Format.short(state.renown)}\n`
+		.. `Income {Format.short(stats.incomePerHour)}/hr   |   Lots {stats.lotsUsed} / {stats.lots}   |   Soldiers {stats.crewSize} / {#state.crew}\n`
 		.. `Skill points to spend: {state.skillPoints}`
+	local lines = { "Where your attack and defense come from:" }
+	for _, part in stats.breakdown do
+		table.insert(lines, `{part[1]}: {Format.short(part[2])} attack, {Format.short(part[3])} defense`)
+	end
+	breakdownText.Text = table.concat(lines, "\n")
+
+	local played = state.playSeconds
+	playtimeSummary.Text = `Played today: {math.floor(played / 3600)}h {math.floor(played / 60) % 60}m. Rewards reset at 00:00 UTC.`
+	for index, reward in GameConfig.PlaytimeRewards do
+		local row = rewardRows[index]
+		local key = tostring(index)
+		if state.claimed[key] then
+			setButton(row.button, "Claimed", false, COLOR_BUY)
+		elseif played >= reward.minutes * 60 then
+			setButton(row.button, "Claim", true, COLOR_GOLD)
+		else
+			setButton(row.button, `In {formatClock(reward.minutes * 60 - played)}`, false, COLOR_BUY)
+		end
+	end
+
 	for _, skill in GameConfig.Skills do
 		local row = skillRows[skill.id]
 		local bought = state.skills[skill.id] or 0
+		local cost = GameConfig.getSkillCost(skill, bought)
 		row.info.Text = `{skill.name}  (bought {bought})\n{skill.note}`
-		local pointWord = if skill.cost == 1 then "point" else "points"
-		setButton(row.button, `Add\n{skill.cost} {pointWord}`, state.skillPoints >= skill.cost, COLOR_BUY)
+		local pointWord = if cost == 1 then "point" else "points"
+		setButton(row.button, `Add\n{cost} {pointWord}`, state.skillPoints >= cost, COLOR_BUY)
 	end
 
 	-- Quests
+	questBoost.Text = if state.xpBoostLeft > 0 then `Double XP active: {formatClock(state.xpBoostLeft)} left` else ""
+	questBoost.Parent.Visible = state.xpBoostLeft > 0
+	local medalColors = { "#C8844E", "#C9D2DE", "#F0C85A" }
 	for _, quest in GameConfig.Quests do
 		local row = questRows[quest.id]
 		local done = state.quests[quest.id] or 0
 		local rank = GameConfig.getMasteryRank(done)
-		local mastery
-		if rank >= GameConfig.MaxMasteryRanks then
-			mastery = "Mastered"
-		else
-			mastery = `Mastery {done % GameConfig.MasteryPerRank}/{GameConfig.MasteryPerRank}, rank {rank}`
+		local medals = {}
+		for index, medal in GameConfig.MasteryMedals do
+			local color = if index <= rank then medalColors[index] else "#5A5F5A"
+			table.insert(medals, `<font color="{color}">{medal}</font>`)
 		end
-		row.info.Text = `{quest.name}\n{quest.energy} energy  >  {Format.short(GameConfig.getQuestGold(quest, done))} gold, {quest.xp} XP   |   {mastery}`
+		local progress = if rank >= GameConfig.MaxMasteryRanks
+			then "Mastered"
+			else `{done % GameConfig.MasteryPerRank}/{GameConfig.MasteryPerRank}`
+		row.info.Text = `<b>{quest.name}</b>\n{quest.energy} energy   {Format.short(GameConfig.getQuestGold(quest, done))} gold   {quest.xp} XP   `
+			.. `{string.format("%.1f", quest.drop * 100)}% gear drop\n{table.concat(medals, "  ")}   {progress}`
 		if state.level < quest.level then
 			setButton(row.button, `Level {quest.level}`, false, COLOR_ACTION)
 		else
@@ -496,29 +667,38 @@ local function draw(state)
 	end
 
 	-- Holdings
-	holdingSummary.Text = `Income: {Format.short(stats.incomePerHour)} gold per hour   |   Owned {stats.holdingsOwned} / {stats.holdingSlots}\n`
-		.. `Holdings earn {math.floor(GameConfig.OfflineRate * 100)}% while you are away.`
+	local lotsFull = stats.lotsUsed >= stats.lots
+	holdingSummary.Text = `Income {Format.short(stats.incomePerHour)} gold/hr   |   Lots {stats.lotsUsed} / {stats.lots}{if lotsFull then " (full)" else ""}\n`
+		.. `Holdings earn {math.floor(GameConfig.OfflineRate * 100)}% while you are away. More lots come from skill points in the Keep.`
+	local anyOwned = false
 	for _, holding in GameConfig.Holdings do
+		local count = state.holdings[holding.id] or 0
+		local ownedRow = ownedRows[holding.id]
+		ownedRow.info.Parent.Visible = count > 0
+		if count > 0 then
+			anyOwned = true
+			local income = math.floor(holding.income * count * (1 + stats.keepBonus))
+			ownedRow.info.Text = `{holding.name}  x{count}\n{Format.short(income)} gold/hr`
+			local refund = math.floor(GameConfig.getHoldingCost(holding, count - 1) * GameConfig.DemolishRefund)
+			setButton(ownedRow.button, `Demolish 1\n+{Format.short(refund)}`, true, COLOR_DISABLED)
+		end
+
 		local row = holdingRows[holding.id]
-		local level = state.holdings[holding.id] or 0
-		local cost = GameConfig.getHoldingCost(holding, level)
-		if level == 0 then
-			row.info.Text = `{holding.name}\nEarns {Format.short(holding.income)} gold per hour`
-			if state.level < holding.level then
-				setButton(row.button, `Level {holding.level}`, false, COLOR_BUY)
-			else
-				local hasSlot = stats.holdingsOwned < stats.holdingSlots
-				setButton(row.button, if hasSlot then `Buy\n{Format.short(cost)}` else "No slot", hasSlot and gold >= cost, COLOR_BUY)
-			end
+		local cost = GameConfig.getHoldingCost(holding, count)
+		row.info.Text = `{holding.name}  (you have {count})\n+{Format.short(holding.income)} gold/hr per lot`
+		if state.level < holding.level then
+			setButton(row.button, `Level {holding.level}`, false, COLOR_BUY)
+		elseif lotsFull then
+			setButton(row.button, `Lots full\n{Format.short(cost)}`, false, COLOR_BUY)
 		else
-			row.info.Text = `{holding.name}  Lv {level}\nEarns {Format.short(GameConfig.getHoldingIncome(holding, level))} gold per hour`
-			if level >= GameConfig.HoldingMaxLevel then
-				setButton(row.button, "Max level", false, COLOR_BUY)
-			else
-				setButton(row.button, `Upgrade\n{Format.short(cost)}`, gold >= cost, COLOR_BUY)
-			end
+			setButton(row.button, `Build\n{Format.short(cost)}`, gold >= cost, COLOR_BUY)
 		end
 	end
+	ownedEmpty.Parent.Visible = not anyOwned
+
+	-- Bank
+	bankSummary.Text = `On hand: {Format.short(gold)} gold\nBanked: {Format.short(state.banked)} gold\n`
+		.. `Deposit fee {math.floor(GameConfig.BankFee * 100)}%`
 
 	-- Market
 	marketSummary.Text = `New stock in {formatClock(state.marketRestock)}\nItems roll around your level. Rarer items are stronger and cost more.`

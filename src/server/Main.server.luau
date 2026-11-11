@@ -123,45 +123,75 @@ local function assignGear(data): (number, number, { [string]: boolean }, { [numb
 	return attack, defense, used, wearing
 end
 
-local function getStats(data)
-	local attack = GameConfig.BaseAttack + skillTotal(data, "attack")
-	local defense = GameConfig.BaseDefense + skillTotal(data, "defense")
+local function getKeepBonus(data): number
+	local keep = GameConfig.KeepLevels[data.keep] or GameConfig.KeepLevels[1]
+	return keep.bonus
+end
 
-	local crewSize = 0
+-- Every number the menus show about the player, with where attack and
+-- defense come from.
+local function getStats(data)
+	local baseAttack = GameConfig.BaseAttack + skillTotal(data, "attack")
+	local baseDefense = GameConfig.BaseDefense + skillTotal(data, "defense")
+
+	local crewAttack, crewDefense, crewSize = 0, 0, 0
 	for _, soldier in data.crew do
 		if soldier then
 			local soldierAttack, soldierDefense = GameConfig.getSoldierStats(soldier)
-			attack += soldierAttack
-			defense += soldierDefense
+			crewAttack += soldierAttack
+			crewDefense += soldierDefense
 			crewSize += 1
 		end
 	end
 
 	local gearAttack, gearDefense = assignGear(data)
 	local crewBonus = crewSize * GameConfig.CrewSizeBonus
+	local keepBonus = getKeepBonus(data)
+
+	local rawAttack = baseAttack + crewAttack + gearAttack
+	local rawDefense = baseDefense + crewDefense + gearDefense
+	local attack = math.floor(rawAttack * (1 + crewBonus + keepBonus))
+	local defense = math.floor(rawDefense * (1 + crewBonus + keepBonus))
 
 	local incomePerHour = 0
-	local holdingsOwned = 0
+	local lotsUsed = 0
 	for _, holding in GameConfig.Holdings do
-		local level = data.holdings[holding.id] or 0
-		if level > 0 then
-			holdingsOwned += 1
-			incomePerHour += GameConfig.getHoldingIncome(holding, level)
-		end
+		local count = data.holdings[holding.id] or 0
+		lotsUsed += count
+		incomePerHour += holding.income * count
 	end
+	incomePerHour = math.floor(incomePerHour * (1 + keepBonus))
 
 	return {
 		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy"),
 		maxStamina = GameConfig.BaseMaxStamina + skillTotal(data, "stamina"),
 		maxHealth = GameConfig.BaseMaxHealth + skillTotal(data, "health"),
-		attack = math.floor((attack + gearAttack) * (1 + crewBonus)),
-		defense = math.floor((defense + gearDefense) * (1 + crewBonus)),
+		attack = attack,
+		defense = defense,
 		crewSize = crewSize,
 		crewBonus = crewBonus,
-		holdingSlots = GameConfig.BaseHoldingSlots + skillTotal(data, "slots"),
-		holdingsOwned = holdingsOwned,
+		keepBonus = keepBonus,
+		lots = GameConfig.BaseLots + skillTotal(data, "lots"),
+		lotsUsed = lotsUsed,
 		incomePerHour = incomePerHour,
+		-- Where attack and defense come from, for the Keep page.
+		breakdown = {
+			{ "You and skills", baseAttack, baseDefense },
+			{ "Warband", crewAttack, crewDefense },
+			{ "Gear", gearAttack, gearDefense },
+			{ "Bonuses", attack - rawAttack, defense - rawDefense },
+		},
 	}
+end
+
+-- Starts a new day of playtime rewards when the UTC day changes.
+local function checkNewDay(data)
+	local today = GameConfig.getDay()
+	if data.playDay ~= today then
+		data.playDay = today
+		data.playSeconds = 0
+		data.claimed = {}
+	end
 end
 
 -- Sends the player everything their menus need to draw.
@@ -221,6 +251,11 @@ local function refresh(player: Player)
 		skills = data.skills,
 		quests = data.quests,
 		holdings = data.holdings,
+		keep = data.keep,
+		banked = data.banked,
+		playSeconds = data.playSeconds,
+		claimed = data.claimed,
+		xpBoostLeft = math.max(0, data.xpBoostUntil - now),
 		crew = crew,
 		yourGear = wearing[0] or {},
 		gear = data.gear,
@@ -244,6 +279,9 @@ local function refresh(player: Player)
 end
 
 local function addXp(player: Player, data, amount: number)
+	if data.xpBoostUntil > os.time() then
+		amount *= 2
+	end
 	data.xp += amount
 	local leveled = false
 	while data.xp >= GameConfig.getXpNeeded(data.level) do
@@ -271,6 +309,19 @@ local function spendGold(player: Player, data, cost: number): boolean
 	return true
 end
 
+-- Gives the player a rolled piece of gear (quest drops and chests).
+local function giveGear(player: Player, data, minRank: number?, source: string)
+	if #data.gear >= GameConfig.MaxGearOwned then
+		sendToast(player, `{source}, but your armory is full. Sell some gear to make room.`)
+		return
+	end
+	local item = Market.rollGear(random, data.level, minRank)
+	item.uid = "i" .. data.nextItemId
+	data.nextItemId += 1
+	table.insert(data.gear, item)
+	sendToast(player, `{source}: {item.rarity} {item.name}!`)
+end
+
 ---------------------------------------------------------------------------
 -- Player actions
 ---------------------------------------------------------------------------
@@ -279,7 +330,7 @@ local actions = {}
 
 function actions.Quest(player: Player, data, id: string)
 	local quest = questById[id]
-	if not quest or data.level < quest.level then
+	if not quest or data.level < quest.level or data.level < GameConfig.getRegion(quest.region).level then
 		return
 	end
 	if data.energy < quest.energy then
@@ -294,36 +345,121 @@ function actions.Quest(player: Player, data, id: string)
 	data.gold += GameConfig.getQuestGold(quest, completions)
 	data.quests[id] = completions + 1
 
-	if GameConfig.getMasteryRank(completions + 1) > rankBefore then
-		sendToast(player, `Mastery rank up! {quest.name} now pays more gold.`)
+	local rankAfter = GameConfig.getMasteryRank(completions + 1)
+	if rankAfter > rankBefore then
+		sendToast(player, `{GameConfig.MasteryMedals[rankAfter]} mastery! {quest.name} now pays more gold.`)
+	end
+	if random:NextNumber() < quest.drop then
+		giveGear(player, data, nil, "You found gear")
 	end
 	addXp(player, data, quest.xp)
 end
 
+-- Builds one more copy of a holding on a free lot.
 function actions.Holding(player: Player, data, id: string)
 	local holding = holdingById[id]
 	if not holding or data.level < holding.level then
 		return
 	end
-
-	local level = data.holdings[id] or 0
-	if level >= GameConfig.HoldingMaxLevel then
+	local stats = getStats(data)
+	if stats.lotsUsed >= stats.lots then
+		sendToast(player, "Every lot is built on. Demolish one, or buy Holding Lots in the Keep.")
 		return
 	end
-	if level == 0 then
-		local stats = getStats(data)
-		if stats.holdingsOwned >= stats.holdingSlots then
-			sendToast(player, "No free holding slot. Spend skill points on Holding Slots.")
-			return
-		end
+	local count = data.holdings[id] or 0
+	if spendGold(player, data, GameConfig.getHoldingCost(holding, count)) then
+		data.holdings[id] = count + 1
 	end
+end
 
-	if spendGold(player, data, GameConfig.getHoldingCost(holding, level)) then
-		data.holdings[id] = level + 1
-		if level == 0 then
-			sendToast(player, `You now own the {holding.name}.`)
-		end
+-- Pulls down one copy of a holding to free its lot.
+function actions.Demolish(player: Player, data, id: string)
+	local holding = holdingById[id]
+	local count = holding and data.holdings[id] or 0
+	if not holding or count <= 0 then
+		return
 	end
+	local refund = math.floor(GameConfig.getHoldingCost(holding, count - 1) * GameConfig.DemolishRefund)
+	data.holdings[id] = count - 1
+	data.gold += refund
+	sendToast(player, `Demolished a {holding.name} for {Format.short(refund)} gold. One lot is free.`)
+end
+
+-- Upgrades the Keep to its next level.
+function actions.Keep(player: Player, data)
+	local nextKeep = GameConfig.KeepLevels[data.keep + 1]
+	if not nextKeep then
+		return
+	end
+	if data.level < nextKeep.level then
+		sendToast(player, `You need level {nextKeep.level} for the {nextKeep.name}.`)
+		return
+	end
+	if spendGold(player, data, nextKeep.cost) then
+		data.keep += 1
+		sendToast(player, `Your home is now the {nextKeep.name}! +{math.floor(nextKeep.bonus * 100)}% income, attack and defense.`)
+	end
+end
+
+-- Claims a daily playtime reward. id is its number in the list, as text.
+function actions.Claim(player: Player, data, id: string)
+	checkNewDay(data)
+	local index = tonumber(id)
+	local reward = index and GameConfig.PlaytimeRewards[index]
+	if not reward or data.claimed[id] or data.playSeconds < reward.minutes * 60 then
+		return
+	end
+	data.claimed[id] = true
+
+	local stats = getStats(data)
+	if reward.kind == "gold" then
+		local amount = math.max(math.floor(stats.incomePerHour / 60 * reward.amount), 500 * data.level)
+		data.gold += amount
+		sendToast(player, `{reward.label}: +{Format.short(amount)} gold.`)
+	elseif reward.kind == "energy" then
+		data.energy = math.max(data.energy, stats.maxEnergy)
+		sendToast(player, "Energy refilled.")
+	elseif reward.kind == "stamina" then
+		data.stamina = math.max(data.stamina, stats.maxStamina)
+		sendToast(player, "Stamina refilled.")
+	elseif reward.kind == "chest" then
+		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{reward.label} opened`)
+	elseif reward.kind == "xpBoost" then
+		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.amount * 60
+		sendToast(player, `Double experience for {reward.amount} minutes!`)
+	end
+end
+
+-- Bank. id is the amount as text ("all" for everything).
+function actions.Deposit(player: Player, data, id: string)
+	local amount = if id == "all" then math.floor(data.gold) else Format.parse(id)
+	if not amount or amount <= 0 then
+		sendToast(player, "Type an amount, like 5000 or 2.5m.")
+		return
+	end
+	amount = math.min(amount, math.floor(data.gold))
+	if amount <= 0 then
+		return
+	end
+	local fee = math.ceil(amount * GameConfig.BankFee)
+	data.gold -= amount
+	data.banked += amount - fee
+	sendToast(player, `Deposited {Format.short(amount - fee)} gold after a {Format.short(fee)} fee.`)
+end
+
+function actions.Withdraw(player: Player, data, id: string)
+	local amount = if id == "all" then math.floor(data.banked) else Format.parse(id)
+	if not amount or amount <= 0 then
+		sendToast(player, "Type an amount, like 5000 or 2.5m.")
+		return
+	end
+	amount = math.min(amount, math.floor(data.banked))
+	if amount <= 0 then
+		return
+	end
+	data.banked -= amount
+	data.gold += amount
+	sendToast(player, `Withdrew {Format.short(amount)} gold.`)
 end
 
 function actions.Skill(player: Player, data, id: string)
@@ -331,12 +467,13 @@ function actions.Skill(player: Player, data, id: string)
 	if not skill then
 		return
 	end
-	if data.skillPoints < skill.cost then
+	local cost = GameConfig.getSkillCost(skill, data.skills[id] or 0)
+	if data.skillPoints < cost then
 		sendToast(player, "Not enough skill points. Level up to earn more.")
 		return
 	end
 
-	data.skillPoints -= skill.cost
+	data.skillPoints -= cost
 	data.skills[id] = (data.skills[id] or 0) + 1
 
 	-- Raising a maximum also hands over the new points right away.
@@ -553,7 +690,7 @@ actionRemote.OnServerEvent:Connect(function(player: Player, action, id)
 	if not session or type(action) ~= "string" then
 		return
 	end
-	if id ~= nil and type(id) ~= "string" then
+	if id ~= nil and (type(id) ~= "string" or #id > 64) then
 		return
 	end
 
@@ -678,6 +815,8 @@ task.spawn(function()
 			local data = session.data
 			local stats = getStats(data)
 
+			checkNewDay(data)
+			data.playSeconds += 1
 			data.gold += stats.incomePerHour / 3600
 			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
 			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)

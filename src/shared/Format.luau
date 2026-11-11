@@ -27,4 +27,28 @@ function Format.short(value: number): string
 	return text .. SUFFIXES[index]
 end
 
+-- Reads amounts people type, like "2500", "1.5k", "720b" or "3M".
+-- Returns nil when the text is not a number.
+local MULTIPLIERS = { k = 1e3, m = 1e6, b = 1e9, t = 1e12, qa = 1e15, qi = 1e18 }
+
+function Format.parse(text: string): number?
+	local cleaned = string.lower(string.gsub(text, "[%s,]", ""))
+	local number, suffix = string.match(cleaned, "^(%d*%.?%d+)(%a*)$")
+	if not number then
+		return nil
+	end
+	local value = tonumber(number)
+	if not value then
+		return nil
+	end
+	if suffix ~= "" then
+		local multiplier = MULTIPLIERS[suffix]
+		if not multiplier then
+			return nil
+		end
+		value *= multiplier
+	end
+	return math.floor(value)
+end
+
 return Format
