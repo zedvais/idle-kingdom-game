@@ -294,6 +294,21 @@ for _, holding in GameConfig.Holdings do
 	end)
 end
 
+local function formatClock(seconds: number): string
+	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+end
+
+local function statText(attack: number, defense: number): string
+	local parts = {}
+	if attack > 0 then
+		table.insert(parts, `+{attack} attack`)
+	end
+	if defense > 0 then
+		table.insert(parts, `+{defense} defense`)
+	end
+	return table.concat(parts, ", ")
+end
+
 -- Rarity colors, for names shown with rich text.
 local function rarityName(item): string
 	local rarity = GameConfig.getRarity(item.rarity)
@@ -320,22 +335,69 @@ for index = 1, GameConfig.MarketSize do
 	end)
 end
 
--- Warband: your soldiers, each with a Release button.
-local warbandSummary, slotButton = makeRow(pages.Warband, nextOrder(), 74, true)
-slotButton.Activated:Connect(function()
-	send("Slot")
+-- Warband: one row for you, one per unlocked slot, and the next locked slot.
+local openRecruitWindow -- defined further down, with the recruit window
+
+local warbandSummary, autoRollButton = makeRow(pages.Warband, nextOrder(), 56, true)
+setButton(autoRollButton, "Auto Roll", true, COLOR_ACTION)
+autoRollButton.Activated:Connect(function()
+	openRecruitWindow(0)
 end)
-local soldierRows = {}
-for index = 1, GameConfig.MaxSoldierSlots do
-	local row = makeItemRow(pages.Warband, nextOrder())
-	row.uid = nil
-	soldierRows[index] = row
-	row.button.Activated:Connect(function()
-		if row.uid then
-			send("Sell", row.uid)
-		end
+
+local function gearLine(item): string
+	if not item then
+		return `<font color="#7F847E">empty</font>`
+	end
+	return `{rarityName(item)} ({statText(item.attack, item.defense)})`
+end
+
+local function makeCrewRow(order: number)
+	local row = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 76), UDim2.fromOffset(0, 0), COLOR_ROW)
+	row.LayoutOrder = order
+	addCorner(row, 6)
+
+	local info = makeText(row, UDim2.new(0.34, -10, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 13)
+	info.RichText = true
+	local gearText = makeText(row, UDim2.new(0.66, -250, 1, -8), UDim2.new(0.34, 0, 0, 4), COLOR_DIM, 12)
+	gearText.RichText = true
+
+	local function button(width: number, offset: number): TextButton
+		local b = makeButton(row, UDim2.fromOffset(width, 50), UDim2.new(1, offset, 0.5, 0), COLOR_DISABLED)
+		b.AnchorPoint = Vector2.new(1, 0.5)
+		b.TextSize = 13
+		return b
+	end
+	local release = button(60, -6)
+	local roll = button(70, -70)
+	local train = button(98, -144)
+
+	return { frame = row, info = info, gearText = gearText, train = train, roll = roll, release = release }
+end
+
+local youRow = makeCrewRow(nextOrder())
+youRow.train.Visible = false
+youRow.roll.Visible = false
+youRow.release.Visible = false
+
+local crewRows = {}
+for slot = 1, GameConfig.MaxSoldierSlots do
+	local row = makeCrewRow(nextOrder())
+	crewRows[slot] = row
+	row.train.Activated:Connect(function()
+		send("Train", tostring(slot))
+	end)
+	row.roll.Activated:Connect(function()
+		openRecruitWindow(slot)
+	end)
+	row.release.Activated:Connect(function()
+		send("Release", tostring(slot))
 	end)
 end
+
+local lockedInfo, unlockButton = makeRow(pages.Warband, nextOrder(), 56, true)
+unlockButton.Activated:Connect(function()
+	send("Slot")
+end)
 
 -- Armory: your gear, each with a Sell button.
 local armorySummary = makeRow(pages.Armory, nextOrder(), 50, false)
@@ -382,22 +444,11 @@ local function formatWait(seconds: number): string
 	return `{seconds}s`
 end
 
-local function formatClock(seconds: number): string
-	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
-end
-
-local function statText(attack: number, defense: number): string
-	local parts = {}
-	if attack > 0 then
-		table.insert(parts, `+{attack} attack`)
-	end
-	if defense > 0 then
-		table.insert(parts, `+{defense} defense`)
-	end
-	return table.concat(parts, ", ")
-end
+local lastState = nil
+local refreshRecruitWindow -- defined further down, with the recruit window
 
 local function draw(state)
+	lastState = state
 	local stats = state.stats
 	local gold = state.gold
 
@@ -415,7 +466,7 @@ local function draw(state)
 
 	-- Keep
 	keepSummary.Text = `Attack {stats.attack}   |   Defense {stats.defense}   |   Renown {Format.short(state.renown)}\n`
-		.. `Holdings {stats.holdingsOwned} / {stats.holdingSlots}   |   Warband {#state.soldiers + 1} fighters\n`
+		.. `Holdings {stats.holdingsOwned} / {stats.holdingSlots}   |   Soldiers {stats.crewSize} / {#state.crew}\n`
 		.. `Skill points to spend: {state.skillPoints}`
 	for _, skill in GameConfig.Skills do
 		local row = skillRows[skill.id]
@@ -489,31 +540,57 @@ local function draw(state)
 	end
 
 	-- Warband
-	warbandSummary.Text = `You lead the warband, plus {#state.soldiers} / {state.soldierSlots} soldiers.\n`
-		.. `Buy soldiers in the Market. Total attack {stats.attack}, defense {stats.defense}`
-	if state.soldierSlots >= GameConfig.MaxSoldierSlots then
-		setButton(slotButton, "Max slots", false, COLOR_BUY)
-	else
-		local slotCost = GameConfig.getSlotCost(state.soldierSlots)
-		setButton(slotButton, `New slot\n{Format.short(slotCost)}`, gold >= slotCost, COLOR_BUY)
-	end
-	local soldiers = table.clone(state.soldiers)
-	table.sort(soldiers, function(a, b)
-		return a.attack + a.defense > b.attack + b.defense
-	end)
-	for index, row in soldierRows do
-		local soldier = soldiers[index]
-		row.uid = if soldier then soldier.uid else nil
-		row.info.Parent.Visible = soldier ~= nil
+	local crew = state.crew
+	warbandSummary.Text = `Soldiers {stats.crewSize} / {#crew}   |   Attack {Format.short(stats.attack)}   |   Defense {Format.short(stats.defense)}\n`
+		.. `Warband size bonus +{math.floor(stats.crewBonus * 100 + 0.5)}% attack and defense`
+
+	youRow.info.Text = `<b>You</b>, leader\nAttack {GameConfig.BaseAttack + (state.skills.attack or 0)}, defense {GameConfig.BaseDefense + (state.skills.defense or 0)} before gear`
+	youRow.gearText.Text = `Weapon: {gearLine(state.yourGear.Weapon)}\nArmor: {gearLine(state.yourGear.Armor)}\nMount: {gearLine(state.yourGear.Mount)}`
+
+	for slot, row in crewRows do
+		local soldier = crew[slot]
+		row.frame.Visible = soldier ~= nil
+		if soldier == nil then
+			continue
+		end
 		if soldier then
-			row.info.Text = `{rarityName(soldier)}  Lv {soldier.level}\n{statText(soldier.attack, soldier.defense)}`
-			setButton(row.button, `Release\n+{Format.short(soldier.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
+			local rank = if soldier.train > 0 then ` +{soldier.train}` else ""
+			row.info.Text = `{rarityName({ rarity = soldier.rarity, name = soldier.class })}{rank}\n{soldier.name}, {soldier.tier} recruit\n{statText(soldier.attack, soldier.defense)}`
+			row.gearText.Text = `Weapon: {gearLine(soldier.gear.Weapon)}\nArmor: {gearLine(soldier.gear.Armor)}\nMount: {gearLine(soldier.gear.Mount)}`
+			row.train.Visible = true
+			if soldier.train >= GameConfig.MaxTrainRank then
+				setButton(row.train, "Fully trained", false, COLOR_BUY)
+			else
+				setButton(row.train, `Train +{soldier.train + 1}\n{Format.short(soldier.trainCost)}`, gold >= soldier.trainCost, COLOR_BUY)
+			end
+			setButton(row.roll, "Reroll", true, COLOR_ACTION)
+			row.release.Visible = true
+			setButton(row.release, "Release", true, COLOR_DISABLED)
+		else
+			row.info.Text = `<b>Empty slot {slot}</b>\nRecruit someone to fill it.`
+			row.gearText.Text = ""
+			row.train.Visible = false
+			row.release.Visible = false
+			setButton(row.roll, "Recruit", true, COLOR_ACTION)
+		end
+	end
+
+	local nextSlot = #crew + 1
+	lockedInfo.Parent.Visible = nextSlot <= GameConfig.MaxSoldierSlots
+	if nextSlot <= GameConfig.MaxSoldierSlots then
+		local slotLevel = GameConfig.getSlotLevel(nextSlot)
+		local slotCost = GameConfig.getSlotCost(nextSlot)
+		lockedInfo.Text = `Locked slot {nextSlot}\nEach slot costs more than the last.`
+		if state.level < slotLevel then
+			setButton(unlockButton, `Level {slotLevel}\n{Format.short(slotCost)}`, false, COLOR_BUY)
+		else
+			setButton(unlockButton, `Unlock\n{Format.short(slotCost)}`, gold >= slotCost, COLOR_BUY)
 		end
 	end
 
 	-- Armory
 	armorySummary.Text = `Gear {#state.gear} / {GameConfig.MaxGearOwned}. Your best weapon, armor and mount are used automatically, `
-		.. `one each for you and every soldier. Buy gear in the Market.`
+		.. `one each for you and every soldier, strongest soldier first. Buy gear in the Market.`
 	local gear = table.clone(state.gear)
 	local slotOrder = { Weapon = 1, Armor = 2, Mount = 3 }
 	table.sort(gear, function(a, b)
@@ -552,13 +629,230 @@ local function draw(state)
 	end
 end
 
-stateRemote.OnClientEvent:Connect(draw)
+stateRemote.OnClientEvent:Connect(function(state)
+	draw(state)
+	refreshRecruitWindow()
+end)
+
+---------------------------------------------------------------------------
+-- Recruit window: roll soldiers until one of the chosen rarity turns up
+---------------------------------------------------------------------------
+
+local recruitGui = Instance.new("ScreenGui")
+recruitGui.Name = "KingdomRecruit"
+recruitGui.DisplayOrder = 5
+recruitGui.ResetOnSpawn = false
+recruitGui.Enabled = false
+recruitGui.Parent = playerGui
+
+local shade = makeFrame(recruitGui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(0, 0, 0))
+shade.BackgroundTransparency = 0.45
+
+local recruitWindow = makeFrame(recruitGui, UDim2.fromOffset(540, 430), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
+recruitWindow.AnchorPoint = Vector2.new(0.5, 0.5)
+addCorner(recruitWindow, 10)
+local windowStroke = Instance.new("UIStroke")
+windowStroke.Color = COLOR_HEADER
+windowStroke.Thickness = 1.5
+windowStroke.Parent = recruitWindow
+local windowLimit = Instance.new("UISizeConstraint")
+windowLimit.MaxSize = Vector2.new(540, 430)
+windowLimit.Parent = recruitWindow
+local windowScale = Instance.new("UIScale")
+windowScale.Parent = recruitWindow
+
+local recruitTitle = makeText(recruitWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
+recruitTitle.Font = Enum.Font.GothamBold
+recruitTitle.Text = "RECRUIT"
+
+local closeButton = makeButton(recruitWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
+closeButton.Text = "X"
+closeButton.TextSize = 18
+
+local targetBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 44), UDim2.fromOffset(16, 50), Color3.fromRGB(70, 35, 30))
+addCorner(targetBox, 6)
+local targetText = makeText(targetBox, UDim2.new(1, -16, 1, -6), UDim2.fromOffset(8, 3), COLOR_TEXT, 13)
+targetText.RichText = true
+
+local function sectionLabel(text: string, y: number)
+	local label = makeText(recruitWindow, UDim2.new(1, -32, 0, 18), UDim2.fromOffset(16, y), COLOR_DIM, 12)
+	label.Font = Enum.Font.GothamBold
+	label.Text = text
+end
+
+-- A row of equal buttons across the window.
+local function buttonRow(count: number, y: number, height: number, perRow: number?)
+	local columns = perRow or count
+	local buttons = {}
+	for index = 1, count do
+		local column = (index - 1) % columns
+		local line = math.floor((index - 1) / columns)
+		local b = makeButton(
+			recruitWindow,
+			UDim2.new(1 / columns, -8 - 32 / columns, 0, height),
+			UDim2.new(column / columns, 20 - 32 * column / columns, 0, y + line * (height + 6)),
+			COLOR_ROW
+		)
+		buttons[index] = b
+	end
+	return buttons
+end
+
+sectionLabel("RECRUIT TIER", 102)
+local tierButtons = buttonRow(#GameConfig.RecruitTiers, 122, 46)
+sectionLabel("STOP AT THIS RARITY OR BETTER", 176)
+local rarityButtons = buttonRow(#GameConfig.Rarities, 196, 32, 4)
+sectionLabel("SLOTS", 272)
+local scopeButtons = buttonRow(3, 292, 34)
+
+local chanceBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 30), UDim2.fromOffset(16, 334), COLOR_ROW)
+addCorner(chanceBox, 6)
+local chanceText = makeText(chanceBox, UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), COLOR_TEXT, 13)
+
+local startButton = makeButton(recruitWindow, UDim2.fromOffset(260, 44), UDim2.new(0.5, 0, 1, -14), COLOR_GOLD)
+startButton.AnchorPoint = Vector2.new(0.5, 1)
+startButton.TextColor3 = Color3.fromRGB(35, 28, 10)
+startButton.TextSize = 18
+startButton.Text = "START"
+
+local SCOPES = { "this", "empty", "below" }
+local recruitSlot = 0
+local chosenTier = 1
+local chosenRarity = 3
+local chosenScope = "this"
+
+-- How many slots each scope would roll for, with the current choices.
+local function scopeCount(state, scope: string): number
+	if scope == "this" then
+		return if recruitSlot > 0 then 1 else 0
+	end
+	local count = 0
+	for _, soldier in state.crew do
+		if not soldier or (scope == "below" and GameConfig.getRarityRank(soldier.rarity) < chosenRarity) then
+			count += 1
+		end
+	end
+	return count
+end
+
+function refreshRecruitWindow()
+	if not recruitGui.Enabled or not lastState then
+		return
+	end
+	local state = lastState
+	local gold = state.gold
+
+	-- Fit the window on small screens.
+	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+	windowScale.Scale = math.min(1, (viewport.X - 20) / 540, (viewport.Y - 20) / 430)
+
+	local slotSoldier = if recruitSlot > 0 then state.crew[recruitSlot] else nil
+	if recruitSlot > 0 and slotSoldier then
+		local rank = if slotSoldier.train > 0 then ` +{slotSoldier.train}` else ""
+		targetText.Text = `{rarityName({ rarity = slotSoldier.rarity, name = slotSoldier.class })}{rank}  {slotSoldier.name}\n<font color="#E08A7A">Slot {recruitSlot} is replaced when a roll hits. Training is lost.</font>`
+	elseif recruitSlot > 0 then
+		targetText.Text = `<b>Slot {recruitSlot}</b>\nThis slot is empty.`
+	else
+		targetText.Text = "<b>Your warband</b>\nRoll for every empty slot, or for every slot below a rarity."
+	end
+
+	for index, tier in GameConfig.RecruitTiers do
+		local b = tierButtons[index]
+		local unlocked = state.level >= tier.level
+		local costText = if unlocked then Format.short(tier.cost) else `Level {tier.level}`
+		b.Text = `{string.upper(tier.id)}\n{costText}`
+		b.BackgroundColor3 = if index == chosenTier then COLOR_SELECTED else COLOR_ROW
+		b.TextColor3 = if unlocked then Color3.new(1, 1, 1) else COLOR_DIM
+	end
+
+	-- Keep the chosen rarity one this tier can roll.
+	local tier = GameConfig.RecruitTiers[chosenTier]
+	while chosenRarity > 1 and GameConfig.getChanceAtLeast(tier, GameConfig.Rarities[chosenRarity].id) <= 0 do
+		chosenRarity -= 1
+	end
+
+	for index, rarity in GameConfig.Rarities do
+		local b = rarityButtons[index]
+		local possible = GameConfig.getChanceAtLeast(tier, rarity.id) > 0
+		b.Text = string.upper(rarity.id)
+		b.TextColor3 = if possible then rarity.color else COLOR_DISABLED
+		b.BackgroundColor3 = if index == chosenRarity then COLOR_SELECTED else COLOR_ROW
+	end
+
+	if recruitSlot == 0 and chosenScope == "this" then
+		chosenScope = "empty"
+	end
+	local labels = {
+		this = if recruitSlot > 0 then "THIS SLOT ONLY" else "NO SLOT PICKED",
+		empty = `EMPTY SLOTS ({scopeCount(state, "empty")})`,
+		below = `BELOW {string.upper(GameConfig.Rarities[chosenRarity].id)} ({scopeCount(state, "below")})`,
+	}
+	for index, scope in SCOPES do
+		local b = scopeButtons[index]
+		b.Text = labels[scope]
+		b.TextSize = 12
+		b.BackgroundColor3 = if scope == chosenScope then COLOR_SELECTED else COLOR_ROW
+	end
+
+	local chance = GameConfig.getChanceAtLeast(tier, GameConfig.Rarities[chosenRarity].id)
+	local expected = if chance > 0 then tier.cost / chance else 0
+	chanceText.Text = string.format("Chance per roll: %.2f%%   |   Average cost per hit: %s gold", chance * 100, Format.short(expected))
+
+	local ready = state.level >= tier.level and gold >= tier.cost and scopeCount(state, chosenScope) > 0
+	startButton.BackgroundColor3 = if ready then COLOR_GOLD else COLOR_DISABLED
+end
+
+function openRecruitWindow(slot: number)
+	recruitSlot = slot
+	chosenScope = if slot > 0 then "this" else "empty"
+	recruitGui.Enabled = true
+	refreshRecruitWindow()
+end
+
+for index in GameConfig.RecruitTiers do
+	tierButtons[index].Activated:Connect(function()
+		chosenTier = index
+		refreshRecruitWindow()
+	end)
+end
+for index, rarity in GameConfig.Rarities do
+	rarityButtons[index].Activated:Connect(function()
+		if GameConfig.getChanceAtLeast(GameConfig.RecruitTiers[chosenTier], rarity.id) > 0 then
+			chosenRarity = index
+			refreshRecruitWindow()
+		end
+	end)
+end
+for index, scope in SCOPES do
+	scopeButtons[index].Activated:Connect(function()
+		if scope ~= "this" or recruitSlot > 0 then
+			chosenScope = scope
+			refreshRecruitWindow()
+		end
+	end)
+end
+
+closeButton.Activated:Connect(function()
+	recruitGui.Enabled = false
+end)
+
+startButton.Activated:Connect(function()
+	local tier = GameConfig.RecruitTiers[chosenTier]
+	local rarity = GameConfig.Rarities[chosenRarity]
+	send("Roll", `{math.max(recruitSlot, 1)}:{tier.id}:{rarity.id}:{chosenScope}`)
+end)
 
 ---------------------------------------------------------------------------
 -- Toasts: short messages from the server
 ---------------------------------------------------------------------------
 
-local toast = makeText(gui, UDim2.fromOffset(480, 40), UDim2.new(0.5, 0, 1, -54), Color3.new(1, 1, 1), 15)
+local toastGui = Instance.new("ScreenGui")
+toastGui.Name = "KingdomToasts"
+toastGui.DisplayOrder = 10
+toastGui.ResetOnSpawn = false
+toastGui.Parent = playerGui
+
+local toast = makeText(toastGui, UDim2.fromOffset(520, 40), UDim2.new(0.5, 0, 1, -54), Color3.new(1, 1, 1), 15)
 toast.AnchorPoint = Vector2.new(0.5, 0)
 toast.TextXAlignment = Enum.TextXAlignment.Center
 toast.BackgroundTransparency = 0.05

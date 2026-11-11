@@ -11,6 +11,7 @@ local RunService = game:GetService("RunService")
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
+local Recruit = require(script.Parent.Recruit)
 local PlayerData = require(script.Parent.PlayerData)
 
 local AUTOSAVE_SECONDS = 60
@@ -64,43 +65,80 @@ local function itemPower(item): number
 	return item.attack + item.defense
 end
 
--- The gear actually in use: the best pieces per slot, one for you and one
--- for each soldier. Returns attack, defense, and a set of the item ids used.
-local function getGearInUse(data): (number, number, { [string]: boolean })
-	local members = 1 + #data.soldiers
+-- Soldiers currently in the warband, with the slot each is in.
+local function filledSlots(data)
+	local list = {}
+	for slot, soldier in data.crew do
+		if soldier then
+			table.insert(list, { slot = slot, soldier = soldier })
+		end
+	end
+	return list
+end
+
+-- Hands out gear automatically: in each gear slot, the best piece goes to
+-- you, the next best to your strongest soldier, and so on.
+-- Returns attack and defense from gear, the set of item ids in use, and
+-- what each member wears: wearing[0] is you, wearing[slot] is a soldier.
+local function assignGear(data): (number, number, { [string]: boolean }, { [number]: { [string]: any } })
+	local members = { 0 }
+	local filled = filledSlots(data)
+	table.sort(filled, function(a, b)
+		local aAttack, aDefense = GameConfig.getSoldierStats(a.soldier)
+		local bAttack, bDefense = GameConfig.getSoldierStats(b.soldier)
+		return aAttack + aDefense > bAttack + bDefense
+	end)
+	for _, entry in filled do
+		table.insert(members, entry.slot)
+	end
+
 	local attack, defense = 0, 0
 	local used = {}
+	local wearing = {}
+	for _, member in members do
+		wearing[member] = {}
+	end
 
-	for _, slot in GameConfig.GearSlots do
+	for _, gearSlot in GameConfig.GearSlots do
 		local pieces = {}
 		for _, item in data.gear do
-			if item.slot == slot then
+			if item.slot == gearSlot then
 				table.insert(pieces, item)
 			end
 		end
 		table.sort(pieces, function(a, b)
 			return itemPower(a) > itemPower(b)
 		end)
-		for index = 1, math.min(#pieces, members) do
-			attack += pieces[index].attack
-			defense += pieces[index].defense
-			used[pieces[index].uid] = true
+		for index, member in members do
+			local piece = pieces[index]
+			if piece then
+				attack += piece.attack
+				defense += piece.defense
+				used[piece.uid] = true
+				wearing[member][gearSlot] = piece
+			end
 		end
 	end
 
-	return attack, defense, used
+	return attack, defense, used, wearing
 end
 
 local function getStats(data)
 	local attack = GameConfig.BaseAttack + skillTotal(data, "attack")
 	local defense = GameConfig.BaseDefense + skillTotal(data, "defense")
 
-	for _, soldier in data.soldiers do
-		attack += soldier.attack
-		defense += soldier.defense
+	local crewSize = 0
+	for _, soldier in data.crew do
+		if soldier then
+			local soldierAttack, soldierDefense = GameConfig.getSoldierStats(soldier)
+			attack += soldierAttack
+			defense += soldierDefense
+			crewSize += 1
+		end
 	end
 
-	local gearAttack, gearDefense = getGearInUse(data)
+	local gearAttack, gearDefense = assignGear(data)
+	local crewBonus = crewSize * GameConfig.CrewSizeBonus
 
 	local incomePerHour = 0
 	local holdingsOwned = 0
@@ -116,8 +154,10 @@ local function getStats(data)
 		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy"),
 		maxStamina = GameConfig.BaseMaxStamina + skillTotal(data, "stamina"),
 		maxHealth = GameConfig.BaseMaxHealth + skillTotal(data, "health"),
-		attack = attack + gearAttack,
-		defense = defense + gearDefense,
+		attack = math.floor((attack + gearAttack) * (1 + crewBonus)),
+		defense = math.floor((defense + gearDefense) * (1 + crewBonus)),
+		crewSize = crewSize,
+		crewBonus = crewBonus,
 		holdingSlots = GameConfig.BaseHoldingSlots + skillTotal(data, "slots"),
 		holdingsOwned = holdingsOwned,
 		incomePerHour = incomePerHour,
@@ -139,7 +179,24 @@ local function refresh(player: Player)
 	if data.market.window ~= window then
 		data.market = Market.roll(player.UserId, window, data.level)
 	end
-	local _, _, gearInUse = getGearInUse(data)
+	local _, _, gearInUse, wearing = assignGear(data)
+
+	-- The warband as the client draws it: each slot with its soldier's
+	-- stats and gear worked out.
+	local crew = {}
+	for slot, soldier in data.crew do
+		if soldier then
+			local soldierAttack, soldierDefense = GameConfig.getSoldierStats(soldier)
+			local entry = table.clone(soldier)
+			entry.attack = soldierAttack
+			entry.defense = soldierDefense
+			entry.trainCost = GameConfig.getTrainCost(soldier)
+			entry.gear = wearing[slot] or {}
+			crew[slot] = entry
+		else
+			crew[slot] = false
+		end
+	end
 
 	local foes = {}
 	for _, foe in GameConfig.Foes do
@@ -164,8 +221,8 @@ local function refresh(player: Player)
 		skills = data.skills,
 		quests = data.quests,
 		holdings = data.holdings,
-		soldierSlots = data.soldierSlots,
-		soldiers = data.soldiers,
+		crew = crew,
+		yourGear = wearing[0] or {},
 		gear = data.gear,
 		gearInUse = gearInUse,
 		market = data.market.items,
@@ -289,11 +346,116 @@ function actions.Skill(player: Player, data, id: string)
 end
 
 function actions.Slot(player: Player, data)
-	if data.soldierSlots >= GameConfig.MaxSoldierSlots then
+	local nextSlot = #data.crew + 1
+	if nextSlot > GameConfig.MaxSoldierSlots then
 		return
 	end
-	if spendGold(player, data, GameConfig.getSlotCost(data.soldierSlots)) then
-		data.soldierSlots += 1
+	local level = GameConfig.getSlotLevel(nextSlot)
+	if data.level < level then
+		sendToast(player, `You need level {level} to unlock this slot.`)
+		return
+	end
+	if spendGold(player, data, GameConfig.getSlotCost(nextSlot)) then
+		table.insert(data.crew, false)
+		sendToast(player, "A new warband slot is open. Recruit someone to fill it.")
+	end
+end
+
+-- Recruits soldiers by rolling. id is "slot:tier:rarity:scope", for example
+-- "3:Royal:Epic:this". Rolls keep going until a soldier of that rarity or
+-- better turns up, gold runs out, or the roll limit is reached. Only the
+-- soldier that hits the target is kept; it replaces whoever was in the slot.
+--   scope "this"  = just that slot
+--   scope "empty" = every empty slot
+--   scope "below" = every slot that is empty or below that rarity
+function actions.Roll(player: Player, data, id: string)
+	local slotText, tierId, rarityId, scope = string.match(id, "^(%d+):(%a+):(%a+):(%a+)$")
+	local tier = tierId and GameConfig.getRecruitTier(tierId)
+	if not tier then
+		return
+	end
+	if data.level < tier.level then
+		sendToast(player, `You need level {tier.level} for {tier.id} recruits.`)
+		return
+	end
+	local targetRank = GameConfig.getRarityRank(rarityId)
+	if GameConfig.Rarities[targetRank].id ~= rarityId or GameConfig.getChanceAtLeast(tier, rarityId) <= 0 then
+		sendToast(player, `{tier.id} recruits can never be {rarityId}.`)
+		return
+	end
+
+	local targets = {}
+	if scope == "this" then
+		local slot = tonumber(slotText)
+		if slot and data.crew[slot] ~= nil then
+			table.insert(targets, slot)
+		end
+	else
+		for slot, soldier in data.crew do
+			if not soldier or (scope == "below" and GameConfig.getRarityRank(soldier.rarity) < targetRank) then
+				table.insert(targets, slot)
+			end
+		end
+	end
+	if #targets == 0 then
+		sendToast(player, "No slots match. Pick another option.")
+		return
+	end
+	if data.gold < tier.cost then
+		sendToast(player, `Not enough gold. One {tier.id} roll costs {Format.short(tier.cost)}.`)
+		return
+	end
+
+	local rolls, filled, best = 0, 0, nil
+	for _, slot in targets do
+		while rolls < GameConfig.MaxRollsPerRequest and data.gold >= tier.cost do
+			data.gold -= tier.cost
+			rolls += 1
+			local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
+			data.nextItemId += 1
+			if GameConfig.getRarityRank(soldier.rarity) >= targetRank then
+				data.crew[slot] = soldier
+				filled += 1
+				if not best or GameConfig.getRarityRank(soldier.rarity) > GameConfig.getRarityRank(best.rarity) then
+					best = soldier
+				end
+				break
+			end
+		end
+	end
+
+	local spent = Format.short(rolls * tier.cost)
+	if filled == 0 then
+		sendToast(player, `{rolls} rolls ({spent} gold) and no {rarityId} or better. Try again.`)
+	elseif filled == 1 and best then
+		sendToast(player, `{best.rarity} {best.class} {best.name} joined after {rolls} rolls ({spent} gold).`)
+	elseif best then
+		sendToast(player, `Filled {filled} of {#targets} slots in {rolls} rolls ({spent} gold). Best: {best.rarity} {best.name}.`)
+	end
+end
+
+function actions.Train(player: Player, data, id: string)
+	local slot = tonumber(id)
+	local soldier = slot and data.crew[slot]
+	if not soldier then
+		return
+	end
+	if soldier.train >= GameConfig.MaxTrainRank then
+		sendToast(player, `{soldier.name} is fully trained.`)
+		return
+	end
+	if spendGold(player, data, GameConfig.getTrainCost(soldier)) then
+		soldier.train += 1
+	end
+end
+
+-- Dismisses the soldier in a slot. The slot stays unlocked and empty.
+function actions.Release(player: Player, data, id: string)
+	local slot = tonumber(id)
+	local soldier = slot and data.crew[slot]
+	if soldier then
+		data.crew[slot] = false
+		sendToast(player, `{soldier.name} left the warband.`)
 	end
 end
 
@@ -308,11 +470,7 @@ function actions.Buy(player: Player, data, id: string)
 		sendToast(player, `You need level {item.level} to buy this.`)
 		return
 	end
-	if item.kind == "Soldier" and #data.soldiers >= data.soldierSlots then
-		sendToast(player, "Your warband is full. Release a soldier or unlock a slot.")
-		return
-	end
-	if item.kind == "Gear" and #data.gear >= GameConfig.MaxGearOwned then
+	if #data.gear >= GameConfig.MaxGearOwned then
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return
 	end
@@ -326,26 +484,19 @@ function actions.Buy(player: Player, data, id: string)
 	owned.uid = "i" .. data.nextItemId
 	data.nextItemId += 1
 
-	if owned.kind == "Soldier" then
-		table.insert(data.soldiers, owned)
-		sendToast(player, `A {owned.rarity} {owned.name} joined your warband.`)
-	else
-		table.insert(data.gear, owned)
-		sendToast(player, `You bought a {owned.rarity} {owned.name}.`)
-	end
+	table.insert(data.gear, owned)
+	sendToast(player, `You bought a {owned.rarity} {owned.name}.`)
 end
 
--- Sells a piece of gear or releases a soldier, for part of its price.
+-- Sells a piece of gear for part of its price.
 function actions.Sell(player: Player, data, id: string)
-	for _, list in { data.gear, data.soldiers } do
-		for index, item in list do
-			if item.uid == id then
-				table.remove(list, index)
-				local refund = math.floor(item.price * GameConfig.SellShare)
-				data.gold += refund
-				sendToast(player, `{item.rarity} {item.name} gone for {Format.short(refund)} gold.`)
-				return
-			end
+	for index, item in data.gear do
+		if item.uid == id then
+			table.remove(data.gear, index)
+			local refund = math.floor(item.price * GameConfig.SellShare)
+			data.gold += refund
+			sendToast(player, `Sold {item.rarity} {item.name} for {Format.short(refund)} gold.`)
+			return
 		end
 	end
 end

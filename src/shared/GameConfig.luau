@@ -97,6 +97,8 @@ GameConfig.Rarities = {
 	{ id = "Epic", chance = 60, stats = 3, price = 6, color = Color3.fromRGB(180, 100, 230) },
 	{ id = "Legendary", chance = 18, stats = 4.5, price = 12, color = Color3.fromRGB(245, 165, 50) },
 	{ id = "Mythic", chance = 2, stats = 7, price = 30, color = Color3.fromRGB(240, 70, 90) },
+	-- Divine never appears in the Market. Only Royal recruits can roll it.
+	{ id = "Divine", chance = 0, stats = 11, price = 80, color = Color3.fromRGB(255, 240, 150) },
 }
 
 ---------------------------------------------------------------------------
@@ -105,13 +107,12 @@ GameConfig.Rarities = {
 
 GameConfig.MarketRestockSeconds = 5 * 60
 GameConfig.MarketSize = 8
-GameConfig.MarketSoldierShare = 0.35 -- share of the stock that is soldiers
 -- Item levels roll from the player's level plus or minus these amounts,
 -- so some items are a goal to level up for.
 GameConfig.MarketLevelBelow = 2
 GameConfig.MarketLevelAbove = 3
 
--- Selling or releasing gives back this share of the price.
+-- Selling gear gives back this share of the price.
 GameConfig.SellShare = 0.25
 GameConfig.MaxGearOwned = 40
 
@@ -120,20 +121,110 @@ GameConfig.ItemStatGrowth = 0.15 -- +15% stats per level
 GameConfig.ItemPriceGrowth = 1.18 -- x1.18 price per level
 
 ---------------------------------------------------------------------------
--- Warband: you always fight, plus one soldier per unlocked slot
+-- Warband: you always fight, plus one soldier per unlocked slot.
+-- Soldiers are recruited by rolling. A roll costs gold, and the recruit
+-- tier decides the odds of each rarity and how strong the soldier is.
 ---------------------------------------------------------------------------
 
-GameConfig.MaxSoldierSlots = 10
-GameConfig.SoldierSlotBaseCost = 2000
-GameConfig.SoldierSlotCostGrowth = 2.5
+GameConfig.MaxSoldierSlots = 20
 
--- Soldier classes. attack and defense are at item level 1, Common.
-GameConfig.SoldierClasses = {
-	{ id = "Militia", attack = 2, defense = 2, price = 400 },
-	{ id = "Archer", attack = 4, defense = 1, price = 500 },
-	{ id = "Knight", attack = 2, defense = 4, price = 550 },
-	{ id = "Battle Mage", attack = 5, defense = 1, price = 650 },
+-- Slot n (counting from 1) needs this level and gold to unlock.
+-- Slot 1 is open from the start.
+function GameConfig.getSlotLevel(slot: number): number
+	return if slot <= 1 then 1 else (slot - 1) * 3
+end
+
+function GameConfig.getSlotCost(slot: number): number
+	return if slot <= 1 then 0 else math.floor(1500 * 2.2 ^ (slot - 2))
+end
+
+-- Each soldier in the warband adds this much to your total attack and defense.
+GameConfig.CrewSizeBonus = 0.02
+
+-- chances are weights for each rarity, in the same order as GameConfig.Rarities.
+GameConfig.RecruitTiers = {
+	{ id = "Village", level = 1, cost = 500, power = 1, chances = { 600, 280, 90, 25, 4.5, 0.5, 0 } },
+	{ id = "Mercenary", level = 10, cost = 50000, power = 7, chances = { 250, 350, 250, 110, 35, 5, 0 } },
+	{ id = "Royal", level = 25, cost = 5000000, power = 45, chances = { 0, 150, 350, 300, 150, 48, 2 } },
 }
+
+-- Most rolls one auto-roll request may make, to keep the server fast.
+GameConfig.MaxRollsPerRequest = 1000
+
+-- Training adds this much to a soldier's stats per rank, and costs this
+-- share of their recruit tier's roll cost, growing each rank.
+GameConfig.TrainStatBonus = 0.08
+GameConfig.TrainCostShare = 0.5
+GameConfig.TrainCostGrowth = 1.6
+GameConfig.MaxTrainRank = 20
+
+-- Soldier classes. attack and defense are for a Common Village soldier.
+GameConfig.SoldierClasses = {
+	{ id = "Militia", attack = 3, defense = 3 },
+	{ id = "Archer", attack = 5, defense = 1 },
+	{ id = "Knight", attack = 2, defense = 5 },
+	{ id = "Battle Mage", attack = 6, defense = 1 },
+	{ id = "Ranger", attack = 4, defense = 3 },
+}
+
+GameConfig.FirstNames = {
+	"Aldric", "Bertram", "Cedric", "Edwin", "Godfrey", "Hamlin", "Osric", "Roland", "Tobias", "Wystan",
+	"Ada", "Brienne", "Elswyth", "Gwen", "Isolde", "Maud", "Rowena", "Sabine", "Thea", "Wren",
+}
+GameConfig.Epithets = {
+	"the Bold", "Ironhand", "the Quiet", "Stormborn", "the Fox", "Oakheart", "the Grim", "Swiftbow",
+	"the Unbroken", "Ashcloak", "Two-Blades", "the Wise", "Ravensong", "the Wall", "Brightshield",
+}
+
+function GameConfig.getRecruitTier(id: string)
+	for _, tier in GameConfig.RecruitTiers do
+		if tier.id == id then
+			return tier
+		end
+	end
+	return nil
+end
+
+function GameConfig.getRarityRank(id: string): number
+	for index, rarity in GameConfig.Rarities do
+		if rarity.id == id then
+			return index
+		end
+	end
+	return 1
+end
+
+-- Chance (0 to 1) that one roll in `tier` lands on `rarityId` or better.
+function GameConfig.getChanceAtLeast(tier, rarityId: string): number
+	local rank = GameConfig.getRarityRank(rarityId)
+	local total, hit = 0, 0
+	for index, weight in tier.chances do
+		total += weight
+		if index >= rank then
+			hit += weight
+		end
+	end
+	return if total > 0 then hit / total else 0
+end
+
+-- A soldier's own attack and defense, before gear and the crew size bonus.
+function GameConfig.getSoldierStats(soldier): (number, number)
+	local class = GameConfig.SoldierClasses[1]
+	for _, candidate in GameConfig.SoldierClasses do
+		if candidate.id == soldier.class then
+			class = candidate
+		end
+	end
+	local tier = GameConfig.getRecruitTier(soldier.tier) or GameConfig.RecruitTiers[1]
+	local rarity = GameConfig.getRarity(soldier.rarity)
+	local scale = rarity.stats * tier.power * (1 + GameConfig.TrainStatBonus * soldier.train)
+	return math.floor(class.attack * scale + 0.5), math.floor(class.defense * scale + 0.5)
+end
+
+function GameConfig.getTrainCost(soldier): number
+	local tier = GameConfig.getRecruitTier(soldier.tier) or GameConfig.RecruitTiers[1]
+	return math.floor(tier.cost * GameConfig.TrainCostShare * GameConfig.TrainCostGrowth ^ soldier.train)
+end
 
 ---------------------------------------------------------------------------
 -- Gear: one weapon, one armor and one mount for you and for each soldier.
@@ -208,9 +299,5 @@ function GameConfig.getItemPrice(base: number, level: number, rarity): number
 	return math.floor(base * GameConfig.ItemPriceGrowth ^ (level - 1) * rarity.price)
 end
 
--- Gold for the next soldier slot when you already have `slots` of them.
-function GameConfig.getSlotCost(slots: number): number
-	return math.floor(GameConfig.SoldierSlotBaseCost * GameConfig.SoldierSlotCostGrowth ^ slots)
-end
 
 return GameConfig

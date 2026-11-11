@@ -1,4 +1,4 @@
--- Rolls the Market's stock. Everyone's Market restocks at the same moment,
+-- Rolls the Market's gear stock. Everyone's Market restocks at the same moment,
 -- every GameConfig.MarketRestockSeconds, but each player gets their own
 -- items, rolled around their level.
 
@@ -38,22 +38,6 @@ local function rollLevel(random: Random, playerLevel: number): number
 	return random:NextInteger(low, high)
 end
 
-local function rollSoldier(random: Random, playerLevel: number)
-	local class = GameConfig.SoldierClasses[random:NextInteger(1, #GameConfig.SoldierClasses)]
-	local rarity = rollRarity(random)
-	local level = rollLevel(random, playerLevel)
-	return {
-		kind = "Soldier",
-		slot = "Soldier",
-		name = class.id,
-		rarity = rarity.id,
-		level = level,
-		attack = GameConfig.getItemStat(class.attack, level, rarity),
-		defense = GameConfig.getItemStat(class.defense, level, rarity),
-		price = GameConfig.getItemPrice(class.price, level, rarity),
-	}
-end
-
 local function rollGear(random: Random, playerLevel: number)
 	local slot = GameConfig.GearSlots[random:NextInteger(1, #GameConfig.GearSlots)]
 	local gearType = GameConfig.GearTypes[slot]
@@ -77,12 +61,7 @@ function Market.roll(userId: number, window: number, playerLevel: number)
 	local random = Random.new(userId * 7919 + window * 104729 + playerLevel)
 	local items = {}
 	for _ = 1, GameConfig.MarketSize do
-		local item
-		if random:NextNumber() < GameConfig.MarketSoldierShare then
-			item = rollSoldier(random, playerLevel)
-		else
-			item = rollGear(random, playerLevel)
-		end
+		local item = rollGear(random, playerLevel)
 		item.sold = false
 		table.insert(items, item)
 	end
