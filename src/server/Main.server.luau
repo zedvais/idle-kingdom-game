@@ -1,5 +1,7 @@
 -- Server entry point: runs the whole kingdom game loop.
 -- The server owns every rule (gold, costs, battles) so players cannot cheat.
+-- Players have no character. They watch their village from a fixed camera and
+-- play by tapping buttons, which arrive here through the Action remote.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,6 +13,21 @@ local PlayerData = require(script.Parent.PlayerData)
 local PlotBuilder = require(script.Parent.PlotBuilder)
 
 local AUTOSAVE_SECONDS = 60
+local MAX_ACTIONS_PER_SECOND = 25
+
+-- Nobody walks around in this game, so characters are never spawned.
+Players.CharacterAutoLoads = false
+
+-- Remotes the client uses: Action (client to server) and State (server to client).
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+local actionRemote = Instance.new("RemoteEvent")
+actionRemote.Name = "Action"
+actionRemote.Parent = remotes
+local stateRemote = Instance.new("RemoteEvent")
+stateRemote.Name = "State"
+stateRemote.Parent = remotes
+remotes.Parent = ReplicatedStorage
 
 -- Where each player's village goes. Two rows of four plots.
 local PLOT_ORIGINS = {}
@@ -20,7 +37,7 @@ for row = 0, 1 do
 	end
 end
 
-local sessions = {} -- [Player] = { data, canSave, plot, slot, attackReadyAt }
+local sessions = {} -- [Player] = { data, canSave, plot, slot, attackReadyAt, actionCount }
 local usedSlots = {} -- [slot index] = Player
 
 local buildingById = {}
@@ -84,7 +101,7 @@ local function claimSlot(player: Player): number
 end
 
 ---------------------------------------------------------------------------
--- Showing the current state on signs, prompts and the player's HUD
+-- Showing the current state: signs in the village and the player's menus
 ---------------------------------------------------------------------------
 
 local function refresh(player: Player)
@@ -95,77 +112,57 @@ local function refresh(player: Player)
 	local data = session.data
 	local plot = session.plot
 
+	-- Everything the client needs to draw its menus, already worked out.
+	local state = {
+		gold = data.gold,
+		goldPerSecond = getTotalIncome(data),
+		armyPower = getArmyPower(data),
+		landsConquered = data.landsConquered,
+		attackWait = math.max(0, math.ceil(session.attackReadyAt - os.clock())),
+		plotOrigin = plot.origin,
+		buildings = {},
+		units = {},
+	}
+
 	for _, building in GameConfig.Buildings do
 		local view = plot.buildings[building.id]
 		local entry = getEntry(data, building.id)
 		local locked = data.landsConquered < building.requiresLands
+		local income = getIncome(data, building)
+
+		state.buildings[building.id] = {
+			level = entry.level,
+			steward = entry.steward,
+			stored = entry.stored,
+			capacity = income * GameConfig.StorageSeconds,
+			income = income,
+			upgradeCost = GameConfig.getUpgradeCost(building, entry.level),
+			stewardCost = GameConfig.getStewardCost(building),
+			locked = locked,
+		}
 
 		if locked then
-			local land = GameConfig.Lands[building.requiresLands]
-			view.label.Text = `{building.name}\nConquer {land.name} to unlock`
+			view.label.Text = `{building.name} (locked)`
 			view.block.Transparency = 0.8
-			view.upgradePrompt.Enabled = false
-			view.stewardPrompt.Enabled = false
+		elseif entry.level == 0 then
+			view.label.Text = building.name
+			view.block.Transparency = 0.6
 		else
-			local cost = GameConfig.getUpgradeCost(building, entry.level)
-			view.upgradePrompt.Enabled = true
-			view.upgradePrompt.ObjectText = building.name
-			local verb = if entry.level == 0 then "Build" else "Upgrade"
-			view.upgradePrompt.ActionText = `{verb} ({Format.short(cost)} gold)`
-
-			if entry.level == 0 then
-				view.label.Text = `{building.name}\nNot built`
-				view.block.Transparency = 0.6
-				view.stewardPrompt.Enabled = false
-			else
-				local income = getIncome(data, building)
-				local status
-				if entry.steward then
-					status = "Steward collecting"
-				else
-					local capacity = income * GameConfig.StorageSeconds
-					status = `Stored {Format.short(entry.stored)} / {Format.short(capacity)}`
-				end
-				view.label.Text = `{building.name}  Lv {entry.level}\n{Format.short(income)} gold/s\n{status}`
-				view.block.Transparency = 0
-
-				view.stewardPrompt.Enabled = not entry.steward
-				view.stewardPrompt.ObjectText = building.name
-				view.stewardPrompt.ActionText = `Hire steward ({Format.short(GameConfig.getStewardCost(building))} gold)`
-			end
+			view.label.Text = `{building.name}  Lv {entry.level}`
+			view.block.Transparency = 0
 		end
 	end
 
 	for _, unit in GameConfig.Units do
-		local view = plot.units[unit.id]
 		local count = data.units[unit.id] or 0
-		view.label.Text = `{unit.name} x{Format.short(count)}\n+{Format.short(unit.power)} power each`
-		view.recruitPrompt.Enabled = true
-		view.recruitPrompt.ObjectText = unit.name
-		view.recruitPrompt.ActionText = `Recruit 1 ({Format.short(unit.cost)} gold)`
-		view.recruitTenPrompt.Enabled = true
-		view.recruitTenPrompt.ObjectText = unit.name
-		view.recruitTenPrompt.ActionText = `Recruit 10 ({Format.short(unit.cost * 10)} gold)`
+		state.units[unit.id] = count
+		plot.units[unit.id].label.Text = `{unit.name} x{Format.short(count)}`
 	end
 
-	local power = getArmyPower(data)
 	local nextLand = GameConfig.Lands[data.landsConquered + 1]
-	if nextLand then
-		local waitLeft = math.ceil(session.attackReadyAt - os.clock())
-		local status = if waitLeft > 0 then `Army resting: {waitLeft}s` else `Your power: {Format.short(power)}`
-		plot.war.label.Text = `Next: {nextLand.name}\nPower needed: {Format.short(nextLand.power)}\n{status}`
-		plot.war.attackPrompt.Enabled = waitLeft <= 0
-		plot.war.attackPrompt.ObjectText = nextLand.name
-		plot.war.attackPrompt.ActionText = "Attack"
-	else
-		plot.war.label.Text = "Every land is conquered!\nA new reign is coming soon"
-		plot.war.attackPrompt.Enabled = false
-	end
+	plot.war.label.Text = if nextLand then `Next: {nextLand.name}` else "All conquered!"
 
-	player:SetAttribute("Gold", data.gold)
-	player:SetAttribute("GoldPerSecond", getTotalIncome(data))
-	player:SetAttribute("ArmyPower", power)
-	player:SetAttribute("LandsConquered", data.landsConquered)
+	stateRemote:FireClient(player, state)
 
 	local leaderstats = player:FindFirstChild("leaderstats")
 	local goldStat = leaderstats and leaderstats:FindFirstChild("Gold")
@@ -288,48 +285,40 @@ end
 -- Joining and leaving
 ---------------------------------------------------------------------------
 
-local function connectPlot(player: Player, plot)
-	local function ifOwner(callback)
-		return function(whoTriggered: Player)
-			if whoTriggered == player then
-				callback()
-			else
-				sendToast(whoTriggered, `This is {player.DisplayName}'s kingdom.`)
-			end
-		end
+-- The client asks for something. Never trust what it sends: check everything.
+actionRemote.OnServerEvent:Connect(function(player: Player, action, id, amount)
+	local session = sessions[player]
+	if not session or type(action) ~= "string" then
+		return
 	end
 
-	for _, building in GameConfig.Buildings do
-		local view = plot.buildings[building.id]
-		view.upgradePrompt.Triggered:Connect(ifOwner(function()
-			upgrade(player, building)
-		end))
-		view.stewardPrompt.Triggered:Connect(ifOwner(function()
-			hireSteward(player, building)
-		end))
-		-- Walking onto the stone pad collects the stored gold.
-		view.pad.Touched:Connect(function(hit)
-			local character = hit.Parent
-			if character and Players:GetPlayerFromCharacter(character) == player then
-				collect(player, building.id)
-			end
-		end)
+	-- Ignore floods of requests (auto-clickers or exploits).
+	session.actionCount += 1
+	if session.actionCount > MAX_ACTIONS_PER_SECOND then
+		return
 	end
 
-	for _, unit in GameConfig.Units do
-		local view = plot.units[unit.id]
-		view.recruitPrompt.Triggered:Connect(ifOwner(function()
-			recruit(player, unit, 1)
-		end))
-		view.recruitTenPrompt.Triggered:Connect(ifOwner(function()
-			recruit(player, unit, 10)
-		end))
-	end
-
-	plot.war.attackPrompt.Triggered:Connect(ifOwner(function()
+	if action == "Attack" then
 		attack(player)
-	end))
-end
+		return
+	end
+
+	if type(id) ~= "string" then
+		return
+	end
+
+	local building = buildingById[id]
+	local unit = unitById[id]
+	if action == "Collect" and building then
+		collect(player, building.id)
+	elseif action == "Upgrade" and building then
+		upgrade(player, building)
+	elseif action == "Steward" and building then
+		hireSteward(player, building)
+	elseif action == "Recruit" and unit then
+		recruit(player, unit, if amount == 10 then 10 else 1)
+	end
+end)
 
 -- Gold earned by stewarded buildings while the player was away.
 local function grantOfflineGold(player: Player, data)
@@ -347,17 +336,6 @@ local function grantOfflineGold(player: Player, data)
 	if earned > 0 then
 		data.gold += earned
 		player:SetAttribute("OfflineGold", earned)
-	end
-end
-
-local function moveToPlot(player: Player, character: Model)
-	local session = sessions[player]
-	if not session then
-		return
-	end
-	task.wait(0.2) -- let the character finish spawning first
-	if character.Parent then
-		character:PivotTo(session.plot.spawnCFrame)
 	end
 end
 
@@ -389,17 +367,10 @@ local function onPlayerAdded(player: Player)
 		plot = plot,
 		slot = slot,
 		attackReadyAt = 0,
+		actionCount = 0,
 	}
 
-	connectPlot(player, plot)
 	refresh(player)
-
-	player.CharacterAdded:Connect(function(character)
-		moveToPlot(player, character)
-	end)
-	if player.Character then
-		moveToPlot(player, player.Character)
-	end
 end
 
 local function onPlayerRemoving(player: Player)
@@ -442,6 +413,7 @@ task.spawn(function()
 	while true do
 		task.wait(1)
 		for player, session in sessions do
+			session.actionCount = 0
 			local data = session.data
 			for _, building in GameConfig.Buildings do
 				local entry = getEntry(data, building.id)

@@ -25,9 +25,9 @@ end
 local function makeLabel(part: BasePart, height: number): TextLabel
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "Label"
-	billboard.Size = UDim2.fromOffset(230, 84)
+	billboard.Size = UDim2.fromOffset(170, 44)
 	billboard.StudsOffset = Vector3.new(0, height, 0)
-	billboard.MaxDistance = 150
+	billboard.MaxDistance = 400
 	billboard.Parent = part
 
 	local label = Instance.new("TextLabel")
@@ -46,26 +46,13 @@ local function makeLabel(part: BasePart, height: number): TextLabel
 	corner.Parent = label
 
 	local padding = Instance.new("UIPadding")
-	padding.PaddingTop = UDim.new(0, 6)
-	padding.PaddingBottom = UDim.new(0, 6)
+	padding.PaddingTop = UDim.new(0, 3)
+	padding.PaddingBottom = UDim.new(0, 3)
 	padding.PaddingLeft = UDim.new(0, 8)
 	padding.PaddingRight = UDim.new(0, 8)
 	padding.Parent = label
 
 	return label
-end
-
-local function makePrompt(part: BasePart, name: string, key: Enum.KeyCode, offsetY: number): ProximityPrompt
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = name
-	prompt.KeyboardKeyCode = key
-	prompt.HoldDuration = 0
-	prompt.MaxActivationDistance = 14
-	prompt.RequiresLineOfSight = false
-	prompt.UIOffset = Vector2.new(0, offsetY)
-	prompt.Enabled = false
-	prompt.Parent = part
-	return prompt
 end
 
 -- origin is the center of the plot at ground level.
@@ -83,7 +70,7 @@ function PlotBuilder.build(origin: Vector3, ownerName: string)
 
 	local plot = {
 		model = model,
-		spawnCFrame = CFrame.new(origin + Vector3.new(0, 5, 12)),
+		origin = origin,
 		buildings = {},
 		units = {},
 		war = nil,
@@ -102,9 +89,7 @@ function PlotBuilder.build(origin: Vector3, ownerName: string)
 		plot.buildings[building.id] = {
 			pad = pad,
 			block = block,
-			label = makeLabel(block, 8),
-			upgradePrompt = makePrompt(block, "UpgradePrompt", Enum.KeyCode.E, 0),
-			stewardPrompt = makePrompt(block, "StewardPrompt", Enum.KeyCode.F, -80),
+			label = makeLabel(block, 7),
 		}
 	end
 
@@ -115,9 +100,7 @@ function PlotBuilder.build(origin: Vector3, ownerName: string)
 
 		plot.units[unit.id] = {
 			part = stand,
-			label = makeLabel(stand, 7),
-			recruitPrompt = makePrompt(stand, "RecruitPrompt", Enum.KeyCode.E, 0),
-			recruitTenPrompt = makePrompt(stand, "RecruitTenPrompt", Enum.KeyCode.F, -80),
+			label = makeLabel(stand, 6),
 		}
 	end
 
@@ -126,7 +109,6 @@ function PlotBuilder.build(origin: Vector3, ownerName: string)
 	plot.war = {
 		part = banner,
 		label = makeLabel(banner, 10),
-		attackPrompt = makePrompt(banner, "AttackPrompt", Enum.KeyCode.E, 0),
 	}
 
 	model.Parent = workspace
