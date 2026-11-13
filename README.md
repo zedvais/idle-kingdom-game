@@ -1,7 +1,9 @@
 # Idle Kingdom
 
-A medieval idle game for Roblox. Grow one farm into a realm by earning gold,
-hiring stewards and conquering neighboring lands.
+A medieval menu game for Roblox. Spend energy on quests to earn gold and
+experience, level up, buy holdings that pay every hour, build a warband,
+and bring down foes. There is no character to control: the whole game is
+played through menus.
 
 ## How the project is laid out
 
