@@ -175,7 +175,7 @@ addCorner(main, 8)
 local pageTitle = makeText(main, UDim2.new(1, -24, 0, 30), UDim2.fromOffset(12, 4), COLOR_HEADER, 20)
 pageTitle.Font = Enum.Font.GothamBold
 
-local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Armory", "Foes", "Bank" }
+local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Inventory", "Foes", "Bank" }
 local railButtons = {}
 local pages = {}
 
@@ -240,6 +240,48 @@ local function makeHeading(page: Instance, order: number, text: string)
 	label.LayoutOrder = order
 	label.Font = Enum.Font.GothamBold
 	label.Text = string.upper(text)
+end
+
+-- A row with a label on the left and several buttons sharing the rest.
+local function makeButtonRow(page: Instance, order: number, labelText: string, names: { string }, labelWidth: number?)
+	local row = makeFrame(page, UDim2.new(1, -10, 0, 44), UDim2.fromOffset(0, 0), COLOR_ROW)
+	row.LayoutOrder = order
+	addCorner(row, 6)
+	local width = if labelText == "" then 0 else (labelWidth or 130)
+	local label = makeText(row, UDim2.new(0, width - 10, 1, 0), UDim2.fromOffset(10, 0), COLOR_TEXT, 13)
+	label.Text = labelText
+	local buttons = {}
+	local share = 1 / #names
+	for index, name in names do
+		local b = makeButton(
+			row,
+			UDim2.new(share, -(width / #names) - 6, 1, -10),
+			UDim2.new(share * (index - 1), width - (width * (index - 1) / #names) + 3, 0, 5),
+			COLOR_DISABLED
+		)
+		b.Text = name
+		b.TextSize = 13
+		buttons[index] = b
+	end
+	return buttons, label
+end
+
+-- A dark text box for typing an amount.
+local function makeAmountBox(parent: Instance, size: UDim2, position: UDim2, placeholder: string): TextBox
+	local box = Instance.new("TextBox")
+	box.Size = size
+	box.Position = position
+	box.BackgroundColor3 = Color3.fromRGB(20, 24, 22)
+	box.TextColor3 = COLOR_TEXT
+	box.PlaceholderText = placeholder
+	box.PlaceholderColor3 = COLOR_DIM
+	box.Font = Enum.Font.GothamBold
+	box.TextSize = 15
+	box.Text = ""
+	box.ClearTextOnFocus = false
+	box.Parent = parent
+	addCorner(box, 6)
+	return box
 end
 
 local function send(action: string, id: string?)
@@ -328,6 +370,12 @@ end
 
 -- Quests, in folding regions.
 local questRows = {}
+local autoQuestInfo, autoQuestButton = makeRow(pages.Quests, nextOrder(), 50, true)
+autoQuestInfo.RichText = true
+local autoQuestOn = false
+autoQuestButton.Activated:Connect(function()
+	send("AutoQuest", if autoQuestOn then "off" else "on")
+end)
 local questBoost = makeRow(pages.Quests, nextOrder(), 30, false)
 questBoost.TextColor3 = COLOR_XP
 for _, region in GameConfig.Regions do
@@ -462,6 +510,60 @@ for index = 1, GameConfig.MarketSize do
 	end)
 end
 
+makeHeading(pages.Market, nextOrder(), "Auto-buy")
+local autoBuyInfo, autoBuyButton = makeRow(pages.Market, nextOrder(), 56, true)
+autoBuyInfo.RichText = true
+local autoBuyRunning = false
+autoBuyButton.Activated:Connect(function()
+	send("AutoBuy", if autoBuyRunning then "off" else "on")
+end)
+
+local slotButtons = makeButtonRow(pages.Market, nextOrder(), "Buy these", GameConfig.GearSlots)
+for index, slot in GameConfig.GearSlots do
+	slotButtons[index].Activated:Connect(function()
+		send("AutoBuy", "slot:" .. slot)
+	end)
+end
+
+local rarityChoices = {}
+for _, rarity in GameConfig.Rarities do
+	if rarity.chance > 0 then
+		table.insert(rarityChoices, rarity.id)
+	end
+end
+local rarityButtons = makeButtonRow(pages.Market, nextOrder(), "Lowest rarity", rarityChoices)
+for index, rarityId in rarityChoices do
+	rarityButtons[index].Activated:Connect(function()
+		send("AutoBuy", "rarity:" .. rarityId)
+	end)
+end
+
+local priceRow = makeFrame(pages.Market, UDim2.new(1, -10, 0, 44), UDim2.fromOffset(0, 0), COLOR_ROW)
+priceRow.LayoutOrder = nextOrder()
+addCorner(priceRow, 6)
+makeText(priceRow, UDim2.new(0, 120, 1, 0), UDim2.fromOffset(10, 0), COLOR_TEXT, 13).Text = "Price range"
+local minBox = makeAmountBox(priceRow, UDim2.new(0.5, -(65 + BUTTON_WIDTH / 2 + 12), 1, -10), UDim2.new(0, 130, 0, 5), "Min: none")
+local maxBox = makeAmountBox(priceRow, UDim2.new(0.5, -(65 + BUTTON_WIDTH / 2 + 12), 1, -10), UDim2.new(0.5, 65 - BUTTON_WIDTH / 2 + 2, 0, 5), "Max: none")
+local priceButton = makeButton(priceRow, UDim2.new(0, BUTTON_WIDTH, 1, -10), UDim2.new(1, -6, 0, 5), COLOR_BUY)
+priceButton.AnchorPoint = Vector2.new(1, 0)
+priceButton.Text = "Save prices"
+priceButton.Activated:Connect(function()
+	send("AutoBuy", "min:" .. string.sub(minBox.Text, 1, 40))
+	send("AutoBuy", "max:" .. string.sub(maxBox.Text, 1, 40))
+end)
+
+local brokeButtons = makeButtonRow(pages.Market, nextOrder(), "Out of gold", { "Wait for more", "Stop auto-buy" })
+brokeButtons[1].Activated:Connect(function()
+	send("AutoBuy", "broke:wait")
+end)
+brokeButtons[2].Activated:Connect(function()
+	send("AutoBuy", "broke:stop")
+end)
+
+local recentBuys = makeRow(pages.Market, nextOrder(), 110, false)
+recentBuys.RichText = true
+recentBuys.TextYAlignment = Enum.TextYAlignment.Top
+
 -- Warband: one row for you, one per unlocked slot, and the next locked slot.
 local openRecruitWindow -- defined further down, with the recruit window
 
@@ -526,12 +628,37 @@ unlockButton.Activated:Connect(function()
 	send("Slot")
 end)
 
--- Armory: your gear, each with a Sell button.
-local armorySummary = makeRow(pages.Armory, nextOrder(), 50, false)
+-- Inventory: tabs for gear by slot and for trophies, and a rarity filter.
+local INVENTORY_TABS = { "All", "Weapon", "Armor", "Mount", "Trophies" }
+local inventoryTab = "All"
+local inventoryRarity = 0 -- 0 shows every rarity, otherwise the lowest rank shown
+local redraw -- draws the last state again; defined after draw()
+local tabButtons = makeButtonRow(pages.Inventory, nextOrder(), "", INVENTORY_TABS)
+local filterInfo, filterButton = makeRow(pages.Inventory, nextOrder(), 44, true)
+filterInfo.TextColor3 = COLOR_DIM
+filterButton.Activated:Connect(function()
+	inventoryRarity = (inventoryRarity + 1) % (#GameConfig.Rarities + 1)
+	redraw()
+end)
+for index, tab in INVENTORY_TABS do
+	tabButtons[index].Activated:Connect(function()
+		inventoryTab = tab
+		redraw()
+	end)
+end
+local armorySummary = makeRow(pages.Inventory, nextOrder(), 50, false)
 armorySummary.TextColor3 = COLOR_DIM
+
+local trophyRows = {}
+for _, trophy in GameConfig.Trophies do
+	local info, button = makeRow(pages.Inventory, nextOrder(), 52, true)
+	info.RichText = true
+	button.AutoButtonColor = false
+	trophyRows[trophy.id] = { info = info, button = button }
+end
 local gearRows = {}
 for index = 1, GameConfig.MaxGearOwned do
-	local row = makeItemRow(pages.Armory, nextOrder())
+	local row = makeItemRow(pages.Inventory, nextOrder())
 	row.uid = nil
 	gearRows[index] = row
 	row.button.Activated:Connect(function()
@@ -666,6 +793,20 @@ local function draw(state)
 	end
 
 	-- Quests
+	autoQuestOn = state.autoQuestOn
+	local autoTarget = nil
+	for _, quest in GameConfig.Quests do
+		if quest.id == state.autoQuest then
+			autoTarget = quest
+		end
+	end
+	if autoTarget then
+		autoQuestInfo.Text = `<b>Auto quests: {if autoQuestOn then "ON" else "OFF"}</b>\n`
+			.. `Repeats <b>{autoTarget.name}</b> whenever you have {autoTarget.energy} energy. Do another quest to switch.`
+	else
+		autoQuestInfo.Text = "<b>Auto quests: OFF</b>\nDo a quest once, then turn this on to keep repeating it while you play."
+	end
+	setButton(autoQuestButton, if autoQuestOn then "Turn off" else "Turn on", autoTarget ~= nil, if autoQuestOn then COLOR_DISABLED else COLOR_ACTION)
 	questBoost.Text = if state.xpBoostLeft > 0 then `Double XP active: {formatClock(state.xpBoostLeft)} left` else ""
 	questBoost.Parent.Visible = state.xpBoostLeft > 0
 	local medalColors = { "#C8844E", "#C9D2DE", "#F0C85A" }
@@ -743,6 +884,31 @@ local function draw(state)
 		end
 	end
 
+	-- Auto-buy
+	local rule = state.autoBuy
+	autoBuyRunning = rule.on
+	autoBuyInfo.Text = `<b>{if rule.on then "RUNNING" else "STOPPED"}</b>   Bought {rule.bought}, spent {Format.short(rule.spent)} gold\n`
+		.. "Buys matching Market items as they appear, while you are in the game."
+	setButton(autoBuyButton, if rule.on then "Stop" else "Start", true, if rule.on then COLOR_ACTION else COLOR_BUY)
+	for index, slot in GameConfig.GearSlots do
+		setButton(slotButtons[index], slot, rule.slots[slot] == true, COLOR_SELECTED)
+	end
+	for index, rarityId in rarityChoices do
+		setButton(rarityButtons[index], rarityId, rarityId == rule.minRarity, COLOR_SELECTED)
+	end
+	minBox.PlaceholderText = if rule.minPrice > 0 then `Min: {Format.short(rule.minPrice)}` else "Min: none"
+	maxBox.PlaceholderText = if rule.maxPrice > 0 then `Max: {Format.short(rule.maxPrice)}` else "Max: none"
+	setButton(brokeButtons[1], "Wait for more", rule.whenBroke == "wait", COLOR_SELECTED)
+	setButton(brokeButtons[2], "Stop auto-buy", rule.whenBroke == "stop", COLOR_SELECTED)
+	local recentLines = { "<b>Recent buys</b>" }
+	for _, buy in rule.recent do
+		table.insert(recentLines, `{rarityName(buy)}   {Format.short(buy.price)} gold`)
+	end
+	if #rule.recent == 0 then
+		table.insert(recentLines, "Nothing yet.")
+	end
+	recentBuys.Text = table.concat(recentLines, "\n")
+
 	-- Warband
 	local crew = state.crew
 	warbandSummary.Text = `Soldiers {stats.crewSize} / {#crew}   |   Attack {Format.short(stats.attack)}   |   Defense {Format.short(stats.defense)}\n`
@@ -792,10 +958,54 @@ local function draw(state)
 		end
 	end
 
-	-- Armory
-	armorySummary.Text = `Gear {#state.gear} / {GameConfig.MaxGearOwned}. Your best weapon, armor and mount are used automatically, `
-		.. `one each for you and every soldier, strongest soldier first. Buy gear in the Market.`
-	local gear = table.clone(state.gear)
+	-- Inventory
+	for index, tab in INVENTORY_TABS do
+		setButton(tabButtons[index], if tab == "Trophies" then tab else (if tab == "All" then "All gear" else tab .. "s"), tab == inventoryTab, COLOR_SELECTED)
+	end
+	local showTrophies = inventoryTab == "Trophies"
+	filterInfo.Parent.Visible = not showTrophies
+	local filterRarity = GameConfig.Rarities[inventoryRarity]
+	filterInfo.Text = if filterRarity then `Showing {filterRarity.id} and rarer` else "Showing every rarity"
+	setButton(filterButton, "Change rarity", true, COLOR_SELECTED)
+
+	local earnedCount = 0
+	for _, trophy in GameConfig.Trophies do
+		local row = trophyRows[trophy.id]
+		local earned = state.trophies[trophy.id] == true
+		if earned then
+			earnedCount += 1
+		end
+		row.info.Parent.Visible = showTrophies
+		local bonuses = {}
+		for _, pair in GameConfig.TrophyBonusNames do
+			local amount = trophy[pair[1]]
+			if amount then
+				table.insert(bonuses, `+{math.floor(amount * 100 + 0.5)}% {pair[2]}`)
+			end
+		end
+		local progress = state.trophyProgress[trophy.id] or 0
+		row.info.Text = `<b>{trophy.name}</b>   <font color="#9FD49A">{table.concat(bonuses, ", ")}</font>\n`
+			.. (if earned then trophy.note else `{trophy.note}   ({progress} / {trophy.value})`)
+		setButton(row.button, if earned then "Earned" else "Locked", earned, COLOR_GOLD)
+		row.button.TextColor3 = if earned then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
+	end
+
+	if showTrophies then
+		local bonus = stats.trophyBonus
+		armorySummary.Text = `Trophies {earnedCount} / {#GameConfig.Trophies}. Their bonuses never go away.   Now: `
+			.. `+{math.floor(bonus.attack * 100 + 0.5)}% attack, +{math.floor(bonus.defense * 100 + 0.5)}% defense, `
+			.. `+{math.floor(bonus.income * 100 + 0.5)}% income, +{math.floor(bonus.xp * 100 + 0.5)}% quest XP, +{math.floor(bonus.questGold * 100 + 0.5)}% quest gold`
+	else
+		armorySummary.Text = `Gear {#state.gear} / {GameConfig.MaxGearOwned}. Your best weapon, armor and mount are used automatically, `
+			.. `one each for you and every soldier, strongest soldier first. Buy gear in the Market.`
+	end
+	local gear = {}
+	for _, item in state.gear do
+		local slotMatches = inventoryTab == "All" or item.slot == inventoryTab
+		if not showTrophies and slotMatches and GameConfig.getRarityRank(item.rarity) >= math.max(1, inventoryRarity) then
+			table.insert(gear, item)
+		end
+	end
 	local slotOrder = { Weapon = 1, Armor = 2, Mount = 3 }
 	table.sort(gear, function(a, b)
 		if a.slot ~= b.slot then
@@ -876,6 +1086,12 @@ local function draw(state)
 
 	for _, item in GameConfig.TokenShop do
 		setButton(tokenRows[item.id], `Buy\n{item.cost} tokens`, state.tokens >= item.cost, COLOR_BUY)
+	end
+end
+
+redraw = function()
+	if lastState then
+		draw(lastState)
 	end
 end
 

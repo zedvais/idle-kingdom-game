@@ -412,6 +412,51 @@ function GameConfig.getItemPrice(base: number, level: number, rarity): number
 	return math.floor(base * GameConfig.ItemPriceGrowth ^ (level - 1) * rarity.price)
 end
 
+---------------------------------------------------------------------------
+-- Trophies: earned once, each gives a permanent bonus
+---------------------------------------------------------------------------
+-- kind says what is checked: stage (highest foe stage), level, holdings
+-- (copies built), keep (home level), mastered (quests with every medal),
+-- crew (soldiers), divine (own a Divine soldier).
+-- Bonuses are shares: attack 0.03 means +3% attack.
+
+GameConfig.Trophies = {
+	{ id = "seasoned", name = "Traveller's Badge", kind = "level", value = 10, note = "Reach level 10", xp = 0.03 },
+	{ id = "bandits", name = "Thornwood Antler", kind = "stage", value = 4, note = "Beat foe stage 4", attack = 0.03 },
+	{ id = "landlord", name = "Deed of the Vale", kind = "holdings", value = 10, note = "Own 10 holdings", income = 0.03 },
+	{ id = "medals", name = "Questmaster's Seal", kind = "mastered", value = 3, note = "Earn gold mastery on 3 quests", questGold = 0.05 },
+	{ id = "reavers", name = "Reaver's Horn", kind = "stage", value = 8, note = "Beat foe stage 8", defense = 0.04 },
+	{ id = "warband10", name = "Banner of Ten", kind = "crew", value = 10, note = "Have 10 soldiers", attack = 0.03, defense = 0.03 },
+	{ id = "veteran", name = "Veteran's Laurel", kind = "level", value = 25, note = "Reach level 25", xp = 0.05 },
+	{ id = "ember", name = "Ember Heart", kind = "stage", value = 12, note = "Beat foe stage 12", attack = 0.05 },
+	{ id = "realm", name = "Realm Charter", kind = "holdings", value = 30, note = "Own 30 holdings", income = 0.05 },
+	{ id = "iron", name = "Iron Signet", kind = "stage", value = 16, note = "Beat foe stage 16", defense = 0.06 },
+	{ id = "warband20", name = "Host of Twenty", kind = "crew", value = 20, note = "Have 20 soldiers", attack = 0.05, defense = 0.05 },
+	{ id = "palace", name = "Sunspire Banner", kind = "keep", value = 8, note = "Raise the Sunspire Palace", income = 0.08 },
+	{ id = "divine", name = "Touched by the Divine", kind = "divine", value = 1, note = "Recruit a Divine soldier", attack = 0.06, defense = 0.06 },
+	{ id = "hollow", name = "The Hollow Crown", kind = "stage", value = 20, note = "Beat foe stage 20", attack = 0.08, defense = 0.08 },
+}
+
+-- Words for each bonus, for the menus.
+GameConfig.TrophyBonusNames = {
+	{ "attack", "attack" },
+	{ "defense", "defense" },
+	{ "income", "holding income" },
+	{ "xp", "quest XP" },
+	{ "questGold", "quest gold" },
+}
+
+---------------------------------------------------------------------------
+-- Automation (runs only while you are in the game)
+---------------------------------------------------------------------------
+
+-- Auto quests repeat your chosen quest whenever you have the energy.
+-- At most this many quests run each second.
+GameConfig.AutoQuestsPerSecond = 3
+
+-- Market auto-buy remembers this many recent purchases.
+GameConfig.AutoBuyRecent = 6
+
 -- Seconds until foes reset at the next 00:00 UTC.
 function GameConfig.getSecondsToReset(): number
 	return 86400 - os.time() % 86400

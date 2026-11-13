@@ -129,6 +129,19 @@ local function getKeepBonus(data): number
 	return keep.bonus
 end
 
+-- The bonuses from every trophy the player has earned, added up.
+local function getTrophyBonus(data)
+	local total = { attack = 0, defense = 0, income = 0, xp = 0, questGold = 0 }
+	for _, trophy in GameConfig.Trophies do
+		if data.trophies[trophy.id] then
+			for key in total do
+				total[key] += trophy[key] or 0
+			end
+		end
+	end
+	return total
+end
+
 -- Every number the menus show about the player, with where attack and
 -- defense come from.
 local function getStats(data)
@@ -148,11 +161,12 @@ local function getStats(data)
 	local gearAttack, gearDefense = assignGear(data)
 	local crewBonus = crewSize * GameConfig.CrewSizeBonus
 	local keepBonus = getKeepBonus(data)
+	local trophyBonus = getTrophyBonus(data)
 
 	local rawAttack = baseAttack + crewAttack + gearAttack
 	local rawDefense = baseDefense + crewDefense + gearDefense
-	local attack = math.floor(rawAttack * (1 + crewBonus + keepBonus))
-	local defense = math.floor(rawDefense * (1 + crewBonus + keepBonus))
+	local attack = math.floor(rawAttack * (1 + crewBonus + keepBonus + trophyBonus.attack))
+	local defense = math.floor(rawDefense * (1 + crewBonus + keepBonus + trophyBonus.defense))
 
 	local incomePerHour = 0
 	local lotsUsed = 0
@@ -161,7 +175,7 @@ local function getStats(data)
 		lotsUsed += count
 		incomePerHour += holding.income * count
 	end
-	incomePerHour = math.floor(incomePerHour * (1 + keepBonus))
+	incomePerHour = math.floor(incomePerHour * (1 + keepBonus + trophyBonus.income))
 
 	return {
 		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy"),
@@ -172,6 +186,7 @@ local function getStats(data)
 		crewSize = crewSize,
 		crewBonus = crewBonus,
 		keepBonus = keepBonus,
+		trophyBonus = trophyBonus,
 		lots = GameConfig.BaseLots + skillTotal(data, "lots"),
 		lotsUsed = lotsUsed,
 		incomePerHour = incomePerHour,
@@ -202,6 +217,49 @@ local function checkStageDay(data)
 		data.stageDay = today
 		data.stageHealth = {}
 		data.stageCleared = {}
+	end
+end
+
+-- How far the player is toward a trophy.
+local function trophyProgress(data, kind: string): number
+	if kind == "stage" then
+		return data.highestStage
+	elseif kind == "level" then
+		return data.level
+	elseif kind == "keep" then
+		return data.keep
+	elseif kind == "holdings" then
+		local total = 0
+		for _, count in data.holdings do
+			total += count
+		end
+		return total
+	elseif kind == "mastered" then
+		local total = 0
+		for _, done in data.quests do
+			if GameConfig.getMasteryRank(done) >= GameConfig.MaxMasteryRanks then
+				total += 1
+			end
+		end
+		return total
+	elseif kind == "crew" or kind == "divine" then
+		local total = 0
+		for _, soldier in data.crew do
+			if soldier and (kind == "crew" or soldier.rarity == "Divine") then
+				total += 1
+			end
+		end
+		return total
+	end
+	return 0
+end
+
+local function checkTrophies(player: Player, data)
+	for _, trophy in GameConfig.Trophies do
+		if not data.trophies[trophy.id] and trophyProgress(data, trophy.kind) >= trophy.value then
+			data.trophies[trophy.id] = true
+			sendToast(player, `Trophy earned: {trophy.name}! Check your Inventory.`)
+		end
 	end
 end
 
@@ -240,6 +298,11 @@ local function refresh(player: Player)
 	end
 
 	checkStageDay(data)
+	checkTrophies(player, data)
+	local trophyProgressList = {}
+	for _, trophy in GameConfig.Trophies do
+		trophyProgressList[trophy.id] = math.min(trophy.value, trophyProgress(data, trophy.kind))
+	end
 
 	stateRemote:FireClient(player, {
 		gold = data.gold,
@@ -271,6 +334,11 @@ local function refresh(player: Player)
 		stageHealth = data.stageHealth,
 		stageCleared = data.stageCleared,
 		stageReset = GameConfig.getSecondsToReset(),
+		trophies = data.trophies,
+		trophyProgress = trophyProgressList,
+		autoQuest = data.autoQuest,
+		autoQuestOn = data.autoQuestOn,
+		autoBuy = data.autoBuy,
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -349,9 +417,11 @@ function actions.Quest(player: Player, data, id: string)
 	local completions = data.quests[id] or 0
 	local rankBefore = GameConfig.getMasteryRank(completions)
 
+	local trophyBonus = getTrophyBonus(data)
 	data.energy -= quest.energy
-	data.gold += GameConfig.getQuestGold(quest, completions)
+	data.gold += math.floor(GameConfig.getQuestGold(quest, completions) * (1 + trophyBonus.questGold))
 	data.quests[id] = completions + 1
+	data.autoQuest = id
 
 	local rankAfter = GameConfig.getMasteryRank(completions + 1)
 	if rankAfter > rankBefore then
@@ -360,7 +430,7 @@ function actions.Quest(player: Player, data, id: string)
 	if random:NextNumber() < quest.drop then
 		giveGear(player, data, nil, "You found gear")
 	end
-	addXp(player, data, quest.xp)
+	addXp(player, data, math.floor(quest.xp * (1 + trophyBonus.xp)))
 end
 
 -- Builds one more copy of a holding on a free lot.
@@ -605,23 +675,26 @@ function actions.Release(player: Player, data, id: string)
 end
 
 -- Buys item number `id` ("1" to "8") from the Market.
-function actions.Buy(player: Player, data, id: string)
-	local index = tonumber(id)
-	local item = index and data.market.items[index]
-	if not item or item.sold then
-		return
-	end
+-- Buys a Market item. `auto` is true when auto-buy does it, which keeps
+-- its messages short.
+local function buyItem(player: Player, data, item, auto: boolean): boolean
 	if data.level < item.level then
-		sendToast(player, `You need level {item.level} to buy this.`)
-		return
+		if not auto then
+			sendToast(player, `You need level {item.level} to buy this.`)
+		end
+		return false
 	end
 	if #data.gear >= GameConfig.MaxGearOwned then
 		sendToast(player, "Your armory is full. Sell some gear first.")
-		return
+		return false
 	end
-	if not spendGold(player, data, item.price) then
-		return
+	if data.gold < item.price then
+		if not auto then
+			sendToast(player, `Not enough gold. You need {Format.short(item.price)}.`)
+		end
+		return false
 	end
+	data.gold -= item.price
 
 	item.sold = true
 	local owned = table.clone(item)
@@ -630,7 +703,16 @@ function actions.Buy(player: Player, data, id: string)
 	data.nextItemId += 1
 
 	table.insert(data.gear, owned)
-	sendToast(player, `You bought a {owned.rarity} {owned.name}.`)
+	sendToast(player, `{if auto then "Auto-buy got" else "You bought"} a {owned.rarity} {owned.name}.`)
+	return true
+end
+
+function actions.Buy(player: Player, data, id: string)
+	local index = tonumber(id)
+	local item = index and data.market.items[index]
+	if item and not item.sold then
+		buyItem(player, data, item, false)
+	end
 end
 
 -- Sells a piece of gear for part of its price.
@@ -742,6 +824,102 @@ function actions.TokenBuy(player: Player, data, id: string)
 		sendToast(player, "+1 skill point. Spend it in the Keep.")
 	elseif item.kind == "chest" then
 		giveGear(player, data, GameConfig.getRarityRank(item.rarity), `{item.name} opened`)
+	end
+end
+
+-- Auto quests: "on" or "off". They repeat the last quest you did.
+function actions.AutoQuest(player: Player, data, id: string)
+	if id == "on" then
+		if not questById[data.autoQuest] then
+			sendToast(player, "Do a quest once first. Auto quests repeat the last quest you did.")
+			return
+		end
+		data.autoQuestOn = true
+	elseif id == "off" then
+		data.autoQuestOn = false
+	end
+end
+
+-- Market auto-buy settings. id is one command:
+-- on, off, slot:Weapon, rarity:Epic, min:5k, max:2m, broke:wait, broke:stop
+function actions.AutoBuy(player: Player, data, id: string)
+	local rule = data.autoBuy
+	local command, value = string.match(id, "^(%a+):?(.*)$")
+	if command == "on" then
+		rule.on = true
+		sendToast(player, "Auto-buy is running. It buys while you are in the game.")
+	elseif command == "off" then
+		rule.on = false
+	elseif command == "slot" and GameConfig.GearTypes[value] then
+		rule.slots[value] = not rule.slots[value]
+	elseif command == "rarity" and GameConfig.getRarity(value).id == value then
+		rule.minRarity = value
+	elseif command == "min" or command == "max" then
+		local amount = if value == "" or value == "0" then 0 else Format.parse(value)
+		if not amount then
+			sendToast(player, "Type a price, like 5000 or 2.5m. Leave it empty for no limit.")
+			return
+		end
+		if command == "min" then
+			rule.minPrice = amount
+		else
+			rule.maxPrice = amount
+		end
+	elseif command == "broke" and (value == "wait" or value == "stop") then
+		rule.whenBroke = value
+	end
+end
+
+local function runAutoQuests(player: Player, data)
+	local quest = questById[data.autoQuest]
+	if not data.autoQuestOn or not quest then
+		return
+	end
+	for _ = 1, GameConfig.AutoQuestsPerSecond do
+		if data.energy < quest.energy then
+			return
+		end
+		actions.Quest(player, data, quest.id)
+	end
+end
+
+local function runAutoBuy(player: Player, data)
+	local rule = data.autoBuy
+	if not rule.on then
+		return
+	end
+	local minRank = GameConfig.getRarityRank(rule.minRarity)
+	for _, item in data.market.items do
+		local wanted = not item.sold
+			and rule.slots[item.slot]
+			and GameConfig.getRarityRank(item.rarity) >= minRank
+			and item.price >= rule.minPrice
+			and (rule.maxPrice <= 0 or item.price <= rule.maxPrice)
+			and data.level >= item.level
+		if not wanted then
+			continue
+		end
+		if #data.gear >= GameConfig.MaxGearOwned then
+			rule.on = false
+			sendToast(player, "Auto-buy stopped: your armory is full.")
+			return
+		end
+		if data.gold < item.price then
+			if rule.whenBroke == "stop" then
+				rule.on = false
+				sendToast(player, "Auto-buy stopped: not enough gold.")
+				return
+			end
+			continue
+		end
+		if buyItem(player, data, item, true) then
+			rule.bought += 1
+			rule.spent += item.price
+			table.insert(rule.recent, 1, { name = item.name, rarity = item.rarity, price = item.price })
+			while #rule.recent > GameConfig.AutoBuyRecent do
+				table.remove(rule.recent)
+			end
+		end
 	end
 end
 
@@ -881,6 +1059,8 @@ task.spawn(function()
 			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
 			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)
 			regenerate(session, "health", GameConfig.HealthRegenSeconds, stats.maxHealth)
+			runAutoQuests(player, data)
+			runAutoBuy(player, data)
 
 			refresh(player)
 		end

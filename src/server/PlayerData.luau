@@ -56,6 +56,20 @@ local function newData()
 		stageDay = 0, -- the UTC day the two tables below belong to
 		stageHealth = {}, -- ["s3"] = health a stage has left today
 		stageCleared = {}, -- ["s3"] = true once beaten today
+		trophies = {}, -- [trophyId] = true once earned
+		autoQuest = "", -- quest id that auto quests repeat
+		autoQuestOn = false,
+		autoBuy = {
+			on = false,
+			slots = { Weapon = true, Armor = true, Mount = true },
+			minRarity = "Rare",
+			minPrice = 0,
+			maxPrice = 0, -- 0 means no limit
+			whenBroke = "wait", -- "wait" for more gold or "stop" auto-buy
+			bought = 0,
+			spent = 0,
+			recent = {}, -- newest first: { name, rarity, price }
+		},
 		lastSeen = 0,
 	}
 end
@@ -70,6 +84,12 @@ local function repair(data)
 	for key, default in fresh do
 		if type(data[key]) ~= type(default) then
 			data[key] = default
+		end
+	end
+	-- Settings tables get any new fields too.
+	for key, default in fresh.autoBuy do
+		if type(data.autoBuy[key]) ~= type(default) then
+			data.autoBuy[key] = default
 		end
 	end
 	data.foes = nil -- replaced by stages
