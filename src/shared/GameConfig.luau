@@ -41,9 +41,7 @@ GameConfig.OfflineMaxSeconds = 8 * 60 * 60
 -- Bank: gold in the bank is safe from raids. Depositing costs a fee.
 GameConfig.BankFee = 0.1
 
--- Foes: seconds before a beaten foe can be fought again, and the health
--- you need before you are allowed to attack.
-GameConfig.FoeCooldownSeconds = 15 * 60
+-- Foes: the health you need before you are allowed to attack.
 GameConfig.MinHealthToFight = 20
 
 ---------------------------------------------------------------------------
@@ -304,14 +302,56 @@ GameConfig.GearTypes = {
 }
 
 ---------------------------------------------------------------------------
--- Foes: turn by turn fights that cost stamina
+-- Foes: stages fought turn by turn with stamina
 ---------------------------------------------------------------------------
+-- Each stage can be beaten once per day (days reset at 00:00 UTC). A stage
+-- opens once you reach its level and have ever beaten the stage before it.
+-- Beating a stage pays gold, experience, renown and boss tokens. The last
+-- stage of each house also drops a gear chest. Numbers are filled in by
+-- buildStages() at the bottom of this file.
 
-GameConfig.Foes = {
-	{ id = "garrick", band = "Thornwood Bandits", name = "Garrick the Toll-Taker", level = 4, health = 60, attack = 8, defense = 2, gold = 3000, xp = 60, renown = 10 },
-	{ id = "hilda", band = "Thornwood Bandits", name = "Mad Hilda", level = 8, health = 220, attack = 16, defense = 8, gold = 10000, xp = 160, renown = 20 },
-	{ id = "aldous", band = "Thornwood Bandits", name = "Sir Aldous the Oathbreaker", level = 13, health = 600, attack = 28, defense = 18, gold = 32000, xp = 380, renown = 35 },
-	{ id = "vex", band = "Thornwood Bandits", name = "Baron Vex", level = 18, health = 1500, attack = 46, defense = 32, gold = 100000, xp = 800, renown = 60 },
+GameConfig.Houses = {
+	{ id = "thornwood", name = "The Thornwood Bandits", chest = "Uncommon" },
+	{ id = "reavers", name = "The Greywatch Reavers", chest = "Rare" },
+	{ id = "ember", name = "The Cult of the Ember Eye", chest = "Epic" },
+	{ id = "barony", name = "The Iron Barony", chest = "Legendary" },
+	{ id = "hollow", name = "The Hollow Crown", chest = "Mythic" },
+}
+
+GameConfig.Stages = {
+	{ house = "thornwood", level = 2, name = "Garrick the Toll-Taker", title = "Bridge thief" },
+	{ house = "thornwood", level = 4, name = "Mad Hilda", title = "Hedge witch" },
+	{ house = "thornwood", level = 6, name = "Wat Longshanks", title = "Poacher captain" },
+	{ house = "thornwood", level = 8, name = "Baron Vex", title = "Lord of the Thornwood" },
+	{ house = "reavers", level = 10, name = "Orla Saltblade", title = "Raider of the fords" },
+	{ house = "reavers", level = 12, name = "Brother Cael", title = "Burner of chapels" },
+	{ house = "reavers", level = 14, name = "Grimsby Ironjaw", title = "Siege brute" },
+	{ house = "reavers", level = 17, name = "Sir Aldous the Oathbreaker", title = "Reaver warlord" },
+	{ house = "ember", level = 19, name = "Ash Acolyte Mira", title = "Keeper of cinders" },
+	{ house = "ember", level = 22, name = "The Smoke Twins", title = "Temple guards" },
+	{ house = "ember", level = 25, name = "Pyre-Judge Holt", title = "Inquisitor" },
+	{ house = "ember", level = 28, name = "The Ember Prophet", title = "Voice of the flame" },
+	{ house = "barony", level = 31, name = "Reeve Dunstan", title = "Tax collector" },
+	{ house = "barony", level = 35, name = "Lady Corva", title = "Spymistress" },
+	{ house = "barony", level = 39, name = "Marshal Brannoc", title = "Captain of the host" },
+	{ house = "barony", level = 43, name = "The Iron Baron", title = "Master of the forges" },
+	{ house = "hollow", level = 47, name = "The Pale Herald", title = "Crown messenger" },
+	{ house = "hollow", level = 52, name = "Dame Sorrow", title = "Knight of the hollow" },
+	{ house = "hollow", level = 57, name = "The Gravewarden", title = "Keeper of the crypts" },
+	{ house = "hollow", level = 62, name = "The Hollow King", title = "Usurper of the realm" },
+}
+
+-- Boss tokens buy these in the token shop.
+GameConfig.TokenShop = {
+	{ id = "health", name = "Healing Draught", note = "Refill your health", cost = 3, kind = "health" },
+	{ id = "energy", name = "Ration Pack", note = "Refill your energy", cost = 6, kind = "energy" },
+	{ id = "stamina", name = "War Horn", note = "Refill your stamina", cost = 8, kind = "stamina" },
+	{ id = "xp", name = "Scholar's Candle", note = "Double experience for 30 minutes", cost = 15, kind = "xpBoost", amount = 30 },
+	{ id = "skill", name = "Tome of Insight", note = "+1 skill point", cost = 40, kind = "skill" },
+	{ id = "rare", name = "Rare Chest", note = "One piece of Rare or better gear", cost = 20, kind = "chest", rarity = "Rare" },
+	{ id = "epic", name = "Epic Chest", note = "One piece of Epic or better gear", cost = 60, kind = "chest", rarity = "Epic" },
+	{ id = "legendary", name = "Legendary Chest", note = "One piece of Legendary or better gear", cost = 180, kind = "chest", rarity = "Legendary" },
+	{ id = "mythic", name = "Mythic Chest", note = "One piece of Mythic gear", cost = 600, kind = "chest", rarity = "Mythic" },
 }
 
 ---------------------------------------------------------------------------
@@ -372,5 +412,49 @@ function GameConfig.getItemPrice(base: number, level: number, rarity): number
 	return math.floor(base * GameConfig.ItemPriceGrowth ^ (level - 1) * rarity.price)
 end
 
+-- Seconds until foes reset at the next 00:00 UTC.
+function GameConfig.getSecondsToReset(): number
+	return 86400 - os.time() % 86400
+end
+
+-- Hit range for an attacker against a defender, before the random roll.
+function GameConfig.getHit(attack: number, defense: number): number
+	return math.max(1, math.floor(attack - defense * 0.5))
+end
+GameConfig.HitRollMin = 0.85
+GameConfig.HitRollMax = 1.15
+
+-- Fills in each stage's numbers from its level and place in its house.
+-- `power` is roughly the attack a player has at that level.
+local function buildStages()
+	local houseIndex, place, lastHouse = 0, 0, nil
+	for index, stage in GameConfig.Stages do
+		if stage.house ~= lastHouse then
+			lastHouse = stage.house
+			houseIndex += 1
+			place = 0
+		end
+		place += 1
+		local level = stage.level
+		local power = 0.6 * level ^ 2.3 + 10
+		local playerHealth = GameConfig.BaseMaxHealth + 5 * level
+		stage.id = "s" .. index
+		stage.index = index
+		stage.place = place
+		-- About 3, 5, 7 and 9 hits to beat at the expected attack.
+		stage.defense = math.floor(power * 0.4)
+		stage.health = math.floor(power * 0.8 * (1 + place * 2))
+		-- Each hit back takes about 6% to 12% of your health.
+		stage.attack = math.floor(power * 0.5 + playerHealth * (0.04 + 0.02 * place))
+		stage.gold = math.floor(150 * level ^ 1.7 * (1 + 0.25 * place))
+		stage.xp = math.floor(GameConfig.getXpNeeded(level) * (0.15 + 0.05 * place))
+		stage.tokens = houseIndex * 2 + place
+		stage.renown = stage.tokens * 2
+		local house = GameConfig.Houses[houseIndex]
+		stage.houseName = house.name
+		stage.chest = if place == 4 then house.chest else nil
+	end
+end
+buildStages()
 
 return GameConfig

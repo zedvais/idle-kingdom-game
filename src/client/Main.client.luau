@@ -541,20 +541,51 @@ for index = 1, GameConfig.MaxGearOwned do
 	end)
 end
 
--- Foes, grouped by band.
-local foeRows = {}
-local lastBand = nil
-for _, foe in GameConfig.Foes do
-	if foe.band ~= lastBand then
-		lastBand = foe.band
-		makeHeading(pages.Foes, nextOrder(), foe.band)
+-- Foes: a fight panel for the chosen stage, then every stage by house,
+-- then the token shop.
+local foeSummary = makeRow(pages.Foes, nextOrder(), 50, false)
+foeSummary.RichText = true
+
+local fightInfo, fightButton = makeRow(pages.Foes, nextOrder(), 132, true)
+fightInfo.RichText = true
+fightInfo.Size = UDim2.new(1, -(BUTTON_WIDTH + 26), 0, 74)
+local fightPanel = fightInfo.Parent
+fightPanel.BackgroundColor3 = Color3.fromRGB(58, 44, 40)
+local yourFightBar = makeBar(fightPanel, UDim2.new(0.5, -(BUTTON_WIDTH / 2 + 22), 0, 18), UDim2.new(0, 10, 1, -48), COLOR_HEALTH)
+local foeFightBar = makeBar(fightPanel, UDim2.new(0.5, -(BUTTON_WIDTH / 2 + 22), 0, 18), UDim2.new(0.5, -(BUTTON_WIDTH / 2 - 6), 1, -48), COLOR_ACTION)
+
+local selectedStage = nil -- stage id the fight panel shows
+fightButton.Activated:Connect(function()
+	if selectedStage then
+		send("Fight", selectedStage)
 	end
-	local info, button = makeRow(pages.Foes, nextOrder(), 66, true)
-	local healthBarForFoe = makeBar(info.Parent, UDim2.new(1, -(BUTTON_WIDTH + 36), 0, 12), UDim2.new(0, 10, 1, -17), COLOR_HEALTH)
-	info.Size = UDim2.new(1, -(BUTTON_WIDTH + 26), 1, -24)
-	foeRows[foe.id] = { info = info, button = button, bar = healthBarForFoe }
+end)
+
+local stageRows = {}
+local lastHouse = nil
+for _, stage in GameConfig.Stages do
+	if stage.houseName ~= lastHouse then
+		lastHouse = stage.houseName
+		makeHeading(pages.Foes, nextOrder(), stage.houseName)
+	end
+	local info, button = makeRow(pages.Foes, nextOrder(), 56, true)
+	info.RichText = true
+	stageRows[stage.id] = { info = info, button = button }
 	button.Activated:Connect(function()
-		send("Fight", foe.id)
+		selectedStage = stage.id
+		pages.Foes.CanvasPosition = Vector2.new(0, 0)
+	end)
+end
+
+makeHeading(pages.Foes, nextOrder(), "Token shop")
+local tokenRows = {}
+for _, item in GameConfig.TokenShop do
+	local info, button = makeRow(pages.Foes, nextOrder(), 46, true)
+	info.Text = `<b>{item.name}</b>\n{item.note}`
+	info.RichText = true
+	tokenRows[item.id] = button
+	button.Activated:Connect(function()
+		send("TokenBuy", item.id)
 	end)
 end
 
@@ -563,13 +594,6 @@ showPage("Quests")
 ---------------------------------------------------------------------------
 -- Drawing the state the server sends
 ---------------------------------------------------------------------------
-
-local function formatWait(seconds: number): string
-	if seconds >= 60 then
-		return `{math.ceil(seconds / 60)}m`
-	end
-	return `{seconds}s`
-end
 
 local lastState = nil
 local refreshRecruitWindow -- defined further down, with the recruit window
@@ -791,21 +815,67 @@ local function draw(state)
 	end
 
 	-- Foes
-	for _, foe in GameConfig.Foes do
-		local row = foeRows[foe.id]
-		local record = state.foes[foe.id]
-		local health = if record then record.health else foe.health
-		local wait = if record then record.wait else 0
-		row.info.Text = `{foe.name}\nAttack {foe.attack}, defense {foe.defense}   |   Reward {Format.short(foe.gold)} gold, {foe.xp} XP`
-		setBar(row.bar, health, foe.health, `{health} / {foe.health}`)
-		if state.level < foe.level then
-			setButton(row.button, `Level {foe.level}`, false, COLOR_ACTION)
-		elseif wait > 0 then
-			setButton(row.button, `Back in\n{formatWait(wait)}`, false, COLOR_ACTION)
-		else
-			local ready = state.stamina >= 1 and state.health >= GameConfig.MinHealthToFight
-			setButton(row.button, "Attack\n1 stamina", ready, COLOR_ACTION)
+	local function stageOpen(stage)
+		return state.level >= stage.level and stage.index <= state.highestStage + 1
+	end
+	-- Keep the panel on the chosen stage; otherwise show the first one
+	-- still to beat today.
+	local chosen = selectedStage and GameConfig.Stages[tonumber(string.sub(selectedStage, 2)) or 0]
+	if not chosen or state.stageCleared[chosen.id] or not stageOpen(chosen) then
+		chosen = nil
+		for _, stage in GameConfig.Stages do
+			if stageOpen(stage) and not state.stageCleared[stage.id] then
+				chosen = stage
+				break
+			end
 		end
+		selectedStage = chosen and chosen.id
+	end
+
+	foeSummary.Text = `<b>{state.tokens} boss tokens</b>   |   Highest stage {state.highestStage}   |   Foes return in {formatClock(state.stageReset)}\n`
+		.. "Beat each stage once a day. Each win opens the next stage. Spend tokens in the token shop below."
+	local hitLow = math.max(1, math.floor(GameConfig.getHit(stats.attack, chosen and chosen.defense or 0) * GameConfig.HitRollMin))
+	local hitHigh = math.max(1, math.floor(GameConfig.getHit(stats.attack, chosen and chosen.defense or 0) * GameConfig.HitRollMax))
+	setBar(yourFightBar, state.health, stats.maxHealth, `You: {state.health} / {stats.maxHealth}`)
+	if chosen then
+		local foeHealth = state.stageHealth[chosen.id] or chosen.health
+		local chest = if chosen.chest then `, {chosen.chest} chest` else ""
+		fightInfo.Text = `<b>STAGE {chosen.index}: {chosen.name}</b>  ({chosen.title})\n`
+			.. `You hit {Format.short(hitLow)} to {Format.short(hitHigh)}   vs   defense {Format.short(chosen.defense)}, attack {Format.short(chosen.attack)}\n`
+			.. `Reward: {Format.short(chosen.gold)} gold, {chosen.xp} XP, {chosen.tokens} tokens{chest}`
+		setBar(foeFightBar, foeHealth, chosen.health, `Foe: {Format.short(foeHealth)} / {Format.short(chosen.health)}`)
+		local ready = state.stamina >= 1 and state.health >= GameConfig.MinHealthToFight
+		local label = if state.stamina < 1 then "No stamina" elseif not ready then "Too wounded" else "Attack\n1 stamina"
+		setButton(fightButton, label, ready, COLOR_ACTION)
+	else
+		local nextStage = GameConfig.Stages[state.highestStage + 1]
+		fightInfo.Text = if nextStage and state.level < nextStage.level
+			then `<b>All open stages are beaten for today.</b>\nThe next stage opens at level {nextStage.level}.`
+			else "<b>All open stages are beaten for today.</b>\nFoes return at 00:00 UTC."
+		setBar(foeFightBar, 0, 1, "")
+		setButton(fightButton, "Done", false, COLOR_ACTION)
+	end
+
+	for _, stage in GameConfig.Stages do
+		local row = stageRows[stage.id]
+		local chest = if stage.chest then `   {stage.chest} chest` else ""
+		row.info.Text = `<b>Stage {stage.index}: {stage.name}</b>   Level {stage.level}\n`
+			.. `{Format.short(stage.health)} health, {Format.short(stage.defense)} defense   |   {stage.tokens} tokens{chest}`
+		if state.stageCleared[stage.id] then
+			setButton(row.button, "Done today", false, COLOR_BUY)
+		elseif state.level < stage.level then
+			setButton(row.button, `Level {stage.level}`, false, COLOR_ACTION)
+		elseif not stageOpen(stage) then
+			setButton(row.button, "Locked", false, COLOR_ACTION)
+		elseif stage.id == selectedStage then
+			setButton(row.button, "Selected", true, COLOR_SELECTED)
+		else
+			setButton(row.button, "Fight", true, COLOR_ACTION)
+		end
+	end
+
+	for _, item in GameConfig.TokenShop do
+		setButton(tokenRows[item.id], `Buy\n{item.cost} tokens`, state.tokens >= item.cost, COLOR_BUY)
 	end
 end
 

@@ -46,7 +46,8 @@ end
 local skillById = indexById(GameConfig.Skills)
 local questById = indexById(GameConfig.Quests)
 local holdingById = indexById(GameConfig.Holdings)
-local foeById = indexById(GameConfig.Foes)
+local stageById = indexById(GameConfig.Stages)
+local tokenItemById = indexById(GameConfig.TokenShop)
 
 ---------------------------------------------------------------------------
 -- Working out a player's numbers
@@ -194,6 +195,16 @@ local function checkNewDay(data)
 	end
 end
 
+-- Foes come back to full health and can be beaten again each UTC day.
+local function checkStageDay(data)
+	local today = GameConfig.getDay()
+	if data.stageDay ~= today then
+		data.stageDay = today
+		data.stageHealth = {}
+		data.stageCleared = {}
+	end
+end
+
 -- Sends the player everything their menus need to draw.
 local function refresh(player: Player)
 	local session = sessions[player]
@@ -228,14 +239,7 @@ local function refresh(player: Player)
 		end
 	end
 
-	local foes = {}
-	for _, foe in GameConfig.Foes do
-		local record = data.foes[foe.id]
-		foes[foe.id] = {
-			health = if record then record.health else foe.health,
-			wait = if record then math.max(0, record.readyAt - now) else 0,
-		}
-	end
+	checkStageDay(data)
 
 	stateRemote:FireClient(player, {
 		gold = data.gold,
@@ -262,7 +266,11 @@ local function refresh(player: Player)
 		gearInUse = gearInUse,
 		market = data.market.items,
 		marketRestock = Market.secondsUntilRestock(),
-		foes = foes,
+		tokens = data.tokens,
+		highestStage = data.highestStage,
+		stageHealth = data.stageHealth,
+		stageCleared = data.stageCleared,
+		stageReset = GameConfig.getSecondsToReset(),
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -638,21 +646,19 @@ function actions.Sell(player: Player, data, id: string)
 	end
 end
 
+-- One attack on a foe stage. id is the stage id ("s1").
 function actions.Fight(player: Player, data, id: string)
-	local foe = foeById[id]
-	if not foe or data.level < foe.level then
+	local stage = stageById[id]
+	if not stage or data.level < stage.level then
 		return
 	end
-
-	local now = os.time()
-	local record = data.foes[id]
-	if not record then
-		record = { health = foe.health, readyAt = 0 }
-		data.foes[id] = record
+	checkStageDay(data)
+	if stage.index > data.highestStage + 1 then
+		sendToast(player, "Beat the stage before this one first.")
+		return
 	end
-
-	if record.readyAt > now then
-		sendToast(player, `{foe.name} is in hiding. Come back later.`)
+	if data.stageCleared[id] then
+		sendToast(player, `{stage.name} is already beaten today. Foes return at 00:00 UTC.`)
 		return
 	end
 	if data.stamina < 1 then
@@ -667,22 +673,76 @@ function actions.Fight(player: Player, data, id: string)
 	local stats = getStats(data)
 	data.stamina -= 1
 
-	local damage = math.max(1, math.floor((stats.attack - foe.defense * 0.5) * random:NextNumber(0.85, 1.15)))
-	record.health -= damage
+	local roll = random:NextNumber(GameConfig.HitRollMin, GameConfig.HitRollMax)
+	local damage = math.max(1, math.floor(GameConfig.getHit(stats.attack, stage.defense) * roll))
+	local health = (data.stageHealth[id] or stage.health) - damage
 
-	if record.health <= 0 then
-		record.health = foe.health
-		record.readyAt = now + GameConfig.FoeCooldownSeconds
-		data.gold += foe.gold
-		data.renown += foe.renown
-		sendToast(player, `{foe.name} is defeated! +{Format.short(foe.gold)} gold, +{foe.xp} XP, +{foe.renown} renown.`)
-		addXp(player, data, foe.xp)
+	if health <= 0 then
+		data.stageHealth[id] = nil
+		data.stageCleared[id] = true
+		data.highestStage = math.max(data.highestStage, stage.index)
+		data.gold += stage.gold
+		data.tokens += stage.tokens
+		data.renown += stage.renown
+		sendToast(
+			player,
+			`Stage {stage.index} cleared! {stage.name} is beaten. +{Format.short(stage.gold)} gold, +{stage.xp} XP, +{stage.tokens} boss tokens.`
+		)
+		addXp(player, data, stage.xp)
+		if stage.chest then
+			giveGear(player, data, GameConfig.getRarityRank(stage.chest), `{stage.chest} chest from {stage.name}`)
+		end
 		return
 	end
+	data.stageHealth[id] = health
 
-	local hurt = math.max(1, math.floor((foe.attack - stats.defense * 0.5) * random:NextNumber(0.85, 1.15)))
+	roll = random:NextNumber(GameConfig.HitRollMin, GameConfig.HitRollMax)
+	local hurt = math.max(1, math.floor(GameConfig.getHit(stage.attack, stats.defense) * roll))
 	data.health = math.max(0, data.health - hurt)
-	sendToast(player, `You hit for {damage}. {foe.name} hits back for {hurt}.`)
+	if data.health <= 0 then
+		-- Losing sends the foe back to full health.
+		data.stageHealth[id] = nil
+		sendToast(player, `{stage.name} knocked you down and recovered. Rest, grow stronger and try again.`)
+		return
+	end
+	sendToast(player, `You hit for {Format.short(damage)}. {stage.name} hits back for {Format.short(hurt)}.`)
+end
+
+-- Spends boss tokens in the token shop.
+function actions.TokenBuy(player: Player, data, id: string)
+	local item = tokenItemById[id]
+	if not item then
+		return
+	end
+	if data.tokens < item.cost then
+		sendToast(player, `Not enough boss tokens. You need {item.cost}.`)
+		return
+	end
+	if item.kind == "chest" and #data.gear >= GameConfig.MaxGearOwned then
+		sendToast(player, "Your armory is full. Sell some gear first.")
+		return
+	end
+	data.tokens -= item.cost
+
+	local stats = getStats(data)
+	if item.kind == "health" then
+		data.health = math.max(data.health, stats.maxHealth)
+		sendToast(player, "Health refilled.")
+	elseif item.kind == "energy" then
+		data.energy = math.max(data.energy, stats.maxEnergy)
+		sendToast(player, "Energy refilled.")
+	elseif item.kind == "stamina" then
+		data.stamina = math.max(data.stamina, stats.maxStamina)
+		sendToast(player, "Stamina refilled.")
+	elseif item.kind == "xpBoost" then
+		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + item.amount * 60
+		sendToast(player, `Double experience for {item.amount} more minutes!`)
+	elseif item.kind == "skill" then
+		data.skillPoints += 1
+		sendToast(player, "+1 skill point. Spend it in the Keep.")
+	elseif item.kind == "chest" then
+		giveGear(player, data, GameConfig.getRarityRank(item.rarity), `{item.name} opened`)
+	end
 end
 
 actionRemote.OnServerEvent:Connect(function(player: Player, action, id)

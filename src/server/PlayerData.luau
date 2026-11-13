@@ -51,7 +51,11 @@ local function newData()
 		gear = {}, -- list of owned gear items
 		nextItemId = 1,
 		market = { window = -1, items = {} },
-		foes = {}, -- [foeId] = { health = number, readyAt = os.time() value }
+		tokens = 0, -- boss tokens
+		highestStage = 0, -- highest foe stage ever beaten
+		stageDay = 0, -- the UTC day the two tables below belong to
+		stageHealth = {}, -- ["s3"] = health a stage has left today
+		stageCleared = {}, -- ["s3"] = true once beaten today
 		lastSeen = 0,
 	}
 end
@@ -68,6 +72,7 @@ local function repair(data)
 			data[key] = default
 		end
 	end
+	data.foes = nil -- replaced by stages
 	return data
 end
 
