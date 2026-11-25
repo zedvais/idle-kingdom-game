@@ -97,19 +97,20 @@ GameConfig.Quests = {
 
 ---------------------------------------------------------------------------
 -- Holdings: each one built takes a lot and earns gold every hour. You can
--- build the same holding many times.
+-- build the same holding many times. income is gold per hour per copy;
+-- it is paid in lumps every `cycle` seconds (the bar on each card).
 ---------------------------------------------------------------------------
 
 GameConfig.Holdings = {
-	{ id = "field", region = "Oakvale", name = "Wheat Field", level = 1, cost = 400, income = 360 },
-	{ id = "mill", region = "Oakvale", name = "Water Mill", level = 3, cost = 1800, income = 1300 },
-	{ id = "tavern", region = "Oakvale", name = "Roadside Tavern", level = 5, cost = 7500, income = 4800 },
-	{ id = "smithy", region = "Greywatch", name = "Smithy", level = 8, cost = 28000, income = 16000 },
-	{ id = "quarry", region = "Greywatch", name = "Stone Quarry", level = 11, cost = 100000, income = 52000 },
-	{ id = "tollbridge", region = "Greywatch", name = "Toll Bridge", level = 14, cost = 380000, income = 180000 },
-	{ id = "markethall", region = "Emberreach", name = "Market Hall", level = 18, cost = 1400000, income = 600000 },
-	{ id = "glassworks", region = "Emberreach", name = "Glassworks", level = 22, cost = 5000000, income = 2000000 },
-	{ id = "mint", region = "Emberreach", name = "Royal Mint", level = 26, cost = 18000000, income = 6500000 },
+	{ id = "field", region = "Oakvale", name = "Wheat Field", level = 1, cost = 400, income = 360, cycle = 10 },
+	{ id = "mill", region = "Oakvale", name = "Water Mill", level = 3, cost = 1800, income = 1300, cycle = 15 },
+	{ id = "tavern", region = "Oakvale", name = "Roadside Tavern", level = 5, cost = 7500, income = 4800, cycle = 20 },
+	{ id = "smithy", region = "Greywatch", name = "Smithy", level = 8, cost = 28000, income = 16000, cycle = 30 },
+	{ id = "quarry", region = "Greywatch", name = "Stone Quarry", level = 11, cost = 100000, income = 52000, cycle = 40 },
+	{ id = "tollbridge", region = "Greywatch", name = "Toll Bridge", level = 14, cost = 380000, income = 180000, cycle = 60 },
+	{ id = "markethall", region = "Emberreach", name = "Market Hall", level = 18, cost = 1400000, income = 600000, cycle = 90 },
+	{ id = "glassworks", region = "Emberreach", name = "Glassworks", level = 22, cost = 5000000, income = 2000000, cycle = 120 },
+	{ id = "mint", region = "Emberreach", name = "Royal Mint", level = 26, cost = 18000000, income = 6500000, cycle = 180 },
 }
 
 ---------------------------------------------------------------------------

@@ -14,6 +14,8 @@ local GameConfig = require(Shared:WaitForChild("GameConfig"))
 local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 local Scenes = require(script.Parent:WaitForChild("Scenes"))
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local HoldingsPage = {}
 
@@ -34,6 +36,7 @@ local regionsOpened = false
 local latest = nil
 local shownHolding = nil -- the holding the popup shows
 local drawBonusNow -- set below: fills the income bonus popup
+local timers = {} -- [holding id] = { base = seconds into the cycle, at = os.clock() }
 
 local function holdingById(id: string)
 	for _, holding in GameConfig.Holdings do
@@ -172,7 +175,7 @@ local function landCard(ui, index: number)
 	frame.Text = ""
 	frame.ClipsDescendants = true
 	ui.addCorner(frame, 8)
-	ui.art.stroke(frame, colors.gold, 1.5, 0.5)
+	local stroke = ui.art.stroke(frame, colors.gold, 1.5, 0.5)
 	local picture = ui.makeFrame(frame, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), colors.panel)
 	picture.BackgroundTransparency = 1
 	local name = ui.makeText(frame, UDim2.fromOffset(10, 30), UDim2.new(0.5, 0, 0, 10), colors.text, 17)
@@ -189,7 +192,7 @@ local function landCard(ui, index: number)
 	namePad.PaddingLeft = UDim.new(0, 10)
 	namePad.PaddingRight = UDim.new(0, 10)
 	namePad.Parent = name
-	local income = ui.makeText(frame, UDim2.fromOffset(10, 30), UDim2.new(0.5, 0, 1, -44), GREEN, 18)
+	local income = ui.makeText(frame, UDim2.fromOffset(10, 30), UDim2.new(0.5, 0, 1, -50), GREEN, 18)
 	income.AnchorPoint = Vector2.new(0.5, 0)
 	income.AutomaticSize = Enum.AutomaticSize.X
 	income.TextWrapped = false
@@ -203,7 +206,15 @@ local function landCard(ui, index: number)
 	incomePad.PaddingLeft = UDim.new(0, 12)
 	incomePad.PaddingRight = UDim.new(0, 12)
 	incomePad.Parent = income
-	card = { frame = frame, picture = picture, name = name, income = income, id = nil }
+	-- The pay cycle: fills up, then the holding pays.
+	local bar = ui.makeFrame(frame, UDim2.new(0.5, 0, 0, 8), UDim2.new(0.25, 0, 1, -16), Color3.fromRGB(20, 16, 12))
+	bar.ZIndex = 50
+	ui.addCorner(bar, 4)
+	ui.art.stroke(bar, Color3.fromRGB(20, 16, 12), 1.5, 0)
+	local fill = ui.makeFrame(bar, UDim2.fromScale(0, 1), UDim2.fromOffset(0, 0), GREEN)
+	fill.ZIndex = 51
+	ui.addCorner(fill, 4)
+	card = { frame = frame, picture = picture, name = name, income = income, bar = bar, fill = fill, stroke = stroke, id = nil }
 	frame.Activated:Connect(function()
 		if card.id then
 			shownHolding = card.id
@@ -396,6 +407,68 @@ function HoldingsPage.build(ui)
 
 	buildBuildTab(ui, page)
 	buildPopups(ui)
+
+	-- Cycle bars move smoothly between server updates.
+	RunService.Heartbeat:Connect(function()
+		if not w.gateLands() then
+			return
+		end
+		local now = os.clock()
+		for _, card in landCards do
+			if card.frame.Visible and card.id then
+				local holding = holdingById(card.id)
+				local timer = timers[card.id]
+				local cycle = (holding and holding.cycle) or 60
+				local elapsed = if timer then timer.base + (now - timer.at) else 0
+				card.fill.Size = UDim2.fromScale(math.clamp(elapsed / cycle, 0, 1), 1)
+			end
+		end
+	end)
+
+	-- A holding paid: "+gold" rises from each of its cards.
+	local Fx = require(script.Parent:WaitForChild("Fx"))
+	Fx.onIncome = function(info)
+		timers[info.id] = { base = 0, at = os.clock() }
+		if not w.gateLands() then
+			return
+		end
+		for _, card in landCards do
+			if card.frame.Visible and card.id == info.id then
+				HoldingsPage.pop(ui, card, tonumber(info.amount) or 0)
+			end
+		end
+	end
+end
+
+-- "+amount gold" floating up from a card, and a quick gold flash.
+function HoldingsPage.pop(ui, card, amount: number)
+	local label = ui.makeText(card.frame, UDim2.fromOffset(10, 34), UDim2.new(0.5, 0, 0.55, 0), ui.colors.gold, 26)
+	label.AnchorPoint = Vector2.new(0.5, 0.5)
+	label.AutomaticSize = Enum.AutomaticSize.X
+	label.TextWrapped = false
+	label.Font = Enum.Font.GothamBlack
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.TextStrokeTransparency = 0.2
+	label.TextStrokeColor3 = Color3.fromRGB(40, 28, 12)
+	label.ZIndex = 80
+	label.Text = `+{Format.short(amount)} {ui.art.Icons.gold}`
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.6
+	scale.Parent = label
+	TweenService:Create(scale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	local rise = TweenService:Create(label, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = UDim2.new(0.5, 0, 0.25, 0),
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+	})
+	rise:Play()
+	rise.Completed:Connect(function()
+		label:Destroy()
+	end)
+	card.stroke.Thickness = 4
+	card.stroke.Transparency = 0
+	card.fill.Size = UDim2.fromScale(1, 1)
+	TweenService:Create(card.stroke, TweenInfo.new(0.6), { Thickness = 1.5, Transparency = 0.5 }):Play()
 end
 
 ---------------------------------------------------------------------------
@@ -555,7 +628,8 @@ function HoldingsPage.drawPopup(state, ui)
 	local income = perCopy(state, holding)
 	w.popupName.Text = holding.name
 	w.popupInfo.Text = `<font color="#6ED26E"><b>{Format.short(income)} gold/hr</b></font> each, with your bonuses\n`
-		.. `You have {count}, earning <b>{Format.short(income * count)} gold/hr</b> together\n`
+		.. `Pays <b>{Format.short(math.floor(income / 3600 * (holding.cycle or 60)))} gold</b> each every {holding.cycle or 60} s. You have {count}, `
+		.. `<b>{Format.short(income * count)} gold/hr</b> together\n`
 		.. `<font color="#B2A690">{holding.region}, from level {holding.level}</font>`
 	local price = GameConfig.getHoldingCost(holding, count)
 	local stats = state.stats
@@ -591,6 +665,16 @@ function HoldingsPage.draw(state, ui)
 		return
 	end
 	latest = state
+	-- Where each pay cycle is, from the server.
+	local now = os.clock()
+	for id, seconds in state.holdingTimers or {} do
+		local timer = timers[id]
+		local guess = if timer then timer.base + (now - timer.at) else -1
+		-- Only snap when the bar has drifted (avoids jitter every second).
+		if math.abs(guess - seconds) > 1.5 then
+			timers[id] = { base = seconds, at = now }
+		end
+	end
 	if not tabChosen then
 		local any = false
 		for _, count in state.holdings do

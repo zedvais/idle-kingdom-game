@@ -691,6 +691,10 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt, send)
 			if Fx.onRoll then
 				Fx.onRoll(info)
 			end
+		elseif kind == "income" then
+			if Fx.onIncome then
+				Fx.onIncome(info)
+			end
 		elseif kind == "soldier" then
 			info.what = "soldier"
 			Fx.reveal(info)

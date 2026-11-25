@@ -285,7 +285,8 @@ local function getStats(data)
 	end
 	local incomeBonus = keepBonus + perkBonus.income
 	local incomeMultiplier = if hasPass(data, "doubleincome") then StoreConfig.DoubleIncome else 1
-	incomePerHour = math.floor(incomePerHour * (1 + incomeBonus) * incomeMultiplier)
+	local incomeFactor = (1 + incomeBonus) * incomeMultiplier
+	incomePerHour = math.floor(incomePerHour * incomeFactor)
 	-- Where the income bonus comes from, for the Holdings page.
 	local incomeParts = {
 		{ "Keep", keepBonus },
@@ -315,6 +316,7 @@ local function getStats(data)
 		lotsUsed = lotsUsed,
 		incomeBonus = incomeBonus,
 		incomeMultiplier = incomeMultiplier,
+		incomeFactor = incomeFactor,
 		incomeParts = incomeParts,
 		incomePerHour = incomePerHour,
 		-- Where attack and defense come from, for the Keep page.
@@ -539,6 +541,32 @@ local function relicState(data)
 	return { count = data.relics.count, items = items, seen = data.relics.seen or {} }
 end
 
+-- Holdings pay in lumps: every `cycle` seconds each holding type pays
+-- its copies' income for that stretch, and the client shows "+gold" on
+-- each card. Called once a second.
+local function payHoldings(player: Player, session, stats)
+	local data = session.data
+	local timers = session.holdingTimers
+	for _, holding in GameConfig.Holdings do
+		local count = data.holdings[holding.id] or 0
+		if count > 0 then
+			local cycle = holding.cycle or 60
+			timers[holding.id] = (timers[holding.id] or 0) + 1
+			if timers[holding.id] >= cycle then
+				timers[holding.id] -= cycle
+				local each = math.floor(holding.income * stats.incomeFactor / 3600 * cycle)
+				if each > 0 then
+					data.gold += each * count
+					countLifetime(data, "goldEarned", each * count)
+					sendFx(player, "income", { id = holding.id, amount = each, count = count })
+				end
+			end
+		else
+			timers[holding.id] = nil
+		end
+	end
+end
+
 local function refresh(player: Player)
 	local session = sessions[player]
 	if not session then
@@ -638,6 +666,7 @@ local function refresh(player: Player)
 		autoEquipNew = data.autoEquipNew,
 		market = data.market.items,
 		marketRestock = Market.secondsUntilRestock(),
+		holdingTimers = session.holdingTimers,
 		marketWindow = data.market.window,
 		tokens = data.tokens,
 		highestStage = data.highestStage,
@@ -3080,6 +3109,7 @@ local function onPlayerAdded(player: Player)
 		actionCount = 0,
 		regen = { energy = 0, stamina = 0, health = 0 },
 		boardSent = {}, -- [board key] = last score written
+		holdingTimers = {}, -- [holding id] = seconds into its pay cycle
 	}
 	refresh(player)
 
@@ -3180,8 +3210,7 @@ task.spawn(function()
 			data.playSeconds += 1
 			checkWeek(data)
 			data.weekly.play += 1
-			data.gold += stats.incomePerHour / 3600
-			countLifetime(data, "goldEarned", stats.incomePerHour / 3600)
+			payHoldings(player, session, stats)
 			countLifetime(data, "playSeconds", 1)
 			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
 			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)
