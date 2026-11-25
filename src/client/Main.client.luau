@@ -14,6 +14,7 @@ local FestivalConfig = require(Shared:WaitForChild("FestivalConfig"))
 local ResearchConfig = require(Shared:WaitForChild("ResearchConfig"))
 local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local Format = require(Shared:WaitForChild("Format"))
+local Art = require(script.Parent:WaitForChild("Art")) -- colors, icons and styling, all drawn in code
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local actionRemote = remotes:WaitForChild("Action")
@@ -60,9 +61,35 @@ do
 
 	local backdrop = Instance.new("Frame")
 	backdrop.Size = UDim2.fromScale(1, 1)
-	backdrop.BackgroundColor3 = COLOR_BACKGROUND
+	backdrop.BackgroundColor3 = Color3.new(1, 1, 1)
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = backdropGui
+	-- Night sky fading to a warm glow at the horizon.
+	local sky = Instance.new("UIGradient")
+	sky.Rotation = 90
+	sky.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(12, 12, 26)),
+		ColorSequenceKeypoint.new(0.6, COLOR_BACKGROUND),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 30, 18)),
+	})
+	sky.Parent = backdrop
+	for _ = 1, 40 do
+		local star = Instance.new("Frame")
+		local size = math.random(1, 3)
+		star.Size = UDim2.fromOffset(size, size)
+		star.Position = UDim2.fromScale(math.random(), math.random() * 0.6)
+		star.BackgroundColor3 = Color3.fromRGB(255, 240, 200)
+		star.BackgroundTransparency = 0.2 + math.random() * 0.6
+		star.BorderSizePixel = 0
+		star.Parent = backdrop
+	end
+	local skyline = Instance.new("Frame")
+	skyline.Size = UDim2.new(1, 0, 0, 70)
+	skyline.Position = UDim2.fromScale(0, 1)
+	skyline.AnchorPoint = Vector2.new(0, 1)
+	skyline.BackgroundTransparency = 1
+	skyline.Parent = backdrop
+	Art.skyline(skyline, Color3.fromRGB(10, 7, 6), 0)
 end
 
 local gui = Instance.new("ScreenGui")
@@ -127,6 +154,7 @@ local function makeButton(parent: Instance, size: UDim2, position: UDim2, color:
 	button.Text = ""
 	button.Parent = parent
 	addCorner(button, 6)
+	Art.button(button)
 	return button
 end
 
@@ -152,6 +180,8 @@ local function makeBar(parent: Instance, size: UDim2, position: UDim2, color: Co
 	local label = makeText(back, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(1, 1, 1), 12)
 	label.TextXAlignment = Enum.TextXAlignment.Center
 	label.Font = Enum.Font.GothamBold
+	label.TextStrokeTransparency = 0.5
+	Art.bar(back, fill)
 	return { fill = fill, label = label }
 end
 
@@ -165,9 +195,9 @@ end
 -- Top bar: you on the left, resources in the middle, bars on the right
 ---------------------------------------------------------------------------
 
-local topBar = makeFrame(gui, UDim2.new(1, -12, 0, TOP_HEIGHT), UDim2.fromOffset(6, 4), COLOR_PANEL)
+local topBar = makeFrame(gui, UDim2.new(1, -12, 0, TOP_HEIGHT), UDim2.fromOffset(6, 4), Art.Colors.wood)
 addCorner(topBar, 8)
-addStroke(topBar)
+Art.panel(topBar)
 
 -- Popups (Profile, Mail, Rankings...) open over the menus. Defined with
 -- the popup window further down.
@@ -209,11 +239,14 @@ do
 	levelBadge.TextXAlignment = Enum.TextXAlignment.Center
 	levelBadge.ZIndex = 2
 	addCorner(levelBadge, 9)
+	Art.gloss(levelBadge, 1, 0.7)
+	Art.stroke(levelBadge, Art.Colors.woodDark, 1.5, 0)
 
 	-- The name and XP bar are under this clear button, so they open the
 	-- Profile too.
 	local nameHit = makeButton(topBar, UDim2.fromOffset(190, 26), UDim2.fromOffset(70, 8), COLOR_PANEL)
 	nameHit.BackgroundTransparency = 1
+	nameHit:SetAttribute("NoGlow", true)
 	nameHit.Text = ""
 	nameHit.ZIndex = 3
 	for _, button in { avatar, nameHit } do
@@ -223,8 +256,9 @@ do
 	end
 end
 
-local nameLabel = makeText(topBar, UDim2.fromOffset(190, 24), UDim2.fromOffset(70, 10), COLOR_HEADER, 16)
-nameLabel.Font = Enum.Font.GothamBold
+local nameLabel = makeText(topBar, UDim2.fromOffset(190, 24), UDim2.fromOffset(70, 10), COLOR_HEADER, 20)
+nameLabel.Font = Art.Fonts.heading
+nameLabel.TextStrokeTransparency = 0.6
 nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 nameLabel.TextWrapped = false
 local xpBar = makeBar(topBar, UDim2.fromOffset(190, 16), UDim2.fromOffset(70, 40), COLOR_XP)
@@ -242,19 +276,24 @@ do
 	chipLayout.Parent = chipRow
 
 	local function makeChip(key: string, label: string, color: Color3)
-		local chip = makeFrame(chipRow, UDim2.new(0.5, -6, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
+		local chip = makeFrame(chipRow, UDim2.new(0.5, -6, 1, 0), UDim2.fromOffset(0, 0), Art.Colors.woodDark)
 		chip.LayoutOrder = #chipRow:GetChildren()
-		addCorner(chip, 6)
+		addCorner(chip, 8)
+		Art.card(chip)
+		Art.stroke(chip, color, 1.5, 0.35)
 		local sizeLimit = Instance.new("UISizeConstraint")
-		sizeLimit.MaxSize = Vector2.new(190, 100)
+		sizeLimit.MaxSize = Vector2.new(200, 100)
 		sizeLimit.Parent = chip
-		local name = makeText(chip, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 3), color, 11)
+		local icon = Art.icon(chip, Art.Icons[key] or "", 30, UDim2.new(0, 6, 0.5, 0))
+		icon.AnchorPoint = Vector2.new(0, 0.5)
+		local name = makeText(chip, UDim2.new(1, -46, 0, 14), UDim2.fromOffset(42, 3), color, 11)
 		name.Font = Enum.Font.GothamBold
 		name.Text = string.upper(label)
-		local value = makeText(chip, UDim2.new(1, -12, 0, 22), UDim2.fromOffset(8, 16), COLOR_TEXT, 18)
+		local value = makeText(chip, UDim2.new(1, -46, 0, 22), UDim2.fromOffset(42, 16), COLOR_TEXT, 18)
 		value.Font = Enum.Font.GothamBold
 		value.TextScaled = true
-		local sub = makeText(chip, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 38), COLOR_DIM, 11)
+		value.TextStrokeTransparency = 0.6
+		local sub = makeText(chip, UDim2.new(1, -46, 0, 14), UDim2.fromOffset(42, 38), COLOR_DIM, 11)
 		sub.TextTruncate = Enum.TextTruncate.AtEnd
 		sub.TextWrapped = false
 		chips[key] = { value = value, sub = sub }
@@ -273,7 +312,7 @@ do
 	iconLayout.Padding = UDim.new(0, 6)
 	iconLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	iconLayout.Parent = iconRow
-	for index, entry in { { "Mail", "\u{2709}", "Mail" } } do
+	for index, entry in { { "Mail", Art.Icons.Mail, "Mail" } } do
 		local button = makeButton(iconRow, UDim2.new(0, 56, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
 		button.LayoutOrder = index
 		button.Text = ""
@@ -305,8 +344,10 @@ end
 local barBlock = makeFrame(topBar, UDim2.new(0, RIGHT_BLOCK - 10, 1, 0), UDim2.new(1, -(RIGHT_BLOCK - 4), 0, 0), COLOR_PANEL)
 barBlock.BackgroundTransparency = 1
 local showPage -- defined with the pages below
-local function makeTopBar(y: number, color: Color3)
+local function makeTopBar(y: number, color: Color3, glyph: string)
 	local bar = makeBar(barBlock, UDim2.new(1, -30, 0, 18), UDim2.fromOffset(0, y), color)
+	local icon = Art.icon(bar.fill.Parent, glyph, 18, UDim2.fromOffset(-4, 0))
+	icon.ZIndex = 2
 	local plus = makeButton(barBlock, UDim2.fromOffset(22, 18), UDim2.new(1, -24, 0, y), COLOR_SELECTED)
 	plus.Text = "+"
 	plus.TextSize = 14
@@ -315,9 +356,9 @@ local function makeTopBar(y: number, color: Color3)
 	end)
 	return bar
 end
-local energyBar = makeTopBar(8, COLOR_ENERGY)
-local staminaBar = makeTopBar(29, COLOR_STAMINA)
-local healthBar = makeTopBar(50, COLOR_HEALTH)
+local energyBar = makeTopBar(8, COLOR_ENERGY, Art.Icons.energy)
+local staminaBar = makeTopBar(29, COLOR_STAMINA, Art.Icons.stamina)
+local healthBar = makeTopBar(50, COLOR_HEALTH, Art.Icons.health)
 
 ---------------------------------------------------------------------------
 -- Left menu: pages grouped under small headings, with red count badges
@@ -332,8 +373,9 @@ rail.ScrollBarThickness = 4
 rail.CanvasSize = UDim2.new(0, 0, 0, 0)
 rail.AutomaticCanvasSize = Enum.AutomaticSize.Y
 rail.Parent = gui
+rail.ScrollBarImageColor3 = COLOR_GOLD
 addCorner(rail, 8)
-addStroke(rail)
+Art.panel(rail, false)
 
 do
 	local railLayout = Instance.new("UIListLayout")
@@ -350,7 +392,7 @@ end
 
 local main = makeFrame(gui, UDim2.new(1, -(RAIL_WIDTH + 18), 1, -(TOP_HEIGHT + 16)), UDim2.fromOffset(RAIL_WIDTH + 12, TOP_HEIGHT + 10), COLOR_PANEL)
 addCorner(main, 8)
-addStroke(main)
+Art.panel(main)
 
 -- Every page: its group, a one line description, and a tip shown until
 -- the player presses Got it.
@@ -452,11 +494,38 @@ end
 
 -- Page header: small group label, big title, description, boost chips.
 local HEADER_HEIGHT = 64
-local eyebrow = makeText(main, UDim2.new(0.5, 0, 0, 14), UDim2.fromOffset(14, 8), COLOR_DIM, 11)
+-- A banner in the group's color behind the header, with a castle skyline
+-- and a round emblem showing the page's icon.
+local headerArt = {}
+do
+	local banner = makeFrame(main, UDim2.new(1, -12, 0, HEADER_HEIGHT - 6), UDim2.fromOffset(6, 4), COLOR_SELECTED)
+	banner.ZIndex = 0
+	addCorner(banner, 8)
+	local fade = Instance.new("UIGradient")
+	fade.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.1),
+		NumberSequenceKeypoint.new(0.6, 0.55),
+		NumberSequenceKeypoint.new(1, 0.85),
+	})
+	fade.Parent = banner
+	local skyline = Art.skyline(banner, Color3.new(0, 0, 0), 0.55)
+	skyline.ZIndex = 0
+	for _, part in skyline:GetDescendants() do
+		if part:IsA("GuiObject") then
+			part.ZIndex = 0
+		end
+	end
+	local emblem, glyph = Art.emblem(main, "", 48, UDim2.fromOffset(14, 8), COLOR_SELECTED)
+	headerArt.banner = banner
+	headerArt.emblem = emblem
+	headerArt.glyph = glyph
+end
+local eyebrow = makeText(main, UDim2.new(0.5, 0, 0, 14), UDim2.fromOffset(72, 8), COLOR_DIM, 11)
 eyebrow.Font = Enum.Font.GothamBold
-local pageTitle = makeText(main, UDim2.new(0.5, 0, 0, 26), UDim2.fromOffset(14, 20), COLOR_HEADER, 24)
-pageTitle.Font = Enum.Font.GothamBlack
-local pageAbout = makeText(main, UDim2.new(0.55, 0, 0, 16), UDim2.fromOffset(14, 45), COLOR_DIM, 12)
+local pageTitle = makeText(main, UDim2.new(0.5, 0, 0, 30), UDim2.fromOffset(72, 18), COLOR_HEADER, 32)
+pageTitle.Font = Art.Fonts.title
+pageTitle.TextStrokeTransparency = 0.5
+local pageAbout = makeText(main, UDim2.new(0.55, -58, 0, 16), UDim2.fromOffset(72, 45), COLOR_TEXT, 12)
 pageAbout.TextTruncate = Enum.TextTruncate.AtEnd
 pageAbout.TextWrapped = false
 
@@ -527,17 +596,38 @@ local function placePage()
 end
 
 showPage = function(name: string)
+	local changed = currentPage ~= name
 	currentPage = name
 	eyebrow.Text = string.upper(pageGroup[name] or "")
-	pageTitle.Text = string.upper(name)
+	pageTitle.Text = name
 	pageAbout.Text = if PAGE_INFO[name] then PAGE_INFO[name].about else ""
+	local groupColor = Art.GroupColors[pageGroup[name] or ""] or COLOR_SELECTED
+	headerArt.banner.BackgroundColor3 = groupColor
+	headerArt.emblem.BackgroundColor3 = groupColor
+	headerArt.glyph.Text = Art.Icons[name] or ""
 	for _, pageName in PAGE_NAMES do
 		pages[pageName].Visible = pageName == name
 		local selected = pageName == name
-		railButtons[pageName].BackgroundColor3 = if selected then COLOR_SELECTED else COLOR_PANEL
-		railButtons[pageName].TextColor3 = if selected then COLOR_GOLD else COLOR_TEXT
+		local button = railButtons[pageName]
+		button.BackgroundColor3 = if selected then COLOR_SELECTED else COLOR_PANEL
+		button.BackgroundTransparency = if selected then 0 else 1
+		button.TextColor3 = if selected then COLOR_GOLD else COLOR_TEXT
+		local accent = button:FindFirstChild("Accent")
+		if accent then
+			accent.Visible = selected
+		end
 	end
 	placePage()
+	-- Slide the new page in.
+	local page = pages[name]
+	if page and changed then
+		local target = page.Position
+		page.Position = target + UDim2.fromOffset(0, 14)
+		Art.tween(page, 0.2, { Position = target })
+		Art.tween(headerArt.emblem, 0.08, { Rotation = -12 }).Completed:Connect(function()
+			Art.tween(headerArt.emblem, 0.35, { Rotation = 0 }, Enum.EasingStyle.Back)
+		end)
+	end
 end
 
 tipButton.Activated:Connect(function()
@@ -559,11 +649,18 @@ end
 local railOrder = 0
 for _, group in PAGE_GROUPS do
 	railOrder += 1
-	local heading = makeText(rail, UDim2.new(1, -16, 0, 18), UDim2.fromOffset(0, 0), COLOR_DIM, 10)
-	heading.Font = Enum.Font.GothamBold
-	heading.Text = string.upper(group.name)
+	local heading = makeText(rail, UDim2.new(1, -16, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 15)
+	heading.Font = Art.Fonts.heading
+	heading.Text = group.name
 	heading.LayoutOrder = railOrder
 	heading.TextYAlignment = Enum.TextYAlignment.Bottom
+	do
+		-- A thin line in the group's color under the heading.
+		local line = makeFrame(heading, UDim2.new(1, 0, 0, 2), UDim2.new(0, 0, 1, 1), Art.GroupColors[group.name] or COLOR_EDGE)
+		local fade = Instance.new("UIGradient")
+		fade.Transparency = NumberSequence.new(0, 1)
+		fade.Parent = line
+	end
 
 	for _, name in group.pages do
 		railOrder += 1
@@ -572,10 +669,21 @@ for _, group in PAGE_GROUPS do
 		button.Text = name
 		button.TextXAlignment = Enum.TextXAlignment.Left
 		button.TextSize = 13
+		button.BackgroundTransparency = 1
 		local padding = Instance.new("UIPadding")
-		padding.PaddingLeft = UDim.new(0, 10)
+		padding.PaddingLeft = UDim.new(0, 32)
 		padding.Parent = button
 		railButtons[name] = button
+		do
+			local icon = Art.icon(button, Art.Icons[name] or "", 20, UDim2.new(0, -27, 0.5, 0))
+			icon.AnchorPoint = Vector2.new(0, 0.5)
+			-- A gold edge on the left of the open page's button.
+			local accent = makeFrame(button, UDim2.new(0, 4, 1, -8), UDim2.new(0, -32, 0.5, 0), COLOR_GOLD)
+			accent.Name = "Accent"
+			accent.AnchorPoint = Vector2.new(0, 0.5)
+			accent.Visible = false
+			addCorner(accent, 2)
+		end
 
 		local badge = makeText(button, UDim2.fromOffset(24, 18), UDim2.new(1, -4, 0.5, 0), Color3.new(1, 1, 1), 11)
 		badge.AnchorPoint = Vector2.new(1, 0.5)
@@ -618,6 +726,7 @@ local function makeRow(page: Instance, order: number, height: number, hasButton:
 	row.LayoutOrder = order
 	addCorner(row, 6)
 	addStroke(row)
+	Art.card(row)
 
 	local textWidthOffset = if hasButton then -(BUTTON_WIDTH + 26) else -20
 	local info = makeText(row, UDim2.new(1, textWidthOffset, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 14)
@@ -653,6 +762,7 @@ local function makeCard(grid: Instance)
 	card.LayoutOrder = cardCount
 	addCorner(card, 8)
 	addStroke(card)
+	Art.card(card)
 	local info = makeText(card, UDim2.new(1, -16, 1, -52), UDim2.fromOffset(8, 6), COLOR_TEXT, 13)
 	info.TextYAlignment = Enum.TextYAlignment.Top
 	local button = makeButton(card, UDim2.new(1, -16, 0, 36), UDim2.new(0, 8, 1, -42), COLOR_DISABLED)
@@ -662,10 +772,17 @@ end
 
 -- A small heading between groups of rows.
 local function makeHeading(page: Instance, order: number, text: string)
-	local label = makeText(page, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 14)
+	local label = makeText(page, UDim2.new(1, -10, 0, 28), UDim2.fromOffset(0, 0), COLOR_HEADER, 20)
 	label.LayoutOrder = order
-	label.Font = Enum.Font.GothamBold
-	label.Text = string.upper(text)
+	label.Font = Art.Fonts.heading
+	label.TextYAlignment = Enum.TextYAlignment.Bottom
+	label.TextStrokeTransparency = 0.6
+	label.Text = text
+	-- A gold rule under the heading that fades out to the right.
+	local line = makeFrame(label, UDim2.new(1, 0, 0, 1), UDim2.new(0, 0, 1, 1), COLOR_GOLD)
+	local fade = Instance.new("UIGradient")
+	fade.Transparency = NumberSequence.new(0.2, 1)
+	fade.Parent = line
 end
 
 -- A row with a label on the left and several buttons sharing the rest.
@@ -673,6 +790,7 @@ local function makeButtonRow(page: Instance, order: number, labelText: string, n
 	local row = makeFrame(page, UDim2.new(1, -10, 0, 44), UDim2.fromOffset(0, 0), COLOR_ROW)
 	row.LayoutOrder = order
 	addCorner(row, 6)
+	Art.card(row)
 	local width = if labelText == "" then 0 else (labelWidth or 130)
 	local label = makeText(row, UDim2.new(0, width - 10, 1, 0), UDim2.fromOffset(10, 0), COLOR_TEXT, 13)
 	label.Text = labelText
@@ -1267,22 +1385,27 @@ do
 	local shade = makeButton(popupGui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(0, 0, 0))
 	shade.BackgroundTransparency = 0.45
 	shade.AutoButtonColor = false
+	shade:SetAttribute("NoGlow", true)
 	shade.Text = ""
 
 	local window = makeFrame(popupGui, UDim2.fromOffset(DEFAULT_WIDTH, DEFAULT_HEIGHT), UDim2.fromScale(0.5, 0.5), COLOR_PANEL)
 	window.AnchorPoint = Vector2.new(0.5, 0.5)
 	window.Active = true
 	addCorner(window, 10)
-	local windowStroke = Instance.new("UIStroke")
-	windowStroke.Color = COLOR_HEADER
-	windowStroke.Thickness = 1.5
-	windowStroke.Parent = window
+	Art.panel(window)
 	local windowScale = Instance.new("UIScale")
 	windowScale.Parent = window
 
-	local titleLabel = makeText(window, UDim2.new(1, -80, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
-	titleLabel.Font = Enum.Font.GothamBlack
-	local closeButton = makeButton(window, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
+	-- A red ribbon across the top for the title.
+	local ribbon = makeFrame(window, UDim2.new(1, -40, 0, 40), UDim2.fromOffset(20, 8), Art.Colors.blood)
+	addCorner(ribbon, 8)
+	Art.gloss(ribbon, 1, 0.65)
+	Art.stroke(ribbon, COLOR_GOLD, 1.5, 0.2)
+	local titleIcon = Art.icon(window, "", 28, UDim2.fromOffset(30, 14))
+	local titleLabel = makeText(window, UDim2.new(1, -130, 0, 34), UDim2.fromOffset(66, 11), Art.Colors.goldLight, 30)
+	titleLabel.Font = Art.Fonts.title
+	titleLabel.TextStrokeTransparency = 0.4
+	local closeButton = makeButton(window, UDim2.fromOffset(32, 32), UDim2.new(1, -58, 0, 12), COLOR_ACTION)
 	closeButton.Text = "X"
 	closeButton.TextSize = 18
 
@@ -1328,7 +1451,8 @@ do
 		local width, height = DEFAULT_WIDTH, DEFAULT_HEIGHT
 		for _, modal in MODALS do
 			if modal.key == key then
-				titleLabel.Text = string.upper(title or modal.title)
+				titleLabel.Text = title or modal.title
+				titleIcon.Text = Art.Icons[key] or Art.Icons.scroll
 				width = modal.width or DEFAULT_WIDTH
 				height = modal.height or DEFAULT_HEIGHT
 			end
@@ -1337,7 +1461,14 @@ do
 		-- Shrink the window on small screens so it always fits.
 		local camera = workspace.CurrentCamera
 		local view = if camera then camera.ViewportSize else Vector2.new(1280, 720)
-		windowScale.Scale = math.clamp(math.min((view.X - 20) / width, (view.Y - 40) / height), 0.5, 1)
+		local fit = math.clamp(math.min((view.X - 20) / width, (view.Y - 40) / height), 0.5, 1)
+		if not popupGui.Enabled then
+			-- Pop in when the window opens.
+			windowScale.Scale = fit * 0.85
+			Art.tween(windowScale, 0.22, { Scale = fit }, Enum.EasingStyle.Back)
+		else
+			windowScale.Scale = fit
+		end
 		popupGui.Enabled = true
 		redraw()
 	end
@@ -1353,6 +1484,7 @@ end
 -- Pages that live in their own modules. Each gets the shared helpers in
 -- `ui`, builds its widgets once and draws every state.
 ui = {
+	art = Art,
 	pages = pages,
 	player = player,
 	colors = {
@@ -2448,10 +2580,8 @@ do
 	local recruitWindow = makeFrame(recruitGui, UDim2.fromOffset(540, 490), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
 	recruitWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 	addCorner(recruitWindow, 10)
-	local windowStroke = Instance.new("UIStroke")
-	windowStroke.Color = COLOR_HEADER
-	windowStroke.Thickness = 1.5
-	windowStroke.Parent = recruitWindow
+	recruitWindow.BackgroundColor3 = COLOR_PANEL
+	Art.panel(recruitWindow)
 	local windowLimit = Instance.new("UISizeConstraint")
 	windowLimit.MaxSize = Vector2.new(540, 490)
 	windowLimit.Parent = recruitWindow
@@ -2459,8 +2589,9 @@ do
 	windowScale.Parent = recruitWindow
 
 	local recruitTitle = makeText(recruitWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
-	recruitTitle.Font = Enum.Font.GothamBold
-	recruitTitle.Text = "AUTO ROLL"
+	recruitTitle.Font = Art.Fonts.title
+	recruitTitle.TextSize = 30
+	recruitTitle.Text = "Auto roll"
 
 	local closeButton = makeButton(recruitWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
 	closeButton.Text = "X"
@@ -2718,16 +2849,15 @@ do
 	local equipWindow = makeFrame(equipGui, UDim2.fromOffset(EQUIP_WIDTH, EQUIP_HEIGHT), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
 	equipWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 	addCorner(equipWindow, 10)
-	local equipStroke = Instance.new("UIStroke")
-	equipStroke.Color = COLOR_HEADER
-	equipStroke.Thickness = 1.5
-	equipStroke.Parent = equipWindow
+	equipWindow.BackgroundColor3 = COLOR_PANEL
+	Art.panel(equipWindow)
 	local equipScale = Instance.new("UIScale")
 	equipScale.Parent = equipWindow
 
 	local equipTitle = makeText(equipWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
-	equipTitle.Font = Enum.Font.GothamBold
-	equipTitle.Text = "GEAR"
+	equipTitle.Font = Art.Fonts.title
+	equipTitle.TextSize = 30
+	equipTitle.Text = "Gear"
 
 	local equipClose = makeButton(equipWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
 	equipClose.Text = "X"
@@ -2963,12 +3093,18 @@ do
 		card.LayoutOrder = toastCount
 		card.Text = text
 		addCorner(card, 8)
+		Art.card(card)
 		local stroke = addStroke(card)
 		stroke.Color = COLOR_GOLD
+		local icon = Art.icon(card, Art.toastIcon(text), 24, UDim2.new(0, -32, 0.5, 0))
+		icon.AnchorPoint = Vector2.new(0, 0.5)
+		card.BackgroundTransparency = 1
+		card.TextTransparency = 1
+		Art.tween(card, 0.25, { BackgroundTransparency = 0.05, TextTransparency = 0 })
 		local padding = Instance.new("UIPadding")
 		padding.PaddingTop = UDim.new(0, 8)
 		padding.PaddingBottom = UDim.new(0, 8)
-		padding.PaddingLeft = UDim.new(0, 10)
+		padding.PaddingLeft = UDim.new(0, 42)
 		padding.PaddingRight = UDim.new(0, 10)
 		padding.Parent = card
 
@@ -2977,6 +3113,13 @@ do
 			table.remove(liveToasts, 1):Destroy()
 		end
 		task.delay(TOAST_SECONDS, function()
+			if not table.find(liveToasts, card) then
+				return
+			end
+			Art.tween(card, 0.3, { BackgroundTransparency = 1, TextTransparency = 1 })
+			Art.tween(icon, 0.3, { TextTransparency = 1 })
+			Art.tween(stroke, 0.3, { Transparency = 1 })
+			task.wait(0.3)
 			local index = table.find(liveToasts, card)
 			if index then
 				table.remove(liveToasts, index)
@@ -2997,9 +3140,15 @@ do
 		window.AnchorPoint = Vector2.new(0.5, 0.5)
 		window.ZIndex = 10
 		addCorner(window, 12)
+		window.BackgroundColor3 = COLOR_PANEL
+		Art.panel(window)
+		local coins = Art.icon(window, Art.Icons.gold, 40, UDim2.new(0.5, 0, 0, -10))
+		coins.AnchorPoint = Vector2.new(0.5, 0.5)
+		coins.ZIndex = 12
 
 		local title = makeText(window, UDim2.new(1, -30, 0, 34), UDim2.fromOffset(15, 14), COLOR_HEADER, 20)
-		title.Font = Enum.Font.GothamBold
+		title.Font = Art.Fonts.title
+		title.TextSize = 28
 		title.TextXAlignment = Enum.TextXAlignment.Center
 		title.Text = "Welcome back, my liege!"
 		title.ZIndex = 11
@@ -3015,6 +3164,7 @@ do
 		button.TextColor3 = Color3.fromRGB(40, 28, 12)
 		button.TextSize = 16
 		button.ZIndex = 11
+		Art.shine(button, 2)
 		button.Activated:Connect(function()
 			window:Destroy()
 		end)
@@ -3031,6 +3181,13 @@ do
 
 	player:GetAttributeChangedSignal("OfflineGold"):Connect(checkWelcomeBack)
 	checkWelcomeBack()
+end
+
+do
+	local Fx = require(script.Parent:WaitForChild("Fx"))
+	Fx.init(Art, GameConfig, Format.short, remotes:WaitForChild("Fx"))
+	Fx.setAnchor("foe", foeFightBar.fill.Parent)
+	Fx.setAnchor("you", yourFightBar.fill.Parent)
 end
 
 print(`[{GameConfig.GameName}] client started`)

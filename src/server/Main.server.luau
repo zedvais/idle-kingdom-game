@@ -41,6 +41,11 @@ actionRemote.Parent = remotes
 local stateRemote = Instance.new("RemoteEvent")
 stateRemote.Name = "State"
 stateRemote.Parent = remotes
+-- Fx (server to client): one-off effects such as chest reveals, damage
+-- numbers and level ups. Only for show; the state carries the real numbers.
+local fxRemote = Instance.new("RemoteEvent")
+fxRemote.Name = "Fx"
+fxRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
 local sessions = {} -- [Player] = { data, canSave, actionCount, regen }
@@ -71,6 +76,11 @@ local tokenItemById = indexById(GameConfig.TokenShop)
 local function sendToast(player: Player, text: string)
 	player:SetAttribute("ToastText", text)
 	player:SetAttribute("ToastId", (player:GetAttribute("ToastId") or 0) + 1)
+end
+
+-- Plays an effect on the player's screen (see src/client/Fx.luau).
+local function sendFx(player: Player, kind: string, info)
+	fxRemote:FireClient(player, kind, info)
 end
 
 -- Puts a letter in the player's mail. rewards is a list of rewards to
@@ -657,6 +667,7 @@ local function addXp(player: Player, data, amount: number)
 		data.stamina = math.max(data.stamina, stats.maxStamina)
 		data.health = math.max(data.health, stats.maxHealth)
 		sendToast(player, `Level {data.level}! You gained {GameConfig.SkillPointsPerLevel} skill points and a full refill.`)
+		sendFx(player, "levelup", { level = data.level })
 	end
 end
 
@@ -859,7 +870,8 @@ end
 -- Gives the player a rolled piece of gear (quest drops and chests).
 -- Pass `set` for a piece of a gear set. `paid` lets bought rewards go past
 -- the armory limit, so nothing paid for is ever lost.
-local function giveGear(player: Player, data, minRank: number?, source: string, set: any?, paid: boolean?)
+-- `crate` plays the chest opening on the player's screen.
+local function giveGear(player: Player, data, minRank: number?, source: string, set: any?, paid: boolean?, crate: boolean?)
 	if not paid and armoryFull(data) then
 		sendToast(player, `{source}, but your armory is full. Sell some gear to make room.`)
 		return
@@ -869,6 +881,7 @@ local function giveGear(player: Player, data, minRank: number?, source: string, 
 		else Market.rollGear(random, data.level, minRank)
 	local note = addGear(data, item)
 	sendToast(player, `{source}: {item.rarity} {item.name}!{note}`)
+	sendFx(player, "gear", { rarity = item.rarity, name = item.name, slot = item.slot, source = source, crate = crate == true })
 end
 
 ---------------------------------------------------------------------------
@@ -983,7 +996,7 @@ function actions.Claim(player: Player, data, id: string)
 		data.stamina = math.max(data.stamina, stats.maxStamina)
 		sendToast(player, "Stamina refilled.")
 	elseif reward.kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{reward.label} opened`)
+		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{reward.label} opened`, nil, nil, true)
 	elseif reward.kind == "xpBoost" then
 		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.amount * 60
 		sendToast(player, `Double experience for {reward.amount} minutes!`)
@@ -1121,7 +1134,9 @@ function actions.Roll(player: Player, data, id: string)
 		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
 		data.nextItemId += 1
 		track(data, "rolls", 1)
-		if not data.crew[slot] or GameConfig.getRarityRank(soldier.rarity) >= targetRank then
+		local kept = not data.crew[slot] or GameConfig.getRarityRank(soldier.rarity) >= targetRank
+		sendFx(player, "soldier", { rarity = soldier.rarity, name = `{soldier.class} {soldier.name}`, tier = tier.id, kept = kept })
+		if kept then
 			data.crew[slot] = soldier
 			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {slot}.`)
 		else
@@ -1314,7 +1329,7 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 		)
 		addXp(player, data, stage.xp)
 		if stage.chest then
-			giveGear(player, data, GameConfig.getRarityRank(stage.chest), `{stage.chest} chest from {stage.name}`)
+			giveGear(player, data, GameConfig.getRarityRank(stage.chest), `{stage.chest} chest from {stage.name}`, nil, nil, true)
 		end
 		local set = GameConfig.getHouseSet(stage.house)
 		if set and random:NextNumber() < GameConfig.SetDropChance then
@@ -1328,6 +1343,7 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 			local minRank = math.max(1, GameConfig.getRarityRank(house and house.chest or "Common") - 1)
 			giveGear(player, data, minRank, `{set.name} set piece from {stage.name}`, set)
 		end
+		sendFx(player, "hit", { damage = damage, hurt = 0, result = "cleared" })
 		return "cleared", damage, 0
 	end
 	data.stageHealth[id] = health
@@ -1345,11 +1361,13 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 			win = false,
 		})
 		sendToast(player, `{stage.name} knocked you down and recovered. Rest, grow stronger and try again.`)
+		sendFx(player, "hit", { damage = damage, hurt = hurt, result = "down" })
 		return "down", damage, hurt
 	end
 	if not quiet then
 		sendToast(player, `You hit for {Format.short(damage)}. {stage.name} hits back for {Format.short(hurt)}.`)
 	end
+	sendFx(player, "hit", { damage = damage, hurt = hurt, result = "hit" })
 	return "hit", damage, hurt
 end
 
@@ -1394,7 +1412,7 @@ function actions.TokenBuy(player: Player, data, id: string)
 		data.skillPoints += 1
 		sendToast(player, "+1 skill point. Spend it in the Keep.")
 	elseif item.kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(item.rarity), `{item.name} opened`)
+		giveGear(player, data, GameConfig.getRarityRank(item.rarity), `{item.name} opened`, nil, nil, true)
 	end
 end
 
@@ -1551,7 +1569,7 @@ local function grantReward(player: Player, data, reward, source: string): string
 		data.gold += amount
 		return `{Format.short(amount)} gold`
 	elseif kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{source}: {reward.rarity} chest`, nil, true)
+		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{source}: {reward.rarity} chest`, nil, true, true)
 	elseif kind == "xpBoost" then
 		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.minutes * 60
 	elseif kind == "skill" then
@@ -2115,6 +2133,7 @@ function actions.Coffer(player: Player, data, id: string)
 	local item = Market.rollGearOfRarity(random, data.level, rarityId)
 	local note = addGear(data, item)
 	sendToast(player, `{coffer.name}: {item.rarity} {item.name}!{note}`)
+	sendFx(player, "gear", { rarity = item.rarity, name = item.name, slot = item.slot, source = coffer.name, crate = true, royal = true })
 end
 
 -- Claims Royal Pass rewards. id is a tier number, or "all".
