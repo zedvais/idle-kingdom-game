@@ -30,6 +30,8 @@ local w = {} -- widgets
 local tab = "lands"
 local tabChosen = false
 local landCards = {} -- pooled cards on YOUR LANDS
+local emptyCards = {} -- pooled empty lot cards on YOUR LANDS
+local emptyCard -- set below: makes an empty lot card
 local buildCards = {} -- [holding id] = card on BUILD
 local regionParts = {} -- [region id] = { banner, toggle, grid, open, levelText }
 local regionsOpened = false
@@ -224,6 +226,34 @@ local function landCard(ui, index: number)
 	end)
 	landCards[index] = card
 	return card
+end
+
+-- An empty lot on YOUR LANDS: a big "+" that opens the BUILD tab.
+function emptyCard(ui, slot: number)
+	local colors = ui.colors
+	local frame = ui.makeButton(w.landsGrid, UDim2.fromOffset(100, 100), UDim2.fromOffset(0, 0), Color3.fromRGB(28, 23, 18))
+	frame.LayoutOrder = 100000 + slot
+	frame.Text = ""
+	ui.addCorner(frame, 8)
+	local stroke = ui.art.stroke(frame, colors.dim, 2, 0.4)
+	stroke.LineJoinMode = Enum.LineJoinMode.Round
+	local plus = ui.makeText(frame, UDim2.fromOffset(90, 90), UDim2.new(0.5, 0, 0.45, 0), colors.gold, 80)
+	plus.AnchorPoint = Vector2.new(0.5, 0.5)
+	plus.Font = Enum.Font.GothamBlack
+	plus.TextXAlignment = Enum.TextXAlignment.Center
+	plus.Text = "+"
+	plus.TextTransparency = 0.2
+	local label = ui.makeText(frame, UDim2.new(1, 0, 0, 24), UDim2.new(0, 0, 1, -48), colors.dim, 16)
+	label.Font = Enum.Font.GothamBold
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.Text = "EMPTY LOT"
+	frame.Activated:Connect(function()
+		tab = "build"
+		tabChosen = true
+		HoldingsPage.draw(latest, ui)
+	end)
+	emptyCards[slot] = frame
+	return frame
 end
 
 local function buildBuildTab(ui, page: Instance)
@@ -547,7 +577,18 @@ local function drawLands(state, ui)
 	for extra = index + 1, #landCards do
 		landCards[extra].frame.Visible = false
 	end
-	w.landsEmpty.Visible = index == 0
+	-- Empty lots after the built ones: a "+" that opens BUILD.
+	local free = math.max(0, state.stats.lots - state.stats.lotsUsed)
+	for slot = 1, math.max(free, #emptyCards) do
+		local card = emptyCards[slot]
+		if slot <= free then
+			card = card or emptyCard(ui, slot)
+			card.Visible = true
+		elseif card then
+			card.Visible = false
+		end
+	end
+	w.landsEmpty.Visible = index == 0 and free == 0
 end
 
 local function drawBuild(state, ui)
@@ -677,7 +718,7 @@ function HoldingsPage.draw(state, ui)
 				any = true
 			end
 		end
-		tab = if any then "lands" else "build"
+		tab = if any or state.stats.lots > 0 then "lands" else "build"
 	end
 	w.lands.Visible = tab == "lands"
 	w.build.Visible = tab == "build"
