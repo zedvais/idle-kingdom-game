@@ -68,9 +68,10 @@ function Market.rollGear(random: Random, playerLevel: number, minRank: number?, 
 	}
 end
 
--- One piece of gear of exactly this rarity (Royal Coffers).
-function Market.rollGearOfRarity(random: Random, playerLevel: number, rarityId: string)
-	local item = Market.rollGear(random, playerLevel, 1, "premium")
+-- One piece of gear of exactly this rarity from a pool (Royal Coffers use
+-- the premium pool; chests pass their own).
+function Market.rollGearOfRarity(random: Random, playerLevel: number, rarityId: string, pool: string?)
+	local item = Market.rollGear(random, playerLevel, 1, pool or "premium")
 	local rarity = GameConfig.getRarity(rarityId)
 	local gearType = GameConfig.GearTypes[item.slot]
 	item.rarity = rarity.id

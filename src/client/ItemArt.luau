@@ -562,23 +562,32 @@ function ItemArt.set(holder: GuiObject, item, hidden: boolean?)
 	ItemArt.draw(holder, item, hidden)
 end
 
--- A chest of a rarity: wood with bands and a lock in the rarity color.
-function ItemArt.chest(holder: GuiObject, rarityId: string)
+-- A chest: wood with bands and a lock. The glow follows `rarityId`; the
+-- bands use `band` (default: the rarity color). `crown` adds a gold crown.
+function ItemArt.chest(holder: GuiObject, rarityId: string, band: Color3?, crown: boolean?)
 	local canvas, pen = canvasIn(holder)
 	local rarity = GameConfig.getRarity(rarityId)
 	local rank = GameConfig.getRarityRank(rarity.id)
 	glow(pen, rank, rarity.color)
+	local bandColor = band or rarity.color
 	local body = pen:box(30, 38, 44, 26, WOOD, 4)
 	shade(body, 0.7)
 	local lid = pen:box(30, 22, 46, 14, WOOD, 6)
 	shade(lid, 0.75)
 	for _, x in { 16, 44 } do
-		pen:box(x, 32, 5, 40, rarity.color, 1)
+		pen:box(x, 32, 5, 40, bandColor, 1)
 	end
-	pen:box(30, 29, 46, 3, rarity.color)
+	pen:box(30, 29, 46, 3, bandColor)
 	local lock = pen:box(30, 33, 9, 10, GOLD, 2)
 	shade(lock, 0.6)
 	pen:box(30, 34, 2, 4, INK, 1)
+	if crown then
+		pen:box(30, 11, 16, 5, GOLD, 1)
+		for _, x in { 24, 30, 36 } do
+			pen:diamond(x, 7, 5, GOLD)
+		end
+		pen:box(30, 11, 3, 3, Color3.fromRGB(220, 60, 70), 0.5)
+	end
 	if #pen.steps > 0 then
 		table.insert(movers, { root = canvas, steps = pen.steps })
 		start()

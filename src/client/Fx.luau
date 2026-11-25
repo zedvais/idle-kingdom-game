@@ -263,7 +263,7 @@ local function playReveal(info)
 	local ribbonText = text(ribbon, UDim2.fromScale(1, 1), UDim2.fromScale(0.5, 0.5), Color3.new(1, 1, 1), 18, Z + 12)
 	ribbonText.Text = string.upper(rarity.id)
 	if many then
-		ribbonText.Text = `{#info.items} {string.upper(rarity.id)} CHESTS OPENED`
+		ribbonText.Text = `OPENED {#info.items} x {string.upper(info.chestName or (rarity.id .. " chest"))}`
 		for index, item in info.items do
 			if index > 10 then
 				break
@@ -435,7 +435,7 @@ function Fx.chestGot(info)
 	label.Font = Enum.Font.GothamBold
 	label.TextStrokeTransparency = 1
 	local r, g, b = math.floor(rarity.color.R * 255), math.floor(rarity.color.G * 255), math.floor(rarity.color.B * 255)
-	label.Text = `<font color="rgb({r},{g},{b})">{rarity.id} chest</font> added to Inventory`
+	label.Text = `<font color="rgb({r},{g},{b})">{info.name or (rarity.id .. " Chest")}</font> added to Inventory`
 	local scale = Instance.new("UIScale")
 	scale.Scale = 0.5
 	scale.Parent = card
@@ -629,7 +629,8 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt)
 				rarity = if #info.items == 1 then first.rarity else info.rarity,
 				name = first.name,
 				slot = first.slot,
-				source = `{info.rarity} chest`,
+				source = info.name or `{info.rarity} chest`,
+				chestName = info.name,
 				items = info.items,
 			})
 		elseif kind == "chestGot" then

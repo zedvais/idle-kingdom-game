@@ -21,6 +21,7 @@ local ArmyConfig = require(ReplicatedStorage.Shared.ArmyConfig)
 local EstateConfig = require(ReplicatedStorage.Shared.EstateConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
+local ChestConfig = require(ReplicatedStorage.Shared.ChestConfig)
 local Recruit = require(script.Parent.Recruit)
 local Loadout = require(script.Parent.Loadout)
 local PlayerData = require(script.Parent.PlayerData)
@@ -1864,18 +1865,20 @@ function actions.RelicWithdrawAll(player: Player, data, id: string)
 	sendToast(player, `{moved} pieces are back in your armory.{note}`)
 end
 
--- Opens chests from the inventory. id is "<rarity>:<count>", count 1 or 10
--- (fewer if fewer are owned or the armory has less room).
+-- Opens chests from the inventory. id is "<chest id>:<count>", count 1 or
+-- 10 (fewer if fewer are owned or the armory has less room). Chest ids are
+-- rarities (won chests) or Market chest ids (ChestConfig).
 function actions.ChestOpen(player: Player, data, id: string)
-	local rarity, countText = string.match(id or "", "^(%a+):(%d+)$")
+	local chestId, countText = string.match(id or "", "^(%a+):(%d+)$")
 	local want = tonumber(countText)
-	if not rarity or not want or (want ~= 1 and want ~= 10) then
+	if not chestId or not want or (want ~= 1 and want ~= 10) then
 		return
 	end
-	if type(data.chests[rarity]) ~= "number" then
+	local chest = ChestConfig.get(chestId)
+	if not chest or type(data.chests[chestId]) ~= "number" then
 		return
 	end
-	local have = data.chests[rarity] or 0
+	local have = data.chests[chestId] or 0
 	if have <= 0 then
 		return
 	end
@@ -1885,16 +1888,15 @@ function actions.ChestOpen(player: Player, data, id: string)
 		return
 	end
 	local count = math.min(want, have, room)
-	local minRank = GameConfig.getRarityRank(rarity)
 	local items = {}
 	for _ = 1, count do
-		local item = Market.rollGear(random, data.level, minRank, "chest")
+		local item = Market.rollGearOfRarity(random, data.level, ChestConfig.rollRarity(chest, random), chest.pool)
 		addGear(data, item)
 		table.insert(items, { rarity = item.rarity, name = item.name, slot = item.slot })
 	end
-	data.chests[rarity] = have - count
-	if data.chests[rarity] <= 0 then
-		data.chests[rarity] = nil
+	data.chests[chestId] = have - count
+	if data.chests[chestId] <= 0 then
+		data.chests[chestId] = nil
 	end
 	local best = items[1]
 	for _, item in items do
@@ -1902,8 +1904,28 @@ function actions.ChestOpen(player: Player, data, id: string)
 			best = item
 		end
 	end
-	sendToast(player, if count == 1 then `{rarity} chest: {best.rarity} {best.name}!` else `Opened {count} {rarity} chests. Best: {best.rarity} {best.name}!`)
-	sendFx(player, "chestOpen", { rarity = rarity, items = items })
+	sendToast(player, if count == 1 then `{chest.name}: {best.rarity} {best.name}!` else `Opened {count} {chest.name}s. Best: {best.rarity} {best.name}!`)
+	sendFx(player, "chestOpen", { rarity = ChestConfig.rarityOf(chest), name = chest.name, items = items })
+end
+
+-- Buys a Market chest (gold or Crowns). It goes to the Inventory.
+function actions.ChestBuy(player: Player, data, id: string)
+	local chest = ChestConfig.get(id or "")
+	if not chest or not chest.market then
+		return
+	end
+	if chest.crowns then
+		if not spendCrowns(player, data, chest.crowns) then
+			return
+		end
+	else
+		if not spendGold(player, data, ChestConfig.goldPrice(chest, data.level)) then
+			return
+		end
+	end
+	data.chests[chest.id] = (data.chests[chest.id] or 0) + 1
+	sendToast(player, `Bought a {chest.name}. Open it in your Inventory.`)
+	sendFx(player, "chestGot", { rarity = ChestConfig.rarityOf(chest), name = chest.name })
 end
 
 -- Auto deposit was removed; any old setting is switched off.

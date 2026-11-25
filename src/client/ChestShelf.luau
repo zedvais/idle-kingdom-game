@@ -1,59 +1,21 @@
--- Chest shelf at the top of the Inventory. Chests won from quests, foes,
--- the token shop and rewards wait here until the player opens them, one at
--- a time (Open 1) or ten at once (Open 10).
+-- Chest shelf at the top of the Inventory, and the chests for sale at the
+-- top of the Market. Chests won or bought wait on the shelf until the player
+-- opens them, one at a time (Open 1) or ten at once (Open 10). Every chest
+-- has an Odds button listing what it can give.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
+local ChestConfig = require(Shared:WaitForChild("ChestConfig"))
+local Format = require(Shared:WaitForChild("Format"))
 
 local ChestShelf = {}
 
 local section = nil
-local cards = {} -- [rarity id] = widgets
+local cards = {} -- [chest id] = shelf widgets
+local shopCards = {} -- [chest id] = Market widgets
 local odds = {} -- the odds popup's widgets
 local oddsShown = nil -- the chest rarity the odds popup was built for
-
--- Everything a chest of this rarity can give, with the chance of each.
--- A chest picks a slot (even odds), then a chest item in that slot (even odds),
--- then a rarity at or above the chest's own, by the Market odds.
-local function dropTable(rarityId: string)
-	local minRank = GameConfig.getRarityRank(rarityId)
-	local total = 0
-	for index, rarity in GameConfig.Rarities do
-		if index >= minRank then
-			total += rarity.chance
-		end
-	end
-	local rows, byRarity = {}, {}
-	if total <= 0 then
-		return rows, byRarity
-	end
-	for index, rarity in GameConfig.Rarities do
-		if index >= minRank and rarity.chance > 0 then
-			local rarityChance = rarity.chance / total
-			table.insert(byRarity, { rarity = rarity, chance = rarityChance })
-			for _, slot in GameConfig.GearSlots do
-				local names = GameConfig.GearPools.chest.items[slot].names
-				for _, name in names do
-					table.insert(rows, {
-						slot = slot,
-						name = name,
-						rarity = rarity.id,
-						rank = index,
-						chance = rarityChance / #GameConfig.GearSlots / #names,
-					})
-				end
-			end
-		end
-	end
-	table.sort(rows, function(a, b)
-		if a.chance ~= b.chance then
-			return a.chance > b.chance
-		end
-		return a.name < b.name
-	end)
-	return rows, byRarity
-end
 
 local function percent(chance: number): string
 	local value = chance * 100
@@ -108,11 +70,15 @@ local function oddsRow(ui, index: number)
 	return row
 end
 
--- Fills the odds popup for a chest rarity and opens it.
-local function showOdds(ui, rarityId: string)
-	if oddsShown ~= rarityId then
-		oddsShown = rarityId
-		local rows, byRarity = dropTable(rarityId)
+-- Fills the odds popup for a chest and opens it.
+local function showOdds(ui, chestId: string)
+	local chest = ChestConfig.get(chestId)
+	if not chest then
+		return
+	end
+	if oddsShown ~= chestId then
+		oddsShown = chestId
+		local rows, byRarity = ChestConfig.dropTable(chest)
 		local parts = {}
 		for _, entry in byRarity do
 			local color = entry.rarity.color
@@ -135,28 +101,38 @@ local function showOdds(ui, rarityId: string)
 			odds.rows[index].frame.Visible = false
 		end
 	end
-	ui.openModal("ChestOdds", `{rarityId} chest odds`)
+	ui.openModal("ChestOdds", `{chest.name} odds`)
 end
 
-function ChestShelf.build(ui)
-	local page = ui.pages.Inventory
-	local colors = ui.colors
-	local art = ui.art
+local function chestPicture(ui, parent: Instance, chest, size: number)
+	local picture = ui.makeFrame(parent, UDim2.fromOffset(size, size), UDim2.fromOffset(8, 8), ui.colors.panel)
+	picture.BackgroundTransparency = 1
+	ui.itemArt.chest(picture, ChestConfig.rarityOf(chest), if chest.market then chest.color else nil, chest.pool == "premium")
+	return picture
+end
 
-	section = ui.makeFrame(page, UDim2.new(1, -10, 0, 0), UDim2.fromOffset(0, 0), colors.panel)
-	section.BackgroundTransparency = 1
-	section.AutomaticSize = Enum.AutomaticSize.Y
-	section.LayoutOrder = -5
-	section.Visible = false
+local function oddsButton(ui, parent: Instance, chestId: string)
+	local button = ui.makeButton(parent, UDim2.fromOffset(52, 22), UDim2.new(1, -60, 0, 8), ui.colors.info)
+	button.TextSize = 11
+	ui.setButton(button, "% ODDS", true, ui.colors.info)
+	button.Activated:Connect(function()
+		showOdds(ui, chestId)
+	end)
+	return button
+end
+
+local function makeSection(ui, page: Instance, order: number, title: string)
+	local colors = ui.colors
+	local holder = ui.makeFrame(page, UDim2.new(1, -10, 0, 0), UDim2.fromOffset(0, 0), colors.panel)
+	holder.BackgroundTransparency = 1
+	holder.AutomaticSize = Enum.AutomaticSize.Y
+	holder.LayoutOrder = order
 	local list = Instance.new("UIListLayout")
 	list.SortOrder = Enum.SortOrder.LayoutOrder
 	list.Padding = UDim.new(0, 6)
-	list.Parent = section
-
-	ui.makeHeading(section, 1, "Chests")
-	buildOdds(ui)
-
-	local grid = ui.makeFrame(section, UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 0), colors.panel)
+	list.Parent = holder
+	ui.makeHeading(holder, 1, title)
+	local grid = ui.makeFrame(holder, UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 0), colors.panel)
 	grid.BackgroundTransparency = 1
 	grid.AutomaticSize = Enum.AutomaticSize.Y
 	grid.LayoutOrder = 2
@@ -165,49 +141,73 @@ function ChestShelf.build(ui)
 	layout.CellSize = UDim2.fromOffset(176, 150)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = grid
+	return holder, grid
+end
 
-	for rank, rarity in GameConfig.Rarities do
-		if rarity.chance <= 0 then
-			continue -- Divine is for recruits only
-		end
+-- Chests for sale at the top of the Market.
+local function buildShop(ui)
+	local colors = ui.colors
+	local art = ui.art
+	local _, grid = makeSection(ui, ui.pages.Market, -5, "Chests for sale")
+	for order, chest in ChestConfig.MarketChests do
 		local card = ui.makeFrame(grid, UDim2.fromOffset(100, 100), UDim2.fromOffset(0, 0), colors.row)
-		card.LayoutOrder = -rank -- rarest first
+		card.LayoutOrder = order
+		ui.addCorner(card, 8)
+		art.card(card)
+		art.stroke(card, chest.color, 1.5, 0.2)
+		chestPicture(ui, card, chest, 64)
+		oddsButton(ui, card, chest.id)
+		local name = ui.makeText(card, UDim2.new(1, -84, 0, 34), UDim2.fromOffset(78, 32), chest.color, 14)
+		name.Font = Enum.Font.GothamBold
+		name.Text = chest.name
+		local note = ui.makeText(card, UDim2.new(1, -16, 0, 28), UDim2.fromOffset(8, 74), colors.dim, 11)
+		note.Text = chest.note
+		local buy = ui.makeButton(card, UDim2.new(1, -16, 0, 38), UDim2.new(0, 8, 1, -46), if chest.crowns then colors.gold else colors.buy)
+		buy.TextSize = 14
+		buy.Activated:Connect(function()
+			ui.send("ChestBuy", chest.id)
+		end)
+		shopCards[chest.id] = { buy = buy }
+	end
+end
+function ChestShelf.build(ui)
+	local colors = ui.colors
+	local art = ui.art
+	buildOdds(ui)
+	buildShop(ui)
+
+	local grid
+	section, grid = makeSection(ui, ui.pages.Inventory, -5, "Chests")
+	section.Visible = false
+	for order, chest in ChestConfig.all() do
+		local card = ui.makeFrame(grid, UDim2.fromOffset(100, 100), UDim2.fromOffset(0, 0), colors.row)
+		card.LayoutOrder = order
 		card.Visible = false
 		ui.addCorner(card, 8)
 		art.card(card)
-		art.stroke(card, rarity.color, 1.5, 0.2)
+		art.stroke(card, chest.color, 1.5, 0.2)
+		chestPicture(ui, card, chest, 64)
+		oddsButton(ui, card, chest.id)
 
-		local picture = ui.makeFrame(card, UDim2.fromOffset(64, 64), UDim2.fromOffset(8, 8), colors.panel)
-		picture.BackgroundTransparency = 1
-		ui.itemArt.chest(picture, rarity.id)
-
-		local name = ui.makeText(card, UDim2.new(1, -84, 0, 22), UDim2.fromOffset(78, 32), rarity.color, 15)
-		name.Font = Enum.Font.GothamBold
-		name.Text = `{rarity.id} chest`
 		local count = ui.makeText(card, UDim2.new(1, -140, 0, 20), UDim2.fromOffset(78, 9), colors.text, 18)
 		count.Font = Enum.Font.GothamBlack
-		local note = ui.makeText(card, UDim2.new(1, -84, 0, 30), UDim2.fromOffset(78, 54), colors.dim, 11)
-		note.Text = `{rarity.id} gear or better`
+		local name = ui.makeText(card, UDim2.new(1, -84, 0, 34), UDim2.fromOffset(78, 32), chest.color, 14)
+		name.Font = Enum.Font.GothamBold
+		name.Text = chest.name
+		local note = ui.makeText(card, UDim2.new(1, -16, 0, 28), UDim2.fromOffset(8, 74), colors.dim, 11)
+		note.Text = chest.note
 
-		local openOne = ui.makeButton(card, UDim2.new(0.5, -10, 0, 40), UDim2.new(0, 8, 1, -48), colors.gold)
+		local openOne = ui.makeButton(card, UDim2.new(0.5, -10, 0, 40), UDim2.new(0, 8, 1, -46), colors.gold)
 		openOne.TextSize = 14
-		local openTen = ui.makeButton(card, UDim2.new(0.5, -10, 0, 40), UDim2.new(0.5, 2, 1, -48), colors.claim)
+		local openTen = ui.makeButton(card, UDim2.new(0.5, -10, 0, 40), UDim2.new(0.5, 2, 1, -46), colors.claim)
 		openTen.TextSize = 14
-		-- Odds: everything this chest can give and the chance of each.
-		local oddsButton = ui.makeButton(card, UDim2.fromOffset(52, 22), UDim2.new(1, -60, 0, 8), colors.info)
-		oddsButton.TextSize = 11
-		ui.setButton(oddsButton, "% ODDS", true, colors.info)
-		oddsButton.Activated:Connect(function()
-			showOdds(ui, rarity.id)
-		end)
 		openOne.Activated:Connect(function()
-			ui.send("ChestOpen", `{rarity.id}:1`)
+			ui.send("ChestOpen", `{chest.id}:1`)
 		end)
 		openTen.Activated:Connect(function()
-			ui.send("ChestOpen", `{rarity.id}:10`)
+			ui.send("ChestOpen", `{chest.id}:10`)
 		end)
-
-		cards[rarity.id] = { frame = card, count = count, openOne = openOne, openTen = openTen }
+		cards[chest.id] = { frame = card, count = count, openOne = openOne, openTen = openTen }
 	end
 end
 
@@ -230,6 +230,17 @@ function ChestShelf.draw(state, ui)
 	end
 	section.Visible = total > 0
 	ui.setBadge("Inventory", total)
+
+	for _, chest in ChestConfig.MarketChests do
+		local widgets = shopCards[chest.id]
+		if chest.crowns then
+			local crowns = tonumber(state.crowns) or 0
+			ui.setButton(widgets.buy, `Buy  {chest.crowns} Crowns`, crowns >= chest.crowns, colors.gold)
+		else
+			local price = ChestConfig.goldPrice(chest, state.level)
+			ui.setButton(widgets.buy, `Buy  {Format.short(price)} gold`, (tonumber(state.gold) or 0) >= price, colors.buy)
+		end
+	end
 end
 
 return ChestShelf
