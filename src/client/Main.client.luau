@@ -319,7 +319,7 @@ end
 
 -- Square buttons that open popups, between the chips and the bars.
 do
-	local iconRow = makeFrame(topBar, UDim2.new(0, ICON_BLOCK - 10, 1, -12), UDim2.new(1, -(RIGHT_BLOCK + ICON_BLOCK - 4), 0, 6), COLOR_PANEL)
+	local iconRow = makeFrame(topBar, UDim2.new(0, ICON_BLOCK - 10, 1, -12), UDim2.new(1, -(ICON_BLOCK - 4), 0, 6), COLOR_PANEL)
 	iconRow.BackgroundTransparency = 1
 	local iconLayout = Instance.new("UIListLayout")
 	iconLayout.FillDirection = Enum.FillDirection.Horizontal
@@ -329,15 +329,16 @@ do
 	iconLayout.Parent = iconRow
 	-- One MENU button: a drop-down with Mail, Settings, Stats, Rankings
 	-- and Updates. The Mail count shows on it.
-	for index, entry in { { "Mail", "\u{2630}", "Menu" } } do
+	for index, entry in { { "Mail", "", "Menu" } } do
 		local button = makeButton(iconRow, UDim2.new(0, 56, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
 		button.LayoutOrder = index
 		button.Text = ""
 		addStroke(button).Color = COLOR_GOLD
-		local icon = makeText(button, UDim2.new(1, 0, 0, 30), UDim2.fromOffset(0, 3), COLOR_GOLD, 28)
-		icon.Font = Enum.Font.GothamBlack
-		icon.TextXAlignment = Enum.TextXAlignment.Center
-		icon.Text = entry[2]
+		-- Three drawn gold bars (the font has no hamburger glyph).
+		for line = 0, 2 do
+			local strip = makeFrame(button, UDim2.fromOffset(28, 4), UDim2.new(0.5, -14, 0, 9 + line * 8), COLOR_GOLD)
+			addCorner(strip, 2)
+		end
 		local label = makeText(button, UDim2.new(1, 0, 0, 14), UDim2.new(0, 0, 1, -18), COLOR_TEXT, 11)
 		label.TextXAlignment = Enum.TextXAlignment.Center
 		label.Font = Enum.Font.GothamBold
@@ -353,7 +354,7 @@ do
 		addCorner(badge, 8)
 		railBadges[entry[1]] = badge
 
-		local menu = makeFrame(gui, UDim2.fromOffset(300, 0), UDim2.new(1, -(RIGHT_BLOCK + 14), 0, TOP_HEIGHT + 6), COLOR_PANEL)
+		local menu = makeFrame(gui, UDim2.fromOffset(300, 0), UDim2.new(1, -10, 0, TOP_HEIGHT + 6), COLOR_PANEL)
 		menu.AnchorPoint = Vector2.new(1, 0)
 		menu.AutomaticSize = Enum.AutomaticSize.Y
 		menu.Visible = false
@@ -436,7 +437,7 @@ do
 end
 
 -- Energy, stamina and health, each with a + that opens the Shop's refills.
-local barBlock = makeFrame(topBar, UDim2.new(0, RIGHT_BLOCK - 10, 1, 0), UDim2.new(1, -(RIGHT_BLOCK - 4), 0, 0), COLOR_PANEL)
+local barBlock = makeFrame(topBar, UDim2.new(0, RIGHT_BLOCK - 10, 1, 0), UDim2.new(1, -(RIGHT_BLOCK + ICON_BLOCK - 4), 0, 0), COLOR_PANEL)
 barBlock.BackgroundTransparency = 1
 local showPage -- defined with the pages below
 local function makeTopBar(y: number, color: Color3, glyph: string)

@@ -301,7 +301,7 @@ function RelicPage.build(ui)
 	top.LayoutOrder = ui.nextOrder()
 	ui.addCorner(top, 6)
 	art.stroke(top, colors.gold, 1, 0.5)
-	local box = ui.makeAmountBox(top, UDim2.new(0.3, -12, 0, 32), UDim2.fromOffset(8, 7), "\u{1F50D} Search items")
+	local box = ui.makeAmountBox(top, UDim2.new(0.3, -12, 0, 32), UDim2.fromOffset(8, 7), "Search items")
 	box.TextXAlignment = Enum.TextXAlignment.Left
 	box.TextSize = 14
 	local boxPadding = Instance.new("UIPadding")
@@ -392,7 +392,7 @@ function RelicPage.filter()
 		end
 	end
 	local rarity = GameConfig.Rarities[chosenRarity]
-	header.rarityButton.Text = (if rarity then string.upper(rarity.id) else "ALL RARITIES") .. "  \u{25BE}"
+	header.rarityButton.Text = (if rarity then string.upper(rarity.id) else "ALL RARITIES") .. "  v"
 	if rarity then
 		header.rarityButton.TextColor3 = rarity.color
 	end

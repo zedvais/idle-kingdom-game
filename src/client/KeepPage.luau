@@ -341,7 +341,7 @@ function KeepPage.build(ui)
 		{ "gear", "Gear" },
 		{ "warAttack", "Warband attack" },
 		{ "warDefense", "Warband defense" },
-	}, "OPEN \u{203A}")
+	}, "OPEN >")
 	warbandLink.Activated:Connect(function()
 		ui.showPage("Warband")
 	end)

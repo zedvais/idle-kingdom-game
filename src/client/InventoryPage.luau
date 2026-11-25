@@ -76,7 +76,7 @@ local function buildHeader(ui, page: Instance)
 	box.Position = UDim2.fromOffset(210, 10)
 	box.BackgroundColor3 = Color3.fromRGB(24, 20, 16)
 	box.TextColor3 = colors.text
-	box.PlaceholderText = "\u{1F50D}  Search items"
+	box.PlaceholderText = "Search items"
 	box.PlaceholderColor3 = colors.dim
 	box.Font = Enum.Font.GothamMedium
 	box.TextSize = 18
@@ -86,8 +86,18 @@ local function buildHeader(ui, page: Instance)
 	box.Parent = bar
 	ui.addCorner(box, 6)
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingLeft = UDim.new(0, 44)
 	pad.Parent = box
+	-- A drawn magnifying glass (emoji do not show inside text boxes).
+	local lens = ui.makeFrame(bar, UDim2.fromOffset(18, 18), UDim2.fromOffset(222, 20), Color3.new(0, 0, 0))
+	lens.BackgroundTransparency = 1
+	lens.ZIndex = box.ZIndex + 2
+	ui.addCorner(lens, 9)
+	ui.art.stroke(lens, colors.gold, 3, 0)
+	local handle = ui.makeFrame(bar, UDim2.fromOffset(10, 4), UDim2.fromOffset(236, 39), colors.gold)
+	handle.Rotation = 45
+	handle.ZIndex = box.ZIndex + 2
+	ui.addCorner(handle, 2)
 	box:GetPropertyChangedSignal("Text"):Connect(function()
 		search = string.lower(box.Text)
 		InventoryPage.draw(latest, ui)
@@ -136,6 +146,12 @@ local function buildTabs(ui, page: Instance)
 	drop.TextColor3 = colors.text
 	ui.art.stroke(drop, colors.gold, 1.5, 0.3)
 	w.drop = drop
+	-- A drawn "v" at the right (the font has no arrow glyph).
+	for side = 0, 1 do
+		local arm = ui.makeFrame(drop, UDim2.fromOffset(10, 3), UDim2.new(1, -24 + side * 6, 0.5, -1), colors.gold)
+		arm.Rotation = if side == 0 then 45 else -45
+		ui.addCorner(arm, 2)
+	end
 	local list = ui.makeFrame(drop, UDim2.new(1, 0, 0, 0), UDim2.new(0, 0, 1, 6), Color3.fromRGB(26, 22, 18))
 	list.AutomaticSize = Enum.AutomaticSize.Y
 	list.Visible = false
@@ -562,7 +578,7 @@ function InventoryPage.draw(state, ui)
 		pieces += item.count or 1
 	end
 	w.count.Text = `\u{1F392}  Items {Format.short(pieces)}`
-	w.warband.Text = `\u{1F465}  Warband {state.stats.crewSize}   \u{203A}`
+	w.warband.Text = `\u{1F465}  Warband {state.stats.crewSize}  >`
 
 	-- Tabs and drop-down.
 	for key, part in w.tabs do
@@ -572,7 +588,7 @@ function InventoryPage.draw(state, ui)
 		part.stroke.Transparency = if on then 0 else 1
 	end
 	local rarity = GameConfig.Rarities[rarityRank]
-	w.drop.Text = if rarity then `{string.upper(rarity.id)}  \u{25BE}` else "ALL RARITIES  \u{25BE}"
+	w.drop.Text = if rarity then `{string.upper(rarity.id)}    ` else "ALL RARITIES    "
 	w.drop.TextColor3 = if rarity then rarity.color else colors.text
 	local itemTab = tab == "All" or tab == "Weapon" or tab == "Armor" or tab == "Mount"
 	w.drop.Visible = itemTab
