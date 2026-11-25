@@ -20,29 +20,13 @@
       }
     },
     "Workspace": {
-      "Baseplate": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "Size": [512, 4, 512],
-          "Position": [0, -2, 0],
-          "Color": [0.35, 0.55, 0.3],
-          "Material": "Grass"
-        }
-      },
-      "SpawnLocation": {
-        "$className": "SpawnLocation",
-        "$properties": {
-          "Anchored": true,
-          "Size": [8, 1, 8],
-          "Position": [0, 0.5, 0]
-        }
+      "$properties": {
+        "StreamingEnabled": false
       }
     },
-    "Lighting": {
+    "Players": {
       "$properties": {
-        "ClockTime": 14,
-        "Brightness": 2
+        "CharacterAutoLoads": false
       }
     }
   }
