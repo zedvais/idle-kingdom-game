@@ -649,8 +649,22 @@ local function addXp(player: Player, data, amount: number)
 	end
 end
 
+-- True for a real, finite, non-negative amount (not NaN or infinity).
+local function isAmount(value: any): boolean
+	return type(value) == "number" and value == value and value >= 0 and value < math.huge
+end
+
+-- Hard check before taking gold: the cost must be a real amount and the
+-- gold on hand must cover all of it.
+local function canAfford(data, cost: number): boolean
+	return isAmount(cost) and isAmount(data.gold) and data.gold >= cost
+end
+
 local function spendGold(player: Player, data, cost: number): boolean
-	if data.gold < cost then
+	if not isAmount(cost) then
+		return false
+	end
+	if not canAfford(data, cost) then
 		sendToast(player, `Not enough gold. You need {Format.short(cost)}.`)
 		return false
 	end
@@ -659,7 +673,10 @@ local function spendGold(player: Player, data, cost: number): boolean
 end
 
 local function spendCrowns(player: Player, data, cost: number): boolean
-	if data.crowns < cost then
+	if not isAmount(cost) then
+		return false
+	end
+	if not isAmount(data.crowns) or data.crowns < cost then
 		sendToast(player, `Not enough Crowns. You need {cost}. Get more at the top of the Shop.`)
 		return false
 	end
@@ -1015,7 +1032,7 @@ function actions.Roll(player: Player, data, id: string)
 	end
 	-- The Muster Fair festival makes rolls cheaper.
 	local rollCost = math.floor(tier.cost * (1 - festivalBonus("rollCost")))
-	if data.gold < rollCost then
+	if not canAfford(data, rollCost) then
 		sendToast(player, `Not enough gold. One {tier.id} roll costs {Format.short(rollCost)}.`)
 		return
 	end
@@ -1024,7 +1041,9 @@ function actions.Roll(player: Player, data, id: string)
 	-- slot. It is kept if the slot is empty or it reaches the chosen rarity.
 	if not hasPass(data, "autoroll") or once == "once" then
 		local slot = targets[1]
-		data.gold -= rollCost
+		if not spendGold(player, data, rollCost) then
+			return
+		end
 		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
 		data.nextItemId += 1
 		track(data, "rolls", 1)
@@ -1101,7 +1120,7 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 		return false
 	end
 	local price = marketPrice(item)
-	if data.gold < price then
+	if not canAfford(data, price) then
 		if not auto then
 			sendToast(player, `Not enough gold. You need {Format.short(price)}.`)
 		end
@@ -1742,8 +1761,15 @@ function actions.TroopTrain(player: Player, data, id: string)
 		sendToast(player, "Your army is at its limit. Upgrade the Keep to raise it.")
 		return
 	end
-	local count = if countText == "max" then math.floor(data.gold / troop.cost) else tonumber(countText)
-	count = math.min(math.floor(count or 0), room)
+	-- Only "max" or plain digits; anything else is refused.
+	local count = if countText == "max"
+		then math.floor(data.gold / troop.cost)
+		elseif string.match(countText, "^%d+$") and #countText <= 7 then tonumber(countText)
+		else nil
+	if not isAmount(count) then
+		return
+	end
+	count = math.min(math.floor(count), room)
 	if count < 1 then
 		sendToast(player, `Not enough gold. One {troop.name} costs {Format.short(troop.cost)}.`)
 		return
@@ -2424,7 +2450,8 @@ local function runAutoRoll(player: Player, data)
 			sendToast(player, `Auto roll done: every slot is filled. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
 			return
 		end
-		if data.gold < rollCost then
+		-- Hard check on the gold left before every single roll.
+		if not canAfford(data, rollCost) then
 			if auto.whenBroke == "stop" then
 				auto.on = false
 				sendToast(player, `Auto roll stopped: not enough gold. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
@@ -2436,6 +2463,11 @@ local function runAutoRoll(player: Player, data)
 		end
 		auto.waiting = false
 		data.gold -= rollCost
+		if data.gold < 0 then -- never expected; undo and stop to be safe
+			data.gold += rollCost
+			auto.on = false
+			return
+		end
 		auto.rolls += 1
 		auto.spent += rollCost
 		track(data, "rolls", 1)
@@ -2630,7 +2662,7 @@ local function onPlayerRemoving(player: Player)
 	end
 	sessions[player] = nil
 	if session.canSave then
-		PlayerData.save(player, session.data)
+		PlayerData.save(player, session.data, true)
 		saveFestivalScore(player, session.data)
 		saveBoardScores(player, session)
 	end
@@ -2653,12 +2685,22 @@ end
 
 -- Save everyone when the server shuts down.
 game:BindToClose(function()
+	local pending = 0
 	for player, session in sessions do
 		if session.canSave then
-			task.spawn(PlayerData.save, player, session.data)
+			pending += 1
+			task.spawn(function()
+				PlayerData.save(player, session.data, true)
+				pending -= 1
+			end)
 		end
 	end
-	task.wait(2)
+	-- Roblox gives about 30 seconds; wait for every save to land.
+	local waited = 0
+	while pending > 0 and waited < 25 do
+		task.wait(0.5)
+		waited += 0.5
+	end
 end)
 
 ---------------------------------------------------------------------------
@@ -2686,6 +2728,14 @@ task.spawn(function()
 		for player, session in sessions do
 			session.actionCount = 0
 			local data = session.data
+			-- Safety net: a currency that is ever broken (NaN, infinite or
+			-- below zero) is reset to 0 so it cannot spread.
+			for _, key in { "gold", "banked", "crowns", "tokens", "seals" } do
+				if not isAmount(data[key]) then
+					warn(`[{GameConfig.GameName}] Reset broken {key} for {player.Name}: {data[key]}`)
+					data[key] = 0
+				end
+			end
 			local stats = getStats(data)
 
 			checkNewDay(data)

@@ -187,6 +187,26 @@ local function repair(data)
 	return data
 end
 
+---------------------------------------------------------------------------
+-- Session lock and ordered saves
+---------------------------------------------------------------------------
+-- A save records which server owns it (`lock`). When a player hops to a new
+-- server before the old one has finished saving, the new server waits for
+-- the lock to be released (or to go stale), so it never loads old data and
+-- the old server never overwrites newer progress. Saves for one player
+-- also never overlap: a save waits for the one before it.
+
+local LOCK_STALE_SECONDS = 180 -- a lock older than this is from a dead server
+local LOCK_WAIT_TRIES = 6 -- tries to load while another server holds the lock
+local LOCK_WAIT_SECONDS = 5
+
+local jobId = if game.JobId ~= "" then game.JobId else "studio"
+local saving = {} -- [UserId] = true while a save for that player is running
+
+local function lockIsForeign(lock): boolean
+	return type(lock) == "table" and lock.job ~= jobId and os.time() - (tonumber(lock.time) or 0) < LOCK_STALE_SECONDS
+end
+
 -- Returns the player's data and whether it is safe to save it later.
 -- If loading fails we never save, so a hiccup cannot wipe real progress.
 function PlayerData.load(player: Player)
@@ -194,30 +214,71 @@ function PlayerData.load(player: Player)
 		return newData(), false
 	end
 
-	local ok, result = pcall(function()
-		return store:GetAsync(keyFor(player))
-	end)
-	if not ok then
-		warn("[PlayerData] Could not load data for", player.Name, "-", result)
-		return newData(), false
+	for try = 1, LOCK_WAIT_TRIES do
+		local locked = false
+		local ok, result = pcall(function()
+			return store:UpdateAsync(keyFor(player), function(old)
+				if type(old) == "table" and lockIsForeign(old.lock) and try < LOCK_WAIT_TRIES then
+					locked = true
+					return nil -- leave it alone; another server is still saving
+				end
+				local data = repair(old)
+				data.lock = { job = jobId, time = os.time() }
+				return data
+			end)
+		end)
+		if not ok then
+			warn("[PlayerData] Could not load data for", player.Name, "-", result)
+			return newData(), false
+		end
+		if not locked then
+			return repair(result), true
+		end
+		if not player.Parent then
+			return newData(), false
+		end
+		task.wait(LOCK_WAIT_SECONDS)
 	end
-
-	return repair(result), true
+	return newData(), false
 end
 
-function PlayerData.save(player: Player, data): boolean
+-- Saves the player's data. `release` = true when they are leaving, which
+-- frees the lock for the next server. Returns true when the save landed.
+function PlayerData.save(player: Player, data, release: boolean?): boolean
 	if not store then
 		return false
 	end
+	local userId = player.UserId
+	-- Wait for an earlier save of this player to finish (at most ~30s).
+	local waited = 0
+	while saving[userId] and waited < 30 do
+		task.wait(0.5)
+		waited += 0.5
+	end
+	saving[userId] = true
 
 	data.lastSeen = os.time()
+	local foreign = false
 	local ok, result = pcall(function()
-		store:SetAsync(keyFor(player), data)
+		store:UpdateAsync(keyFor(player), function(old)
+			if type(old) == "table" and lockIsForeign(old.lock) then
+				foreign = true
+				return nil -- another server took over this player; keep its save
+			end
+			data.lock = if release then nil else { job = jobId, time = os.time() }
+			return data
+		end)
 	end)
+	saving[userId] = nil
 	if not ok then
 		warn("[PlayerData] Could not save data for", player.Name, "-", result)
+		return false
 	end
-	return ok
+	if foreign then
+		warn("[PlayerData] Skipped a save for", player.Name, "- another server owns this save now")
+		return false
+	end
+	return true
 end
 
 return PlayerData
