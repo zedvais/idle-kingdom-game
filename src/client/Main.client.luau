@@ -1640,7 +1640,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -1752,48 +1752,6 @@ do
 		cofferRows[coffer.key] = { info = info, buttons = buttons }
 	end
 
-	-- Royal Pass: progress, weekly challenges, then every tier.
-	local passInfo, nobleButton = makeRow(pages["Royal Pass"], nextOrder(), 74, true)
-	passInfo.RichText = true
-	nobleButton.Activated:Connect(function()
-		send("Robux", "product:passPremium")
-	end)
-
-	local passBarRow = makeFrame(pages["Royal Pass"], UDim2.new(1, -10, 0, 30), UDim2.fromOffset(0, 0), COLOR_ROW)
-	passBarRow.LayoutOrder = nextOrder()
-	addCorner(passBarRow, 6)
-	local passBar = makeBar(passBarRow, UDim2.new(1, -20, 0, 18), UDim2.fromOffset(10, 6), COLOR_GOLD)
-
-	local passButtons = makeButtonRow(pages["Royal Pass"], nextOrder(), "", { "Claim all", "Buy a tier" })
-	passButtons[1].Activated:Connect(function()
-		send("PassClaim", "all")
-	end)
-	passButtons[2].Activated:Connect(function()
-		send("PassSkip")
-	end)
-
-	makeHeading(pages["Royal Pass"], nextOrder(), "Weekly challenges")
-	local challengeRows = {}
-	for _, challenge in StoreConfig.WeeklyChallenges do
-		local info, button = makeRow(pages["Royal Pass"], nextOrder(), 46, true)
-		info.RichText = true
-		challengeRows[challenge.key] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("WeeklyClaim", challenge.key)
-		end)
-	end
-
-	makeHeading(pages["Royal Pass"], nextOrder(), "Rewards")
-	local tierRows = {}
-	for tier = 1, StoreConfig.PassTiers do
-		local info, button = makeRow(pages["Royal Pass"], nextOrder(), 46, true)
-		info.RichText = true
-		tierRows[tier] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("PassClaim", tostring(tier))
-		end)
-	end
-
 	drawStore = function(state)
 		local crowns = state.crowns
 		local ownedPasses = 0
@@ -1865,82 +1823,6 @@ do
 			end
 		end
 
-		-- Royal Pass
-		local pass = state.pass
-		local tier = StoreConfig.getTier(pass.points)
-		local maxTier = StoreConfig.PassTiers
-		local season = pass.season + 1
-		passInfo.Text = `<b>ROYAL PASS, SEASON {season}</b>   Ends in {formatLong(state.passSecondsLeft)}\n`
-			.. `Tier {tier} of {maxTier}. Earn points from quests, foes, playtime rewards and weekly challenges. `
-			.. (if pass.noble then "<font color=\"#F0C85A\">Noble track unlocked.</font>" else "The Noble track adds a second reward to every tier.")
-		if pass.noble then
-			setButton(nobleButton, "Noble\nunlocked", false, COLOR_GOLD)
-		else
-			local product = StoreConfig.getProduct("passPremium")
-			setButton(nobleButton, `Unlock Noble\n{robuxText(product and product.price or 0)}`, true, COLOR_SELECTED)
-		end
-		if tier >= maxTier then
-			setBar(passBar, 1, 1, "Every tier reached")
-		else
-			local into = pass.points - tier * StoreConfig.PointsPerTier
-			setBar(passBar, into, StoreConfig.PointsPerTier, `{into} / {StoreConfig.PointsPerTier} points to tier {tier + 1}`)
-		end
-
-		local claimable = 0
-		for index = 1, maxTier do
-			local key = tostring(index)
-			local rewards = StoreConfig.PassRewards[index]
-			local freeDone = pass.claimedFree[key] == true
-			local nobleDone = pass.claimedNoble[key] == true
-			local reached = index <= tier
-			local function part(label: string, reward, done: boolean, locked: boolean): string
-				local text = `{label}: {StoreConfig.describe(reward)}`
-				if done then
-					return `<font color="#9FD49A">{text} (claimed)</font>`
-				elseif locked then
-					return `<font color="#8C918A">{text}</font>`
-				end
-				return text
-			end
-			local row = tierRows[index]
-			row.info.Text = `<b>Tier {index}</b>\n{part("Free", rewards.free, freeDone, false)}   |   {part("Noble", rewards.noble, nobleDone, not pass.noble)}`
-			local open = reached and (not freeDone or (pass.noble and not nobleDone))
-			if open then
-				claimable += 1
-				setButton(row.button, "Claim", true, COLOR_CLAIM)
-			elseif reached then
-				setButton(row.button, "Claimed", false, COLOR_BUY)
-			else
-				setButton(row.button, "Locked", false, COLOR_BUY)
-			end
-		end
-		setButton(passButtons[1], if claimable > 0 then `Claim all ({claimable})` else "Claim all", claimable > 0, COLOR_CLAIM)
-		setButton(passButtons[2], `Buy a tier ({StoreConfig.TierSkipCost} Crowns)`, tier < maxTier and crowns >= StoreConfig.TierSkipCost, COLOR_SELECTED)
-
-		local weekly = state.weekly
-		for _, challenge in StoreConfig.WeeklyChallenges do
-			local row = challengeRows[challenge.key]
-			local value = math.min(challenge.goal, weekly[challenge.stat] or 0)
-			Art.progress(row.info, value, challenge.goal)
-			local shown = if challenge.stat == "play"
-				then `{math.floor(value / 60)} / {math.floor(challenge.goal / 60)} min`
-				else `{value} / {challenge.goal}`
-			row.info.Text = `<b>{challenge.name}</b>   +{challenge.points} points\n{shown}   |   New challenges in {formatLong(state.weekSecondsLeft)}`
-			if weekly.claimed[challenge.key] then
-				setButton(row.button, "Done", false, COLOR_BUY)
-			else
-				setButton(row.button, "Claim", value >= challenge.goal, COLOR_CLAIM)
-			end
-		end
-
-		-- Red-dot style counts on the rail.
-		local weeklyReady = 0
-		for _, challenge in StoreConfig.WeeklyChallenges do
-			if not state.weekly.claimed[challenge.key] and (state.weekly[challenge.stat] or 0) >= challenge.goal then
-				weeklyReady += 1
-			end
-		end
-		setBadge("Royal Pass", claimable + weeklyReady)
 	end
 end
 
