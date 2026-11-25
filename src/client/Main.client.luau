@@ -2277,9 +2277,12 @@ local function draw(state)
 		end
 		row.info.Parent.Visible = true
 		ItemArt.set(row.picture, item)
-		row.info.Text = `{rarityName(item)}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}`
+		local needs = if state.level < item.level then `<font color="#F07060">Needs Lv {item.level}</font>` else `Lv {item.level}`
+		row.info.Text = `{rarityName(item)}  ({string.lower(item.slot)})  {needs}\n{statText(item.attack, item.defense)}`
 		if item.sold then
 			setButton(row.button, "Sold", false, COLOR_BUY)
+		elseif state.level < item.level then
+			setButton(row.button, `Level {item.level}`, false, COLOR_BUY)
 		else
 			local price = math.floor(item.price * (1 - festivalDiscount(state, "marketPrice")))
 			setButton(row.button, `Buy\n{Format.short(price)}`, gold >= price, COLOR_BUY)

@@ -1262,6 +1262,13 @@ end
 -- Buys a Market item. `auto` is true when auto-buy does it, which keeps
 -- its messages short.
 local function buyItem(player: Player, data, item, auto: boolean): boolean
+	-- Market items have a level requirement (stats don't scale with it).
+	if data.level < (item.level or 1) then
+		if not auto then
+			sendToast(player, `You need level {item.level} to buy this.`)
+		end
+		return false
+	end
 	if armoryFull(data) then
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return false
@@ -2779,6 +2786,7 @@ local function runAutoBuy(player: Player, data)
 			and GameConfig.getRarityRank(item.rarity) >= minRank
 			and marketPrice(item) >= rule.minPrice
 			and (rule.maxPrice <= 0 or marketPrice(item) <= rule.maxPrice)
+			and data.level >= (item.level or 1)
 		if not wanted then
 			continue
 		end
