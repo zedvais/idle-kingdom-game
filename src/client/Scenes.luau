@@ -1,5 +1,5 @@
 -- Small animated pictures drawn with plain frames: one for each Keep level
--- (Timber Hall to Sunspire Palace) and one for each Estate building.
+-- (Timber Hall to Sunspire Palace), each Estate building and each holding.
 --
 -- Kept light on purpose: every picture is a few dozen frames, all the
 -- motion runs from one shared loop 20 times a second, and a picture only
@@ -596,6 +596,189 @@ BUILDINGS.towers = function(p)
 end
 
 ---------------------------------------------------------------------------
+-- Holdings
+---------------------------------------------------------------------------
+
+local HOLDINGS = {}
+
+HOLDINGS.field = function(p)
+	p:hall(100, GROUND - 2, 22, 14, C.wood, C.thatch)
+	for row = 0, 2 do
+		for index = 0, 11 do
+			local x = 4 + index * 7 + row * 3
+			local base = GROUND + 2 + row * 5
+			local stalk = p:rect(x, base - 16, 1.5, 16, Color3.fromRGB(176, 156, 72))
+			local head = p:rect(-1.5, -3, 4.5, 7, C.thatch, 2, stalk)
+			head.ZIndex = stalk.ZIndex
+			p:sway(stalk, 8, 1.6)
+		end
+	end
+	-- A scarecrow.
+	p:rect(92, GROUND - 26, 2, 24, C.woodDark)
+	p:rect(84, GROUND - 22, 18, 2, C.woodDark)
+	p:dot(93, GROUND - 28, 6, 6, C.thatch, 0.5)
+end
+
+HOLDINGS.mill = function(p)
+	local water = p:rect(0, GROUND - 2, 120, 16, Color3.fromRGB(70, 130, 190))
+	shade(water, 0.7)
+	p:hall(42, GROUND - 2, 40, 30, C.stoneLight, C.thatch)
+	-- The water wheel turns.
+	local hub = p:pivot(78, GROUND - 10)
+	for index = 0, 3 do
+		local spoke = p:rect(-13, -1, 26, 2, C.woodDark, nil, hub)
+		spoke.Position = UDim2.fromOffset(-12, 0)
+		spoke.Rotation = index * 45
+		spoke.ZIndex = hub.ZIndex + 1
+	end
+	local rim = p:dot(78, GROUND - 10, 26, 26, C.wood, 0.5)
+	rim.BackgroundTransparency = 0.55
+	p:add(function(t)
+		hub.Rotation = (t * 40) % 360
+	end)
+	p:twinkle(96, GROUND + 4, C.white)
+	p:twinkle(14, GROUND + 8, C.white)
+end
+
+HOLDINGS.tavern = function(p)
+	p:rect(60, GROUND - 46, 5, 12, C.stoneDark)
+	p:smoke(62, GROUND - 48)
+	p:hall(54, GROUND, 52, 26, C.wood, C.roofRed)
+	p:window(36, GROUND - 14, 5, 5)
+	p:window(68, GROUND - 14, 5, 5)
+	-- A sign swinging on its bracket.
+	p:rect(84, GROUND - 24, 14, 2, C.woodDark)
+	local sign = p:rect(88, GROUND - 22, 10, 8, C.thatch, 1)
+	sign.AnchorPoint = Vector2.new(0.5, 0)
+	sign.Position = UDim2.fromOffset(93, GROUND - 22)
+	p:rect(2, 2, 6, 4, C.banner, 1, sign).ZIndex = sign.ZIndex + 1
+	p:sway(sign, 10, 2.2)
+	-- Barrels.
+	p:rect(100, GROUND - 10, 8, 10, C.wood, 2)
+	p:rect(109, GROUND - 10, 8, 10, C.wood, 2)
+end
+
+HOLDINGS.smithy = function(p)
+	p:rect(26, GROUND - 44, 6, 16, C.stoneDark)
+	p:smoke(29, GROUND - 46)
+	p:hall(36, GROUND, 44, 24, C.stone, C.woodDark)
+	local forge = p:rect(24, GROUND - 12, 16, 10, C.glow, 3)
+	p:add(function(t)
+		forge.BackgroundTransparency = 0.1 + 0.4 * math.abs(math.sin(t * 7) * math.sin(t * 2.9))
+	end)
+	-- Anvil and a hammer striking with sparks.
+	p:rect(78, GROUND - 6, 6, 6, C.dark)
+	p:rect(72, GROUND - 10, 18, 4, C.iron, 1)
+	local pivot = p:pivot(96, GROUND - 14)
+	local handle = p:rect(-14, -1, 16, 2, C.wood, nil, pivot)
+	handle.ZIndex = pivot.ZIndex + 1
+	local head = p:rect(-17, -3, 5, 6, C.iron, 1, pivot)
+	head.ZIndex = pivot.ZIndex + 1
+	local sparks = {}
+	for index = 1, 3 do
+		sparks[index] = p:dot(80, GROUND - 12, 2, 2, C.gold)
+	end
+	p:add(function(t)
+		local swing = (t * 1.5) % 1
+		pivot.Rotation = if swing < 0.7 then -40 + swing / 0.7 * 40 else -(swing - 0.7) / 0.3 * 40
+		for index, spark in sparks do
+			local phase = swing * 3 - 0.1 * index
+			spark.BackgroundTransparency = if swing < 0.1 or swing > 0.4 then 1 else 0
+			spark.Position = UDim2.fromOffset(80 + (index - 2) * 6 * phase, GROUND - 12 - phase * 8)
+		end
+	end)
+end
+
+HOLDINGS.quarry = BUILDINGS.quarry
+
+HOLDINGS.tollbridge = function(p)
+	local water = p:rect(0, GROUND - 4, 120, 18, Color3.fromRGB(70, 130, 190))
+	shade(water, 0.7)
+	-- The bridge on two arches.
+	p:rect(0, GROUND - 14, 120, 6, C.stone)
+	p:rect(0, GROUND - 16, 120, 2, C.stoneDark)
+	for _, x in { 26, 70 } do
+		p:rect(x, GROUND - 8, 24, 12, C.stoneDark, 8)
+	end
+	p:tower(96, GROUND - 14, 16, 26, C.stone, { roof = C.roofBlue, flag = C.banner })
+	p:rect(102, GROUND - 22, 2, 8, C.woodDark)
+	-- The toll bar lifts and falls.
+	local bar = p:pivot(86, GROUND - 22)
+	local arm = p:rect(-32, -1, 32, 2.5, C.banner, nil, bar)
+	arm.ZIndex = bar.ZIndex + 1
+	p:add(function(t)
+		local phase = (t * 0.4) % 1
+		bar.Rotation = if phase < 0.5 then 0 elseif phase < 0.6 then (phase - 0.5) * 10 * 50 elseif phase < 0.9 then 50 else (1 - phase) * 10 * 50
+	end)
+	-- A cart rolling across.
+	local cart = p:rect(0, GROUND - 22, 12, 6, C.wood, 1)
+	p:add(function(t)
+		local phase = (t * 0.4) % 1
+		local x = if phase < 0.5 then 10 + phase * 2 * 40 elseif phase < 0.6 then 50 else 50 + (phase - 0.6) / 0.4 * 80
+		cart.Position = UDim2.fromOffset(x, GROUND - 22)
+		cart.Visible = x < 112
+	end)
+end
+
+HOLDINGS.markethall = function(p)
+	p:hall(60, GROUND, 56, 28, C.stoneLight, C.roofBlue)
+	p:flag(60, GROUND - 62, C.banner)
+	-- Stalls with striped awnings.
+	for index, color in { C.banner, C.gold, Color3.fromRGB(70, 130, 90) } do
+		local x = 4 + (index - 1) * 14
+		if index == 3 then
+			x = 96
+		end
+		p:rect(x, GROUND - 10, 12, 10, C.wood, 1)
+		local awning = p:rect(x - 1, GROUND - 14, 14, 5, color, 1)
+		shade(awning, 0.75)
+	end
+	p:twinkle(14, GROUND - 4, C.gold)
+	p:twinkle(102, GROUND - 4, C.white)
+end
+
+HOLDINGS.glassworks = function(p)
+	p:rect(40, GROUND - 52, 8, 26, C.stoneDark)
+	p:smoke(44, GROUND - 54)
+	local kiln = p:dot(44, GROUND - 14, 46, 36, C.stone, 0.5)
+	shade(kiln, 0.7)
+	local mouth = p:rect(36, GROUND - 14, 16, 12, C.glow, 6)
+	p:add(function(t)
+		mouth.BackgroundTransparency = 0.05 + 0.35 * math.abs(math.sin(t * 5))
+	end)
+	-- Coloured bottles on a shelf, glinting.
+	p:rect(74, GROUND - 16, 40, 3, C.woodDark)
+	for index, color in { Color3.fromRGB(90, 170, 220), Color3.fromRGB(110, 200, 120), Color3.fromRGB(220, 120, 200), Color3.fromRGB(240, 200, 90) } do
+		local x = 76 + (index - 1) * 10
+		local bottle = p:rect(x, GROUND - 28, 6, 12, color, 2)
+		bottle.BackgroundTransparency = 0.15
+		p:rect(x + 2, GROUND - 31, 2, 3, color)
+	end
+	p:twinkle(80, GROUND - 24, C.white)
+	p:twinkle(100, GROUND - 22, C.white)
+end
+
+HOLDINGS.mint = function(p)
+	p:hall(60, GROUND, 64, 30, C.marble, C.gold)
+	for x = 34, 86, 13 do
+		p:rect(x, GROUND - 26, 4, 26, C.white)
+	end
+	p:rect(28, GROUND - 4, 64, 4, C.stoneLight)
+	-- Coins tumbling into a pile.
+	for index = 0, 3 do
+		p:dot(14 + index * 6, GROUND - 2 - (index % 2) * 3, 7, 4, C.gold, 0.5)
+	end
+	local coin = p:dot(22, 10, 6, 6, C.gold, 0.5)
+	p:add(function(t)
+		local phase = (t * 0.8) % 1
+		coin.Position = UDim2.fromOffset(22, 10 + phase * (GROUND - 14))
+		coin.Size = UDim2.fromOffset(2 + math.abs(math.cos(t * 9)) * 5, 6)
+	end)
+	p:twinkle(100, 20, C.white)
+	p:twinkle(60, 8, C.glow)
+end
+
+---------------------------------------------------------------------------
 -- Making a picture
 ---------------------------------------------------------------------------
 
@@ -668,6 +851,15 @@ end
 -- An Estate building picture, by building key. Nil for unknown keys.
 function Scenes.building(holder: GuiObject, key: string, gate: () -> boolean, width: number?): Frame?
 	local draw = BUILDINGS[key]
+	if not draw then
+		return nil
+	end
+	return make(holder, draw, true, gate, width)
+end
+
+-- A Holdings picture, by holding id. Nil for unknown ids.
+function Scenes.holding(holder: GuiObject, id: string, gate: () -> boolean, width: number?): Frame?
+	local draw = HOLDINGS[id]
 	if not draw then
 		return nil
 	end

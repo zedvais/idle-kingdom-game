@@ -283,7 +283,22 @@ local function getStats(data)
 		lotsUsed += count
 		incomePerHour += holding.income * count
 	end
-	incomePerHour = math.floor(incomePerHour * (1 + keepBonus + perkBonus.income))
+	local incomeBonus = keepBonus + perkBonus.income
+	local incomeMultiplier = if hasPass(data, "doubleincome") then StoreConfig.DoubleIncome else 1
+	incomePerHour = math.floor(incomePerHour * (1 + incomeBonus) * incomeMultiplier)
+	-- Where the income bonus comes from, for the Holdings page.
+	local incomeParts = {
+		{ "Keep", keepBonus },
+		{ "Rebirth Stars", (RebirthConfig.PerStar.income or 0) * data.rebirth.stars },
+		{ "Royal Charter", if hasPass(data, "charter") then StoreConfig.CharterIncome else 0 },
+		{ "Research", researchTotal(data, "income") },
+		{ "Festival", festivalBonus("income") },
+	}
+	local listed = 0
+	for _, part in incomeParts do
+		listed += part[2]
+	end
+	table.insert(incomeParts, { "Gear sets", math.max(0, incomeBonus - listed) })
 
 	return {
 		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy") + researchTotal(data, "energy"),
@@ -298,6 +313,9 @@ local function getStats(data)
 		setBonus = gear.perks,
 		lots = GameConfig.BaseLots + skillTotal(data, "lots") + researchTotal(data, "lots"),
 		lotsUsed = lotsUsed,
+		incomeBonus = incomeBonus,
+		incomeMultiplier = incomeMultiplier,
+		incomeParts = incomeParts,
 		incomePerHour = incomePerHour,
 		-- Where attack and defense come from, for the Keep page.
 		breakdown = {

@@ -328,6 +328,11 @@ function KeepPage.build(ui)
 		table.clear(pending)
 		ui.openModal("Skills")
 	end)
+	-- The top bar's "+N POINTS" button opens the same popup.
+	function ui.openSkills()
+		table.clear(pending)
+		ui.openModal("Skills")
+	end
 	local warbandLink
 	panels.warband, warbandLink = makePanel(ui, grid, "Your warband", {
 		{ "soldiers", "Soldiers" },

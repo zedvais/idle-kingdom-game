@@ -73,11 +73,11 @@ StoreConfig.Passes = {
 		note = "No fee when you deposit gold in the Bank",
 	},
 	{
-		key = "armory",
+		key = "doubleincome",
 		id = 0,
-		name = "Armory Wing",
-		price = 149,
-		note = "Your armory holds 80 pieces of gear instead of 40",
+		name = "Golden Ledger",
+		price = 299,
+		note = "2x income from every holding, on top of every other bonus",
 	},
 	{
 		key = "autoquest",
@@ -104,6 +104,7 @@ StoreConfig.Passes = {
 
 -- What the passes do, used by the server.
 StoreConfig.CharterIncome = 0.25
+StoreConfig.DoubleIncome = 2 -- Golden Ledger pass: holding income multiplier
 StoreConfig.CharterQuestGold = 0.25
 StoreConfig.CharterXp = 0.1
 StoreConfig.CouriersSpeed = 2

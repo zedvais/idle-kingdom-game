@@ -264,6 +264,19 @@ nameLabel.TextStrokeTransparency = 0.6
 nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 nameLabel.TextWrapped = false
 local xpBar = makeBar(topBar, UDim2.fromOffset(190, 16), UDim2.fromOffset(70, 40), COLOR_XP)
+-- "+N POINTS" next to the XP bar while you have unspent skill points;
+-- it opens the Skills popup. The XP bar is shorter while it shows.
+local pointsButton = makeButton(topBar, UDim2.fromOffset(84, 20), UDim2.fromOffset(186, 38), COLOR_GOLD)
+pointsButton.TextSize = 11
+pointsButton.Font = Enum.Font.GothamBlack
+pointsButton.Visible = false
+pointsButton.Activated:Connect(function()
+	if ui and ui.openSkills then
+		ui.openSkills()
+	else
+		openModal("Skills")
+	end
+end)
 
 -- Resource chips: a big number with a small line under it.
 local chips = {}
@@ -437,7 +450,7 @@ local PAGE_INFO = {
 	},
 	Holdings = {
 		about = "Lands that pay gold every hour, even while you are away.",
-		tip = "Each holding uses one lot. Build more copies to earn more; demolish one to free its lot.",
+		tip = "Each holding uses one lot. Build more copies on the BUILD tab; press one of your lands to build another or demolish it.",
 	},
 	Bank = {
 		about = "Gold in the bank is safe. Gold on hand is what you spend.",
@@ -930,36 +943,7 @@ for _, region in GameConfig.Regions do
 	end
 end
 
--- Holdings: what you have built, then what you can build, by region.
-local holdingSummary = makeRow(pages.Holdings, nextOrder(), 50, false)
-makeHeading(pages.Holdings, nextOrder(), "Your lands")
-local ownedEmpty = makeRow(pages.Holdings, nextOrder(), 34, false)
-ownedEmpty.TextColor3 = COLOR_DIM
-ownedEmpty.Text = "Nothing built yet. Build a holding below."
-local ownedRows = {}
-for _, holding in GameConfig.Holdings do
-	local info, button = makeRow(pages.Holdings, nextOrder(), 46, true)
-	ownedRows[holding.id] = { info = info, button = button }
-	button.Activated:Connect(function()
-		send("Demolish", holding.id)
-	end)
-end
-makeHeading(pages.Holdings, nextOrder(), "Build")
-local holdingRows = {}
-for _, region in GameConfig.Regions do
-	local addRow = makeRegionHeader(pages.Holdings, nextOrder(), region)
-	local grid = makeGrid(pages.Holdings, nextOrder(), 112, 3)
-	addRow(grid)
-	for _, holding in GameConfig.Holdings do
-		if holding.region == region.id then
-			local info, button = makeCard(grid)
-			holdingRows[holding.id] = { info = info, button = button }
-			button.Activated:Connect(function()
-				send("Holding", holding.id)
-			end)
-		end
-	end
-end
+-- Holdings: the page is built in HoldingsPage.luau.
 
 -- Bank: move gold in and out. Gold in the bank is safe from raids.
 local bankSummary = makeRow(pages.Bank, nextOrder(), 74, false)
@@ -1566,6 +1550,8 @@ do
 		{ key = "Pass", title = "Game pass", width = 520, height = 300 },
 		{ key = "ChestOdds", title = "Chest odds", width = 560, height = 580 },
 		{ key = "Train", title = "Train soldier", width = 520, height = 470 },
+		{ key = "Holding", title = "Holding", width = 520, height = 470 },
+		{ key = "IncomeBonus", title = "Income bonus", width = 460, height = 420 },
 	}
 	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560
 
@@ -1736,7 +1722,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -2321,6 +2307,10 @@ local function draw(state)
 	nameLabel.Text = `{title}{player.DisplayName}`
 	nameLabel.TextColor3 = if state.passes.charter then COLOR_GOLD else COLOR_HEADER
 	setBar(xpBar, state.xp, state.xpNeeded, `XP {state.xp} / {state.xpNeeded}`)
+	local unspent = state.skillPoints or 0
+	pointsButton.Visible = unspent > 0
+	setButton(pointsButton, `+{Format.short(unspent)} POINTS`, true, COLOR_GOLD)
+	xpBar.fill.Parent.Size = UDim2.fromOffset(if unspent > 0 then 112 else 190, 16)
 	chips.gold.value.Text = Format.short(gold)
 	chips.gold.sub.Text = `Banked {Format.short(state.banked)}`
 	chips.crowns.value.Text = Format.short(state.crowns)
@@ -2438,37 +2428,6 @@ local function draw(state)
 			setButton(row.button, "Do Quest", state.energy >= quest.energy, COLOR_ACTION)
 		end
 	end
-
-	-- Holdings
-	local lotsFull = stats.lotsUsed >= stats.lots
-	Art.progress(holdingSummary, stats.lotsUsed, stats.lots, Color3.fromRGB(110, 170, 90), true)
-	holdingSummary.Text = `Income {Format.short(stats.incomePerHour)} gold/hr   |   Lots {stats.lotsUsed} / {stats.lots}{if lotsFull then " (full)" else ""}\n`
-		.. `Holdings earn {math.floor(GameConfig.OfflineRate * 100)}% while you are away. More lots come from skill points in the Keep.`
-	local anyOwned = false
-	for _, holding in GameConfig.Holdings do
-		local count = state.holdings[holding.id] or 0
-		local ownedRow = ownedRows[holding.id]
-		ownedRow.info.Parent.Visible = count > 0
-		if count > 0 then
-			anyOwned = true
-			local income = math.floor(holding.income * count * (1 + stats.keepBonus))
-			ownedRow.info.Text = `{holding.name}  x{count}\n{Format.short(income)} gold/hr`
-			local refund = math.floor(GameConfig.getHoldingCost(holding, count - 1) * GameConfig.DemolishRefund)
-			setButton(ownedRow.button, `Demolish 1\n+{Format.short(refund)}`, true, COLOR_DISABLED)
-		end
-
-		local row = holdingRows[holding.id]
-		local cost = GameConfig.getHoldingCost(holding, count)
-		row.info.Text = `{holding.name}  (you have {count})\n+{Format.short(holding.income)} gold/hr per lot`
-		if state.level < holding.level then
-			setButton(row.button, `Level {holding.level}`, false, COLOR_BUY)
-		elseif lotsFull then
-			setButton(row.button, `Lots full\n{Format.short(cost)}`, false, COLOR_BUY)
-		else
-			setButton(row.button, `Build\n{Format.short(cost)}`, gold >= cost, COLOR_BUY)
-		end
-	end
-	ownedEmpty.Parent.Visible = not anyOwned
 
 	-- Bank
 	bankSummary.Text = `On hand: {Format.short(gold)} gold\nBanked: {Format.short(state.banked)} gold\n`
