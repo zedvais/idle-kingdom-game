@@ -470,7 +470,7 @@ local PAGE_INFO = {
 	},
 	Quests = {
 		about = "Spend energy for gold, experience and the odd piece of gear.",
-		tip = "Repeat a quest to earn bronze, silver and gold mastery. The Auto quests button opens the settings: repeat your last quest, earn mastery, or go for the most XP.",
+		tip = "Repeat a quest to earn bronze, silver and gold mastery medals; each one raises its gold. AUTO QUESTS works on one quest, mastery, most XP or most gold for you.",
 	},
 	Foes = {
 		about = "Bring down each foe once a day for gold, tokens and set gear.",
@@ -912,36 +912,7 @@ do
 end
 
 
--- Quests, in folding regions.
-local questRows = {}
-local autoQuestInfo, autoQuestButton = makeRow(pages.Quests, nextOrder(), 50, true)
-autoQuestInfo.RichText = true
-local autoQuestOn = false
-local ownsAutoQuest = false
--- Auto buttons without their game pass are locked and offer the pass.
-autoQuestButton.Activated:Connect(function()
-	if ownsAutoQuest then
-		ui.openAutoQuest()
-	else
-		ui.offerPass("autoquest")
-	end
-end)
-local questBoost = makeRow(pages.Quests, nextOrder(), 30, false)
-questBoost.TextColor3 = COLOR_XP
-for _, region in GameConfig.Regions do
-	local addRow = makeRegionHeader(pages.Quests, nextOrder(), region)
-	for _, quest in GameConfig.Quests do
-		if quest.region == region.id then
-			local info, button = makeRow(pages.Quests, nextOrder(), 56, true)
-			info.RichText = true
-			addRow(info.Parent)
-			questRows[quest.id] = { info = info, button = button }
-			button.Activated:Connect(function()
-				send("Quest", quest.id)
-			end)
-		end
-	end
-end
+-- Quests: the page is built in QuestsPage.luau.
 
 -- Holdings: the page is built in HoldingsPage.luau.
 
@@ -1543,7 +1514,7 @@ do
 		{ key = "Profile", title = "Profile" },
 		{ key = "Rebirth", title = "Rebirth" },
 		{ key = "Mail", title = "Mail" },
-		{ key = "AutoQuest", title = "Auto quests", width = 520, height = 400 },
+		{ key = "AutoQuest", title = "Auto quests", width = 760, height = 560 },
 		{ key = "AutoBuy", title = "Auto-buy", width = 600, height = 560 },
 		{ key = "Amount", title = "How many?", width = 440, height = 330 },
 		{ key = "Skills", title = "Skill points", width = 640, height = 590 },
@@ -1722,7 +1693,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -2376,56 +2347,6 @@ local function draw(state)
 			setButton(row.button, "Claim", true, COLOR_CLAIM)
 		else
 			setButton(row.button, `In {formatClock(reward.minutes * 60 - played)}`, false, COLOR_BUY)
-		end
-	end
-
-	-- Quests
-	ownsAutoQuest = state.passes.autoquest == true
-	autoQuestOn = state.autoQuestOn and ownsAutoQuest
-	local autoTarget = GameConfig.pickAutoQuest(state.autoQuestMode, state.level, state.quests, state.autoQuest)
-	local modeName = "Repeat last quest"
-	for _, mode in GameConfig.AutoQuestModes do
-		if mode.id == state.autoQuestMode then
-			modeName = mode.name
-		end
-	end
-	if not ownsAutoQuest then
-		autoQuestInfo.Text = "<b>Auto quests</b>\nThe Quest Herald game pass does quests for you whenever you have the energy."
-	else
-		autoQuestInfo.Text = `<b>Auto quests: {if autoQuestOn then "ON" else "OFF"}</b>   ({modeName})\n`
-			.. (if autoTarget then `Next: <b>{autoTarget.name}</b>, {autoTarget.energy} energy.` else "Do a quest once first.")
-	end
-	if ownsAutoQuest then
-		setButton(autoQuestButton, if autoQuestOn then "Auto: ON\nSettings" else "Auto quests\nSettings", true, if autoQuestOn then COLOR_CLAIM else COLOR_SELECTED)
-	else
-		setButton(autoQuestButton, "\u{1F512} Auto quests\nGet pass", false, COLOR_SELECTED)
-	end
-	questBoost.Text = if state.xpBoostLeft > 0 then `Double XP active: {formatClock(state.xpBoostLeft)} left` else ""
-	questBoost.Parent.Visible = state.xpBoostLeft > 0
-	local medalColors = { "#C8844E", "#C9D2DE", "#F0C85A" }
-	for _, quest in GameConfig.Quests do
-		local row = questRows[quest.id]
-		local done = state.quests[quest.id] or 0
-		local rank = GameConfig.getMasteryRank(done)
-		local medals = {}
-		for index, medal in GameConfig.MasteryMedals do
-			local color = if index <= rank then medalColors[index] else "#5A5F5A"
-			table.insert(medals, `<font color="{color}">{medal}</font>`)
-		end
-		local progress = if rank >= GameConfig.MaxMasteryRanks
-			then "Mastered"
-			else `{done % GameConfig.MasteryPerRank}/{GameConfig.MasteryPerRank}`
-		if rank >= GameConfig.MaxMasteryRanks then
-			Art.progress(row.info, 1, 1, Color3.fromHex(medalColors[#medalColors]), true)
-		else
-			Art.progress(row.info, done % GameConfig.MasteryPerRank, GameConfig.MasteryPerRank, Color3.fromHex(medalColors[rank + 1] or "#F0C85A"))
-		end
-		row.info.Text = `<b>{quest.name}</b>\n{quest.energy} energy   {Format.short(GameConfig.getQuestGold(quest, done))} gold   {quest.xp} XP   `
-			.. `{string.format("%.1f", quest.drop * 100)}% gear drop\n{table.concat(medals, "  ")}   {progress}`
-		if state.level < quest.level then
-			setButton(row.button, `Level {quest.level}`, false, COLOR_ACTION)
-		else
-			setButton(row.button, "Do Quest", state.energy >= quest.energy, COLOR_ACTION)
 		end
 	end
 

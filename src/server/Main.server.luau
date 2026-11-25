@@ -690,6 +690,7 @@ local function refresh(player: Player)
 		autoQuest = data.autoQuest,
 		autoQuestOn = data.autoQuestOn,
 		autoQuestMode = data.autoQuestMode,
+		autoRun = session.autoRun,
 		autoRoll = data.autoRoll,
 		autoBuy = data.autoBuy,
 		maxGear = maxGear(data),
@@ -1012,10 +1013,18 @@ function actions.Quest(player: Player, data, id: string)
 	if rankAfter > rankBefore then
 		sendToast(player, `{GameConfig.MasteryMedals[rankAfter]} mastery! {quest.name} now pays more gold.`)
 	end
-	if random:NextNumber() < quest.drop then
+	local dropped = random:NextNumber() < quest.drop
+	if dropped then
 		giveGear(player, data, nil, "You found gear")
 	end
-	addXp(player, data, math.floor(quest.xp * (1 + trophyBonus.xp)))
+	local xpBefore = data.xp
+	local levelBefore = data.level
+	local questXp = math.floor(quest.xp * (1 + trophyBonus.xp))
+	addXp(player, data, questXp)
+	-- Double XP and the like: what was really added.
+	local gainedXp = if data.level == levelBefore then data.xp - xpBefore else questXp
+	sendFx(player, "quest", { id = id, gold = questGold, xp = gainedXp, drop = dropped })
+	return questGold, gainedXp, dropped
 end
 
 -- Builds one more copy of a holding on a free lot.
@@ -1779,6 +1788,11 @@ function actions.AutoQuest(player: Player, data, id: string)
 	if not GameConfig.pickAutoQuest(mode, data.level, data.quests, data.autoQuest) then
 		sendToast(player, "Do a quest once first. This mode repeats the last quest you did.")
 		return
+	end
+	-- A new run starts its totals from zero.
+	local session = sessions[player]
+	if session and not data.autoQuestOn then
+		session.autoRun = { quests = 0, gold = 0, xp = 0, items = 0 }
 	end
 	data.autoQuestOn = true
 end
@@ -2902,13 +2916,22 @@ local function runAutoQuests(player: Player, data)
 	if not data.autoQuestOn or not hasPass(data, "autoquest") then
 		return
 	end
+	local session = sessions[player]
 	for _ = 1, GameConfig.AutoQuestsPerSecond do
 		-- Picked again each time: mastery moves on once a quest has gold.
 		local quest = GameConfig.pickAutoQuest(data.autoQuestMode, data.level, data.quests, data.autoQuest)
 		if not quest or data.energy < quest.energy then
 			return
 		end
-		actions.Quest(player, data, quest.id)
+		local gold, xp, dropped = actions.Quest(player, data, quest.id)
+		-- This run's totals, for the Activity tab.
+		if session and gold then
+			local run = session.autoRun
+			run.quests += 1
+			run.gold += gold
+			run.xp += xp or 0
+			run.items += if dropped then 1 else 0
+		end
 	end
 end
 
@@ -3152,6 +3175,7 @@ local function onPlayerAdded(player: Player)
 		regen = { energy = 0, stamina = 0, health = 0 },
 		boardSent = {}, -- [board key] = last score written
 		holdingPaidAt = os.clock(), -- when holdings last paid
+		autoRun = { quests = 0, gold = 0, xp = 0, items = 0 }, -- this auto quest run
 		holdingCarry = {}, -- [holding id] = fraction of a gold not paid yet
 	}
 	refresh(player)

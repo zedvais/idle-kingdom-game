@@ -86,21 +86,23 @@ GameConfig.Regions = {
 ---------------------------------------------------------------------------
 
 -- drop is the chance (0 to 1) of finding a piece of gear.
+-- Quest tiers inside each region (TIER 1, TIER 2 ...): `tier` on each quest.
+-- A tier shows from the lowest level of its quests.
 GameConfig.Quests = {
-	{ id = "patrol", region = "Oakvale", name = "Patrol the Village Road", level = 1, energy = 1, gold = 40, xp = 2, drop = 0.025 },
-	{ id = "chickens", region = "Oakvale", name = "Chase Off Chicken Thieves", level = 2, energy = 2, gold = 90, xp = 4, drop = 0.025 },
-	{ id = "graincart", region = "Oakvale", name = "Guard the Grain Cart", level = 3, energy = 3, gold = 150, xp = 7, drop = 0.03 },
-	{ id = "cellar", region = "Oakvale", name = "Clear Rats from the Cellar", level = 4, energy = 3, gold = 190, xp = 8, drop = 0.03 },
-	{ id = "taxman", region = "Oakvale", name = "Escort the Tax Collector", level = 5, energy = 4, gold = 270, xp = 11, drop = 0.035 },
-	{ id = "boar", region = "Oakvale", name = "Hunt the Marsh Boar", level = 6, energy = 5, gold = 370, xp = 14, drop = 0.04 },
-	{ id = "fort", region = "Greywatch", name = "Scout the Border Fort", level = 8, energy = 6, gold = 520, xp = 18, drop = 0.04 },
-	{ id = "caravan", region = "Greywatch", name = "Ambush a Smuggler Caravan", level = 10, energy = 7, gold = 700, xp = 23, drop = 0.045 },
-	{ id = "blockade", region = "Greywatch", name = "Break the Toll Blockade", level = 12, energy = 8, gold = 920, xp = 28, drop = 0.045 },
-	{ id = "hideout", region = "Greywatch", name = "Storm the Outlaw Hideout", level = 15, energy = 10, gold = 1400, xp = 38, drop = 0.05 },
-	{ id = "ferry", region = "Emberreach", name = "Seize the Ember Ferry", level = 18, energy = 11, gold = 2100, xp = 46, drop = 0.05 },
-	{ id = "forge", region = "Emberreach", name = "Relight the Old Forge", level = 21, energy = 12, gold = 2900, xp = 55, drop = 0.055 },
-	{ id = "ashwolves", region = "Emberreach", name = "Drive Out the Ash Wolves", level = 24, energy = 14, gold = 4000, xp = 66, drop = 0.06 },
-	{ id = "cinderkeep", region = "Emberreach", name = "Lift the Siege of Cinderkeep", level = 28, energy = 16, gold = 5600, xp = 80, drop = 0.065 },
+	{ id = "patrol", region = "Oakvale", tier = 1, name = "Patrol the Village Road", level = 1, energy = 1, gold = 40, xp = 2, drop = 0.025 },
+	{ id = "chickens", region = "Oakvale", tier = 1, name = "Chase Off Chicken Thieves", level = 2, energy = 2, gold = 90, xp = 4, drop = 0.025 },
+	{ id = "graincart", region = "Oakvale", tier = 1, name = "Guard the Grain Cart", level = 3, energy = 3, gold = 150, xp = 7, drop = 0.03 },
+	{ id = "cellar", region = "Oakvale", tier = 2, name = "Clear Rats from the Cellar", level = 4, energy = 3, gold = 190, xp = 8, drop = 0.03 },
+	{ id = "taxman", region = "Oakvale", tier = 2, name = "Escort the Tax Collector", level = 5, energy = 4, gold = 270, xp = 11, drop = 0.035 },
+	{ id = "boar", region = "Oakvale", tier = 2, name = "Hunt the Marsh Boar", level = 6, energy = 5, gold = 370, xp = 14, drop = 0.04 },
+	{ id = "fort", region = "Greywatch", tier = 3, name = "Scout the Border Fort", level = 8, energy = 6, gold = 520, xp = 18, drop = 0.04 },
+	{ id = "caravan", region = "Greywatch", tier = 3, name = "Ambush a Smuggler Caravan", level = 10, energy = 7, gold = 700, xp = 23, drop = 0.045 },
+	{ id = "blockade", region = "Greywatch", tier = 4, name = "Break the Toll Blockade", level = 12, energy = 8, gold = 920, xp = 28, drop = 0.045 },
+	{ id = "hideout", region = "Greywatch", tier = 4, name = "Storm the Outlaw Hideout", level = 15, energy = 10, gold = 1400, xp = 38, drop = 0.05 },
+	{ id = "ferry", region = "Emberreach", tier = 5, name = "Seize the Ember Ferry", level = 18, energy = 11, gold = 2100, xp = 46, drop = 0.05 },
+	{ id = "forge", region = "Emberreach", tier = 5, name = "Relight the Old Forge", level = 21, energy = 12, gold = 2900, xp = 55, drop = 0.055 },
+	{ id = "ashwolves", region = "Emberreach", tier = 6, name = "Drive Out the Ash Wolves", level = 24, energy = 14, gold = 4000, xp = 66, drop = 0.06 },
+	{ id = "cinderkeep", region = "Emberreach", tier = 6, name = "Lift the Siege of Cinderkeep", level = 28, energy = 16, gold = 5600, xp = 80, drop = 0.065 },
 }
 
 ---------------------------------------------------------------------------
@@ -672,10 +674,12 @@ GameConfig.AutoQuestsPerSecond = 3
 --   last     repeat the last quest you did
 --   mastery  the first open quest still short of gold mastery
 --   xp       the open quest with the most XP per energy
+--   gold     the open quest with the most gold per energy
 GameConfig.AutoQuestModes = {
-	{ id = "last", name = "Repeat last quest" },
-	{ id = "mastery", name = "Earn mastery medals" },
-	{ id = "xp", name = "Most XP" },
+	{ id = "last", name = "One quest", note = "Repeats the last quest you did" },
+	{ id = "mastery", name = "Mastery", note = "Earns every medal in order, then most XP" },
+	{ id = "xp", name = "Most XP", note = "Most XP for each energy" },
+	{ id = "gold", name = "Most gold", note = "Most gold for each energy" },
 }
 
 -- The quest auto quests do next, or nil. `done` is { [quest id] = times done }.
@@ -690,6 +694,18 @@ function GameConfig.pickAutoQuest(mode: string, level: number, done, lastId: str
 			end
 		end
 		mode = "xp" -- every open quest has gold mastery
+	end
+	if mode == "gold" then
+		local best, bestRate = nil, 0
+		for _, quest in GameConfig.Quests do
+			if open(quest) then
+				local rate = GameConfig.getQuestGold(quest, done[quest.id] or 0) / quest.energy
+				if not best or rate > bestRate then
+					best, bestRate = quest, rate
+				end
+			end
+		end
+		return best
 	end
 	if mode == "xp" then
 		local best = nil

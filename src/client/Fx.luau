@@ -691,6 +691,10 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt, send)
 			if Fx.onRoll then
 				Fx.onRoll(info)
 			end
+		elseif kind == "quest" then
+			if Fx.onQuest then
+				Fx.onQuest(info)
+			end
 		elseif kind == "income" then
 			if Fx.onIncome then
 				Fx.onIncome(info)
