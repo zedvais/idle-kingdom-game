@@ -9,11 +9,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
+local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
 local Recruit = require(script.Parent.Recruit)
 local Loadout = require(script.Parent.Loadout)
 local PlayerData = require(script.Parent.PlayerData)
+local Store = require(script.Parent.Store)
 
 local AUTOSAVE_SECONDS = 60
 local MAX_ACTIONS_PER_SECOND = 25
@@ -59,6 +61,16 @@ local function sendToast(player: Player, text: string)
 	player:SetAttribute("ToastId", (player:GetAttribute("ToastId") or 0) + 1)
 end
 
+-- True if the player owns this game pass ("charter", "couriers", ...).
+local function hasPass(data, key: string): boolean
+	return data.passes[key] == true
+end
+
+-- How many pieces of gear the armory holds.
+local function maxGear(data): number
+	return GameConfig.MaxGearOwned + (if hasPass(data, "armory") then StoreConfig.ArmoryExtra else 0)
+end
+
 local function skillTotal(data, skillId: string): number
 	return (data.skills[skillId] or 0) * skillById[skillId].amount
 end
@@ -87,6 +99,11 @@ local function getPerkBonus(data, gear)
 	local perks = (gear or Loadout.compute(data)).perks
 	for key in total do
 		total[key] += perks[key] or 0
+	end
+	if hasPass(data, "charter") then
+		total.income += StoreConfig.CharterIncome
+		total.questGold += StoreConfig.CharterQuestGold
+		total.xp += StoreConfig.CharterXp
 	end
 	return total
 end
@@ -170,6 +187,64 @@ local function checkStageDay(data)
 		data.stageHealth = {}
 		data.stageCleared = {}
 	end
+end
+
+-- A new Royal Pass season starts everyone from tier 0 on the free track.
+local function checkPassSeason(data)
+	local season = StoreConfig.getSeason(os.time())
+	if data.pass.season ~= season then
+		data.pass = {
+			season = season,
+			points = 0,
+			noble = false,
+			energyCarry = 0,
+			claimedFree = {},
+			claimedNoble = {},
+		}
+	end
+end
+
+-- Weekly challenges start over every Monday 00:00 UTC.
+local function checkWeek(data)
+	local week = StoreConfig.getWeek(os.time())
+	if data.weekly.week ~= week then
+		data.weekly = { week = week, energy = 0, foes = 0, market = 0, play = 0, claimed = {} }
+	end
+end
+
+local function addPassPoints(data, points: number)
+	checkPassSeason(data)
+	local cap = StoreConfig.PassTiers * StoreConfig.PointsPerTier
+	data.pass.points = math.min(cap, data.pass.points + points)
+end
+
+-- Quest energy feeds the Royal Pass, the Tithe Chest and the weekly challenge.
+local function onQuestEnergy(data, energy: number)
+	checkWeek(data)
+	data.weekly.energy += energy
+
+	checkPassSeason(data)
+	local perPoint = 1 / StoreConfig.PointsPerQuestEnergy
+	data.pass.energyCarry += energy
+	local points = math.floor(data.pass.energyCarry / perPoint)
+	if points > 0 then
+		data.pass.energyCarry -= points * perPoint
+		addPassPoints(data, points)
+	end
+
+	data.titheEnergy += energy
+	local crowns = math.floor(data.titheEnergy / StoreConfig.TitheEnergyPerCrown)
+	if crowns > 0 then
+		data.titheEnergy -= crowns * StoreConfig.TitheEnergyPerCrown
+		data.tithe = math.min(StoreConfig.TitheMax, data.tithe + crowns)
+	end
+end
+
+local function onFoeBeaten(data)
+	checkWeek(data)
+	data.weekly.foes += 1
+	addPassPoints(data, StoreConfig.PointsPerFoe)
+	data.tithe = math.min(StoreConfig.TitheMax, data.tithe + StoreConfig.TitheCrownsPerFoe)
 end
 
 -- How far the player is toward a trophy.
@@ -261,6 +336,8 @@ local function refresh(player: Player)
 	end
 
 	checkStageDay(data)
+	checkPassSeason(data)
+	checkWeek(data)
 	checkTrophies(player, data)
 	local trophyProgressList = {}
 	for _, trophy in GameConfig.Trophies do
@@ -306,6 +383,18 @@ local function refresh(player: Player)
 		autoQuest = data.autoQuest,
 		autoQuestOn = data.autoQuestOn,
 		autoBuy = data.autoBuy,
+		maxGear = maxGear(data),
+		crowns = data.crowns,
+		passes = data.passes,
+		packsBought = data.packsBought,
+		secondsSinceFirstVisit = now - data.firstSeen,
+		title = data.title,
+		tithe = data.tithe,
+		pity = data.pity,
+		pass = data.pass,
+		passSecondsLeft = StoreConfig.getSeasonSecondsLeft(now),
+		weekly = data.weekly,
+		weekSecondsLeft = StoreConfig.getWeekSecondsLeft(now),
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -378,9 +467,10 @@ local function addGear(data, item): string
 end
 
 -- Gives the player a rolled piece of gear (quest drops and chests).
--- Pass `set` for a piece of a gear set.
-local function giveGear(player: Player, data, minRank: number?, source: string, set: any?)
-	if #data.gear >= GameConfig.MaxGearOwned then
+-- Pass `set` for a piece of a gear set. `paid` lets bought rewards go past
+-- the armory limit, so nothing paid for is ever lost.
+local function giveGear(player: Player, data, minRank: number?, source: string, set: any?, paid: boolean?)
+	if not paid and #data.gear >= maxGear(data) then
 		sendToast(player, `{source}, but your armory is full. Sell some gear to make room.`)
 		return
 	end
@@ -412,6 +502,7 @@ function actions.Quest(player: Player, data, id: string)
 
 	local trophyBonus = getPerkBonus(data)
 	data.energy -= quest.energy
+	onQuestEnergy(data, quest.energy)
 	data.gold += math.floor(GameConfig.getQuestGold(quest, completions) * (1 + trophyBonus.questGold))
 	data.quests[id] = completions + 1
 	data.autoQuest = id
@@ -481,6 +572,7 @@ function actions.Claim(player: Player, data, id: string)
 		return
 	end
 	data.claimed[id] = true
+	addPassPoints(data, StoreConfig.PointsPerPlaytimeReward)
 
 	local stats = getStats(data)
 	if reward.kind == "gold" then
@@ -512,10 +604,14 @@ function actions.Deposit(player: Player, data, id: string)
 	if amount <= 0 then
 		return
 	end
-	local fee = math.ceil(amount * GameConfig.BankFee)
+	local fee = if hasPass(data, "treasury") then 0 else math.ceil(amount * GameConfig.BankFee)
 	data.gold -= amount
 	data.banked += amount - fee
-	sendToast(player, `Deposited {Format.short(amount - fee)} gold after a {Format.short(fee)} fee.`)
+	if fee > 0 then
+		sendToast(player, `Deposited {Format.short(amount - fee)} gold after a {Format.short(fee)} fee.`)
+	else
+		sendToast(player, `Deposited {Format.short(amount)} gold. The Royal Treasury takes no fee.`)
+	end
 end
 
 function actions.Withdraw(player: Player, data, id: string)
@@ -677,7 +773,7 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 		end
 		return false
 	end
-	if #data.gear >= GameConfig.MaxGearOwned then
+	if #data.gear >= maxGear(data) then
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return false
 	end
@@ -693,6 +789,8 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 	local owned = table.clone(item)
 	owned.sold = nil
 	local note = addGear(data, owned)
+	checkWeek(data)
+	data.weekly.market += 1
 	sendToast(player, `{if auto then "Auto-buy got" else "You bought"} a {owned.rarity} {owned.name}.{note}`)
 	return true
 end
@@ -775,6 +873,7 @@ function actions.Fight(player: Player, data, id: string)
 		data.gold += stage.gold
 		data.tokens += stage.tokens
 		data.renown += stage.renown
+		onFoeBeaten(data)
 		sendToast(
 			player,
 			`Stage {stage.index} cleared! {stage.name} is beaten. +{Format.short(stage.gold)} gold, +{stage.xp} XP, +{stage.tokens} boss tokens.`
@@ -821,7 +920,7 @@ function actions.TokenBuy(player: Player, data, id: string)
 		sendToast(player, `Not enough boss tokens. You need {item.cost}.`)
 		return
 	end
-	if item.kind == "chest" and #data.gear >= GameConfig.MaxGearOwned then
+	if item.kind == "chest" and #data.gear >= maxGear(data) then
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return
 	end
@@ -935,6 +1034,248 @@ function actions.AutoBuy(player: Player, data, id: string)
 	end
 end
 
+---------------------------------------------------------------------------
+-- Shop and Royal Pass
+---------------------------------------------------------------------------
+
+-- Hands out one reward (see StoreConfig) and returns words for it.
+local function grantReward(player: Player, data, reward, source: string): string
+	local kind = reward.kind
+	local stats = getStats(data)
+	if kind == "crowns" then
+		data.crowns += reward.amount
+	elseif kind == "gold" then
+		local amount = math.max(math.floor(stats.incomePerHour / 60 * reward.minutes), StoreConfig.GoldFloorPerLevel * data.level)
+		data.gold += amount
+		return `{Format.short(amount)} gold`
+	elseif kind == "chest" then
+		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{source}: {reward.rarity} chest`, nil, true)
+	elseif kind == "xpBoost" then
+		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.minutes * 60
+	elseif kind == "skill" then
+		data.skillPoints += reward.amount
+	elseif kind == "tokens" then
+		data.tokens += reward.amount
+	elseif kind == "energy" then
+		data.energy = math.max(data.energy, stats.maxEnergy)
+	elseif kind == "stamina" then
+		data.stamina = math.max(data.stamina, stats.maxStamina)
+	elseif kind == "health" then
+		data.health = math.max(data.health, stats.maxHealth)
+	elseif kind == "title" then
+		data.title = reward.text
+	end
+	return StoreConfig.describe(reward)
+end
+
+local function grantRewards(player: Player, data, rewards, source: string): string
+	local parts = {}
+	for _, reward in rewards do
+		table.insert(parts, grantReward(player, data, reward, source))
+	end
+	return table.concat(parts, ", ")
+end
+
+-- Called by Store once Roblox has taken the Robux (or in a Studio test).
+local function grantProduct(player: Player, data, product)
+	if product.group == "crowns" then
+		data.crowns += product.crowns
+		sendToast(player, `+{product.crowns} Crowns. Thank you for supporting the realm!`)
+	elseif product.group == "pack" then
+		data.packsBought[product.key] = true
+		local got = grantRewards(player, data, product.rewards, product.name)
+		sendToast(player, `{product.name} opened: {got}.`)
+	elseif product.group == "tithe" then
+		local amount = data.tithe
+		data.crowns += amount
+		data.tithe = 0
+		sendToast(player, `You broke the Tithe Chest: +{amount} Crowns. It starts filling again.`)
+	elseif product.group == "pass" then
+		checkPassSeason(data)
+		data.pass.noble = true
+		sendToast(player, "The Noble track is yours for this season. Claim its rewards on the Royal Pass page.")
+	end
+end
+
+local function grantPass(player: Player, data, pass)
+	data.passes[pass.key] = true
+	sendToast(player, `{pass.name} is yours forever: {pass.note}.`)
+end
+
+-- Opens a Robux purchase. id is "pass:<key>" or "product:<key>".
+function actions.Robux(player: Player, data, id: string)
+	local kind, key = string.match(id, "^(%a+):(%w+)$")
+	local entry = nil
+	if kind == "pass" then
+		entry = StoreConfig.getPass(key)
+		if entry and hasPass(data, key) then
+			sendToast(player, `You already own {entry.name}.`)
+			return
+		end
+	elseif kind == "product" then
+		entry = StoreConfig.getProduct(key)
+		if not entry then
+			return
+		end
+		if entry.group == "pack" then
+			if data.packsBought[key] then
+				sendToast(player, `You already bought the {entry.name}.`)
+				return
+			end
+			if entry.level and data.level < entry.level then
+				sendToast(player, `The {entry.name} opens at level {entry.level}.`)
+				return
+			end
+			if entry.hours and os.time() > data.firstSeen + entry.hours * 3600 then
+				sendToast(player, `The {entry.name} is no longer offered.`)
+				return
+			end
+		elseif entry.group == "tithe" and data.tithe < StoreConfig.TitheMinToBreak then
+			sendToast(player, `The Tithe Chest needs {StoreConfig.TitheMinToBreak} Crowns before it can be broken.`)
+			return
+		elseif entry.group == "pass" then
+			checkPassSeason(data)
+			if data.pass.noble then
+				sendToast(player, "You already have the Noble track this season.")
+				return
+			end
+		end
+	end
+	if not entry then
+		return
+	end
+	local message = Store.prompt(player, data, kind, entry)
+	if message then
+		sendToast(player, message)
+	end
+end
+
+local function spendCrowns(player: Player, data, cost: number): boolean
+	if data.crowns < cost then
+		sendToast(player, `Not enough Crowns. You need {cost}. Get more at the top of the Shop.`)
+		return false
+	end
+	data.crowns -= cost
+	return true
+end
+
+-- Buys something in the Crown shop. id is its key.
+function actions.CrownBuy(player: Player, data, id: string)
+	local item = StoreConfig.getCrownItem(id)
+	if item and spendCrowns(player, data, item.cost) then
+		local got = grantReward(player, data, item.reward, item.name)
+		sendToast(player, `{item.name}: {got}.`)
+	end
+end
+
+-- Opens a Royal Coffer. id is its key.
+function actions.Coffer(player: Player, data, id: string)
+	local coffer = StoreConfig.getCoffer(id)
+	if not coffer then
+		return
+	end
+	if #data.gear >= maxGear(data) then
+		sendToast(player, "Your armory is full. Sell some gear first.")
+		return
+	end
+	if not spendCrowns(player, data, coffer.cost) then
+		return
+	end
+
+	local pityRank = GameConfig.getRarityRank(coffer.pityRarity)
+	local opens = (data.pity[id] or 0) + 1
+	local rarityId
+	if opens >= coffer.pityEvery then
+		rarityId = coffer.pityRarity
+	else
+		local roll = random:NextNumber(0, 100)
+		rarityId = coffer.odds[#coffer.odds][1]
+		for _, pair in coffer.odds do
+			roll -= pair[2]
+			if roll <= 0 then
+				rarityId = pair[1]
+				break
+			end
+		end
+	end
+	data.pity[id] = if GameConfig.getRarityRank(rarityId) >= pityRank then 0 else opens
+
+	local item = Market.rollGearOfRarity(random, data.level, rarityId)
+	local note = addGear(data, item)
+	sendToast(player, `{coffer.name}: {item.rarity} {item.name}!{note}`)
+end
+
+-- Claims Royal Pass rewards. id is a tier number, or "all".
+function actions.PassClaim(player: Player, data, id: string)
+	checkPassSeason(data)
+	local pass = data.pass
+	local reached = StoreConfig.getTier(pass.points)
+	local first, last = 1, reached
+	if id ~= "all" then
+		local tier = tonumber(id)
+		if not tier or tier < 1 or tier > reached then
+			return
+		end
+		first, last = tier, tier
+	end
+
+	local got = {}
+	for tier = first, last do
+		local key = tostring(tier)
+		local rewards = StoreConfig.PassRewards[tier]
+		if not pass.claimedFree[key] then
+			if rewards.free.kind == "chest" and #data.gear >= maxGear(data) then
+				sendToast(player, "Your armory is full. Sell some gear, then claim again.")
+				break
+			end
+			pass.claimedFree[key] = true
+			table.insert(got, grantReward(player, data, rewards.free, `Royal Pass tier {tier}`))
+		end
+		if pass.noble and not pass.claimedNoble[key] then
+			if rewards.noble.kind == "chest" and #data.gear >= maxGear(data) then
+				sendToast(player, "Your armory is full. Sell some gear, then claim again.")
+				break
+			end
+			pass.claimedNoble[key] = true
+			table.insert(got, grantReward(player, data, rewards.noble, `Royal Pass tier {tier}`))
+		end
+	end
+	if #got > 0 then
+		sendToast(player, `Royal Pass: {table.concat(got, ", ")}.`)
+	end
+end
+
+-- Buys one Royal Pass tier with Crowns.
+function actions.PassSkip(player: Player, data)
+	checkPassSeason(data)
+	if StoreConfig.getTier(data.pass.points) >= StoreConfig.PassTiers then
+		sendToast(player, "You have reached the last tier.")
+		return
+	end
+	if spendCrowns(player, data, StoreConfig.TierSkipCost) then
+		-- Jump to the start of the next tier.
+		local nextTier = StoreConfig.getTier(data.pass.points) + 1
+		data.pass.points = nextTier * StoreConfig.PointsPerTier
+		sendToast(player, `Royal Pass tier {nextTier} reached. Claim its rewards below.`)
+	end
+end
+
+-- Claims a finished weekly challenge. id is its key.
+function actions.WeeklyClaim(player: Player, data, id: string)
+	checkWeek(data)
+	for _, challenge in StoreConfig.WeeklyChallenges do
+		if challenge.key == id then
+			if data.weekly.claimed[id] or data.weekly[challenge.stat] < challenge.goal then
+				return
+			end
+			data.weekly.claimed[id] = true
+			addPassPoints(data, challenge.points)
+			sendToast(player, `Challenge done: +{challenge.points} Royal Pass points.`)
+			return
+		end
+	end
+end
+
 local function runAutoQuests(player: Player, data)
 	local quest = questById[data.autoQuest]
 	if not data.autoQuestOn or not quest then
@@ -965,7 +1306,7 @@ local function runAutoBuy(player: Player, data)
 		if not wanted then
 			continue
 		end
-		if #data.gear >= GameConfig.MaxGearOwned then
+		if #data.gear >= maxGear(data) then
 			rule.on = false
 			sendToast(player, "Auto-buy stopped: your armory is full.")
 			return
@@ -1023,12 +1364,17 @@ local function applyTimeAway(player: Player, data)
 	local seconds = math.max(0, os.time() - data.lastSeen)
 	local stats = getStats(data)
 
-	data.energy = math.max(data.energy, math.min(stats.maxEnergy, data.energy + math.floor(seconds / GameConfig.EnergyRegenSeconds)))
-	data.stamina = math.max(data.stamina, math.min(stats.maxStamina, data.stamina + math.floor(seconds / GameConfig.StaminaRegenSeconds)))
-	data.health = math.max(data.health, math.min(stats.maxHealth, data.health + math.floor(seconds / GameConfig.HealthRegenSeconds)))
+	local speed = if hasPass(data, "couriers") then StoreConfig.CouriersSpeed else 1
+	local regenSeconds = seconds * speed
+	data.energy = math.max(data.energy, math.min(stats.maxEnergy, data.energy + math.floor(regenSeconds / GameConfig.EnergyRegenSeconds)))
+	data.stamina = math.max(data.stamina, math.min(stats.maxStamina, data.stamina + math.floor(regenSeconds / GameConfig.StaminaRegenSeconds)))
+	data.health = math.max(data.health, math.min(stats.maxHealth, data.health + math.floor(regenSeconds / GameConfig.HealthRegenSeconds)))
 
-	local paidSeconds = math.min(seconds, GameConfig.OfflineMaxSeconds)
-	local earned = math.floor(stats.incomePerHour / 3600 * paidSeconds * GameConfig.OfflineRate)
+	local nightWatch = hasPass(data, "nightwatch")
+	local maxSeconds = if nightWatch then StoreConfig.NightWatchHours * 3600 else GameConfig.OfflineMaxSeconds
+	local rate = if nightWatch then StoreConfig.NightWatchRate else GameConfig.OfflineRate
+	local paidSeconds = math.min(seconds, maxSeconds)
+	local earned = math.floor(stats.incomePerHour / 3600 * paidSeconds * rate)
 	if earned > 0 then
 		data.gold += earned
 		player:SetAttribute("OfflineGold", earned)
@@ -1063,6 +1409,14 @@ local function onPlayerAdded(player: Player)
 	end
 	Loadout.tidy(data)
 
+	if data.firstSeen <= 0 then
+		data.firstSeen = os.time()
+	end
+	Store.checkPasses(player, data)
+	if not player.Parent then
+		return -- left while passes were checked
+	end
+
 	applyTimeAway(player, data)
 
 	sessions[player] = {
@@ -1085,6 +1439,15 @@ local function onPlayerRemoving(player: Player)
 	end
 end
 
+Store.init({
+	getSession = function(player: Player)
+		return sessions[player]
+	end,
+	grantProduct = grantProduct,
+	grantPass = grantPass,
+	refresh = refresh,
+})
+
 Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoving:Connect(onPlayerRemoving)
 for _, player in Players:GetPlayers() do
@@ -1106,15 +1469,16 @@ end)
 ---------------------------------------------------------------------------
 
 -- Adds one point to a bar every `seconds` ticks, up to its maximum.
+-- Swift Couriers counts two ticks a second, so bars refill twice as fast.
 local function regenerate(session, key: string, seconds: number, maximum: number)
 	local data = session.data
 	if data[key] >= maximum then
 		session.regen[key] = 0
 		return
 	end
-	session.regen[key] += 1
+	session.regen[key] += if hasPass(data, "couriers") then StoreConfig.CouriersSpeed else 1
 	if session.regen[key] >= seconds then
-		session.regen[key] = 0
+		session.regen[key] -= seconds
 		data[key] += 1
 	end
 end
@@ -1129,6 +1493,8 @@ task.spawn(function()
 
 			checkNewDay(data)
 			data.playSeconds += 1
+			checkWeek(data)
+			data.weekly.play += 1
 			data.gold += stats.incomePerHour / 3600
 			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
 			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)

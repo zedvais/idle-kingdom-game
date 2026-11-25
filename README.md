@@ -38,3 +38,13 @@ in Roblox Studio and press Play.
 2. Run `rojo serve` in this folder.
 3. In Studio, open the Rojo plugin and press Connect. Edits to files in `src`
    now show up in Studio right away.
+
+## Selling items for Robux
+
+Everything sold in the Shop and the Royal Pass is set in
+`src/shared/StoreConfig.luau`. Each game pass and developer product there has
+an `id` of 0 until the game is published. In Roblox Studio, pressing a Robux
+button for an item with id 0 gives it for free so it can be tested. Once the
+game is published, create the passes and products on create.roblox.com
+(your game > Monetization), paste their ids into `StoreConfig.luau`, and
+rebuild the place file. The steps are written at the top of that file.

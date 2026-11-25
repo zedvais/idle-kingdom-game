@@ -8,6 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
+local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -175,7 +176,7 @@ addCorner(main, 8)
 local pageTitle = makeText(main, UDim2.new(1, -24, 0, 30), UDim2.fromOffset(12, 4), COLOR_HEADER, 20)
 pageTitle.Font = Enum.Font.GothamBold
 
-local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Inventory", "Foes", "Bank" }
+local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Inventory", "Foes", "Bank", "Royal Pass", "Shop" }
 local railButtons = {}
 local pages = {}
 
@@ -740,7 +741,7 @@ for _, set in GameConfig.GearSets do
 	setRows[set.id] = { info = info, button = button }
 end
 local gearRows = {}
-for index = 1, GameConfig.MaxGearOwned do
+for index = 1, GameConfig.MaxGearOwned + StoreConfig.ArmoryExtra do
 	local row = makeItemRow(pages.Inventory, nextOrder())
 	row.uid = nil
 	gearRows[index] = row
@@ -799,6 +800,122 @@ for _, item in GameConfig.TokenShop do
 	end)
 end
 
+-- Shop: Robux items at the top, then things bought with Crowns.
+local function robuxText(price: number): string
+	return `R$ {price}`
+end
+
+local shopSummary = makeRow(pages.Shop, nextOrder(), 50, false)
+shopSummary.RichText = true
+
+local productRows = {}
+local function makeProductRow(product, height: number)
+	local info, button = makeRow(pages.Shop, nextOrder(), height, true)
+	info.RichText = true
+	productRows[product.key] = { info = info, button = button, frame = info.Parent }
+	button.Activated:Connect(function()
+		send("Robux", "product:" .. product.key)
+	end)
+end
+
+makeHeading(pages.Shop, nextOrder(), "Crowns")
+for _, product in StoreConfig.Products do
+	if product.group == "crowns" then
+		makeProductRow(product, 46)
+	end
+end
+
+makeHeading(pages.Shop, nextOrder(), "Special offers")
+for _, product in StoreConfig.Products do
+	if product.group == "pack" then
+		makeProductRow(product, 60)
+	end
+end
+
+makeHeading(pages.Shop, nextOrder(), "Tithe Chest")
+for _, product in StoreConfig.Products do
+	if product.group == "tithe" then
+		makeProductRow(product, 60)
+	end
+end
+
+makeHeading(pages.Shop, nextOrder(), "Game passes (yours forever)")
+local passRows = {}
+for _, pass in StoreConfig.Passes do
+	local info, button = makeRow(pages.Shop, nextOrder(), 52, true)
+	info.RichText = true
+	info.Text = `<b>{pass.name}</b>\n{pass.note}`
+	passRows[pass.key] = button
+	button.Activated:Connect(function()
+		send("Robux", "pass:" .. pass.key)
+	end)
+end
+
+makeHeading(pages.Shop, nextOrder(), "Crown shop")
+local crownRows = {}
+for _, item in StoreConfig.CrownShop do
+	local info, button = makeRow(pages.Shop, nextOrder(), 46, true)
+	info.RichText = true
+	info.Text = `<b>{item.name}</b>\n{item.note}`
+	crownRows[item.key] = button
+	button.Activated:Connect(function()
+		send("CrownBuy", item.key)
+	end)
+end
+
+makeHeading(pages.Shop, nextOrder(), "Royal Coffers (random gear, odds shown)")
+local cofferRows = {}
+for _, coffer in StoreConfig.Coffers do
+	local info, button = makeRow(pages.Shop, nextOrder(), 70, true)
+	info.RichText = true
+	cofferRows[coffer.key] = { info = info, button = button }
+	button.Activated:Connect(function()
+		send("Coffer", coffer.key)
+	end)
+end
+
+-- Royal Pass: progress, weekly challenges, then every tier.
+local passInfo, nobleButton = makeRow(pages["Royal Pass"], nextOrder(), 74, true)
+passInfo.RichText = true
+nobleButton.Activated:Connect(function()
+	send("Robux", "product:passPremium")
+end)
+
+local passBarRow = makeFrame(pages["Royal Pass"], UDim2.new(1, -10, 0, 30), UDim2.fromOffset(0, 0), COLOR_ROW)
+passBarRow.LayoutOrder = nextOrder()
+addCorner(passBarRow, 6)
+local passBar = makeBar(passBarRow, UDim2.new(1, -20, 0, 18), UDim2.fromOffset(10, 6), COLOR_GOLD)
+
+local passButtons = makeButtonRow(pages["Royal Pass"], nextOrder(), "", { "Claim all", "Buy a tier" })
+passButtons[1].Activated:Connect(function()
+	send("PassClaim", "all")
+end)
+passButtons[2].Activated:Connect(function()
+	send("PassSkip")
+end)
+
+makeHeading(pages["Royal Pass"], nextOrder(), "Weekly challenges")
+local challengeRows = {}
+for _, challenge in StoreConfig.WeeklyChallenges do
+	local info, button = makeRow(pages["Royal Pass"], nextOrder(), 46, true)
+	info.RichText = true
+	challengeRows[challenge.key] = { info = info, button = button }
+	button.Activated:Connect(function()
+		send("WeeklyClaim", challenge.key)
+	end)
+end
+
+makeHeading(pages["Royal Pass"], nextOrder(), "Rewards")
+local tierRows = {}
+for tier = 1, StoreConfig.PassTiers do
+	local info, button = makeRow(pages["Royal Pass"], nextOrder(), 46, true)
+	info.RichText = true
+	tierRows[tier] = { info = info, button = button }
+	button.Activated:Connect(function()
+		send("PassClaim", tostring(tier))
+	end)
+end
+
 showPage("Quests")
 
 ---------------------------------------------------------------------------
@@ -808,16 +925,166 @@ showPage("Quests")
 local lastState = nil
 local refreshRecruitWindow -- defined further down, with the recruit window
 
+local function formatLong(seconds: number): string
+	seconds = math.max(0, math.floor(seconds))
+	local days = math.floor(seconds / 86400)
+	local hours = math.floor(seconds % 86400 / 3600)
+	if days > 0 then
+		return `{days}d {hours}h`
+	end
+	return `{hours}h {math.floor(seconds % 3600 / 60)}m`
+end
+
+-- Shop and Royal Pass pages.
+local function drawStore(state)
+	local crowns = state.crowns
+	local ownedPasses = 0
+	for _ in state.passes do
+		ownedPasses += 1
+	end
+	shopSummary.Text = `<b>{crowns} Crowns</b>   |   {ownedPasses} of {#StoreConfig.Passes} game passes owned\n`
+		.. "Crowns buy refills, boosts, coffers and Royal Pass tiers. Robux buttons open the Roblox purchase window."
+
+	for _, product in StoreConfig.Products do
+		local row = productRows[product.key]
+		if not row then
+			continue
+		end
+		if product.group == "crowns" then
+			local tag = if product.tag then `   <font color="#F0C85A">{product.tag}</font>` else ""
+			row.info.Text = `<b>{product.name}</b>{tag}\n{product.crowns} Crowns`
+			setButton(row.button, robuxText(product.price), true, COLOR_BUY)
+		elseif product.group == "pack" then
+			local bought = state.packsBought[product.key] == true
+			local secondsLeft = if product.hours then product.hours * 3600 - state.secondsSinceFirstVisit else 0
+			local expired = product.hours ~= nil and secondsLeft <= 0
+			row.frame.Visible = bought or not expired
+			local when = product.note
+			if product.hours and not bought then
+				when = `Ends in {formatLong(secondsLeft)}`
+			end
+			row.info.Text = `<b>{product.name}</b>   {when}\n{StoreConfig.describeList(product.rewards)}`
+			if bought then
+				setButton(row.button, "Owned", false, COLOR_BUY)
+			elseif product.level and state.level < product.level then
+				setButton(row.button, `Level {product.level}`, false, COLOR_BUY)
+			else
+				setButton(row.button, robuxText(product.price), true, COLOR_BUY)
+			end
+		elseif product.group == "tithe" then
+			row.info.Text = `<b>Tithe Chest: {state.tithe} / {StoreConfig.TitheMax} Crowns</b>\n`
+				.. `Fills as you play: 1 Crown per {StoreConfig.TitheEnergyPerCrown} quest energy and {StoreConfig.TitheCrownsPerFoe} per foe beaten. `
+				.. `Break it once it holds {StoreConfig.TitheMinToBreak}.`
+			setButton(row.button, `Break\n{robuxText(product.price)}`, state.tithe >= StoreConfig.TitheMinToBreak, COLOR_BUY)
+		end
+	end
+
+	for _, pass in StoreConfig.Passes do
+		local owned = state.passes[pass.key] == true
+		setButton(passRows[pass.key], if owned then "Owned" else robuxText(pass.price), not owned, COLOR_BUY)
+	end
+
+	for _, item in StoreConfig.CrownShop do
+		setButton(crownRows[item.key], `Buy\n{item.cost} Crowns`, crowns >= item.cost, COLOR_BUY)
+	end
+
+	for _, coffer in StoreConfig.Coffers do
+		local row = cofferRows[coffer.key]
+		local odds = {}
+		for _, pair in coffer.odds do
+			local label = rarityName({ rarity = pair[1], name = "" })
+			table.insert(odds, `{label}{pair[2]}%`)
+		end
+		local left = coffer.pityEvery - (state.pity[coffer.key] or 0)
+		row.info.Text = `<b>{coffer.name}</b>: one piece of gear at your level\n{table.concat(odds, "   ")}\n`
+			.. `{coffer.pityRarity} or better guaranteed within {left} opens`
+		setButton(row.button, `Open\n{coffer.cost} Crowns`, crowns >= coffer.cost, COLOR_BUY)
+	end
+
+	-- Royal Pass
+	local pass = state.pass
+	local tier = StoreConfig.getTier(pass.points)
+	local maxTier = StoreConfig.PassTiers
+	local season = pass.season + 1
+	passInfo.Text = `<b>ROYAL PASS, SEASON {season}</b>   Ends in {formatLong(state.passSecondsLeft)}\n`
+		.. `Tier {tier} of {maxTier}. Earn points from quests, foes, playtime rewards and weekly challenges. `
+		.. (if pass.noble then "<font color=\"#F0C85A\">Noble track unlocked.</font>" else "The Noble track adds a second reward to every tier.")
+	if pass.noble then
+		setButton(nobleButton, "Noble\nunlocked", false, COLOR_GOLD)
+	else
+		local product = StoreConfig.getProduct("passPremium")
+		setButton(nobleButton, `Unlock Noble\n{robuxText(product and product.price or 0)}`, true, COLOR_SELECTED)
+	end
+	if tier >= maxTier then
+		setBar(passBar, 1, 1, "Every tier reached")
+	else
+		local into = pass.points - tier * StoreConfig.PointsPerTier
+		setBar(passBar, into, StoreConfig.PointsPerTier, `{into} / {StoreConfig.PointsPerTier} points to tier {tier + 1}`)
+	end
+
+	local claimable = 0
+	for index = 1, maxTier do
+		local key = tostring(index)
+		local rewards = StoreConfig.PassRewards[index]
+		local freeDone = pass.claimedFree[key] == true
+		local nobleDone = pass.claimedNoble[key] == true
+		local reached = index <= tier
+		local function part(label: string, reward, done: boolean, locked: boolean): string
+			local text = `{label}: {StoreConfig.describe(reward)}`
+			if done then
+				return `<font color="#9FD49A">{text} (claimed)</font>`
+			elseif locked then
+				return `<font color="#8C918A">{text}</font>`
+			end
+			return text
+		end
+		local row = tierRows[index]
+		row.info.Text = `<b>Tier {index}</b>\n{part("Free", rewards.free, freeDone, false)}   |   {part("Noble", rewards.noble, nobleDone, not pass.noble)}`
+		local open = reached and (not freeDone or (pass.noble and not nobleDone))
+		if open then
+			claimable += 1
+			setButton(row.button, "Claim", true, COLOR_BUY)
+		elseif reached then
+			setButton(row.button, "Claimed", false, COLOR_BUY)
+		else
+			setButton(row.button, "Locked", false, COLOR_BUY)
+		end
+	end
+	setButton(passButtons[1], if claimable > 0 then `Claim all ({claimable})` else "Claim all", claimable > 0, COLOR_BUY)
+	setButton(passButtons[2], `Buy a tier ({StoreConfig.TierSkipCost} Crowns)`, tier < maxTier and crowns >= StoreConfig.TierSkipCost, COLOR_SELECTED)
+
+	local weekly = state.weekly
+	for _, challenge in StoreConfig.WeeklyChallenges do
+		local row = challengeRows[challenge.key]
+		local value = math.min(challenge.goal, weekly[challenge.stat] or 0)
+		local shown = if challenge.stat == "play"
+			then `{math.floor(value / 60)} / {math.floor(challenge.goal / 60)} min`
+			else `{value} / {challenge.goal}`
+		row.info.Text = `<b>{challenge.name}</b>   +{challenge.points} points\n{shown}   |   New challenges in {formatLong(state.weekSecondsLeft)}`
+		if weekly.claimed[challenge.key] then
+			setButton(row.button, "Done", false, COLOR_BUY)
+		else
+			setButton(row.button, "Claim", value >= challenge.goal, COLOR_BUY)
+		end
+	end
+
+	-- Red-dot style counts on the rail.
+	railButtons["Royal Pass"].Text = if claimable > 0 then `Royal Pass ({claimable})` else "Royal Pass"
+end
+
 local function draw(state)
 	lastState = state
 	local stats = state.stats
 	local gold = state.gold
+	drawStore(state)
 
 	-- Top bar
-	nameLabel.Text = `Lv {state.level}  {player.DisplayName}`
+	local title = if state.title ~= "" then state.title .. " " else ""
+	nameLabel.Text = `Lv {state.level}  {title}{player.DisplayName}`
+	nameLabel.TextColor3 = if state.passes.charter then COLOR_GOLD else COLOR_HEADER
 	setBar(xpBar, state.xp, state.xpNeeded, `XP {state.xp} / {state.xpNeeded}`)
 	goldLabel.Text = `{Format.short(gold)} gold`
-	incomeLabel.Text = `+{Format.short(stats.incomePerHour)}/hr   |   Banked {Format.short(state.banked)}`
+	incomeLabel.Text = `+{Format.short(stats.incomePerHour)}/hr   |   Banked {Format.short(state.banked)}   |   {state.crowns} Crowns`
 	setBar(energyBar, state.energy, stats.maxEnergy, `Energy {state.energy} / {stats.maxEnergy}`)
 	setBar(staminaBar, state.stamina, stats.maxStamina, `Stamina {state.stamina} / {stats.maxStamina}`)
 	setBar(healthBar, state.health, stats.maxHealth, `Health {state.health} / {stats.maxHealth}`)
@@ -1132,7 +1399,7 @@ local function draw(state)
 		for _ in state.gearInUse do
 			wornCount += 1
 		end
-		armorySummary.Text = `Gear {#state.gear} / {GameConfig.MaxGearOwned}, {wornCount} worn. Gear only counts while someone wears it. `
+		armorySummary.Text = `Gear {#state.gear} / {state.maxGear}, {wornCount} worn. Gear only counts while someone wears it. `
 			.. `Use the Gear buttons on the Warband page, or Equip best there. Take gear off before selling it.`
 	end
 	local gear = {}
@@ -1551,7 +1818,7 @@ emptyNote.LayoutOrder = 0
 emptyNote.Text = "You own nothing for this slot yet. Buy gear in the Market or win it from quests and foes."
 
 local equipRows = {}
-for index = 1, GameConfig.MaxGearOwned do
+for index = 1, GameConfig.MaxGearOwned + StoreConfig.ArmoryExtra do
 	local row = makeFrame(equipList, UDim2.new(1, -10, 0, 46), UDim2.fromOffset(0, 0), COLOR_ROW)
 	row.LayoutOrder = index
 	addCorner(row, 6)
