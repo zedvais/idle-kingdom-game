@@ -1,9 +1,9 @@
--- Rolling animation on each warband slot. Every recruit roll for a slot
--- (a single roll or auto roll) spins a reel on that slot's row through the
--- rarities, then lands on the soldier that was rolled: rarity, class, name,
--- attack and defense, and whether it was kept. While auto roll is working
--- on a slot, that slot shows a STOP button: pressing it keeps whoever is in
--- the slot and auto roll carries on with the other slots.
+-- Roll display on each warband slot. Every recruit roll for a slot (a
+-- single roll or auto roll) shows the soldier rolled on that slot's row:
+-- rarity, class, name, attack and defense, and whether it was kept. Auto
+-- roll rolls once a second, so each soldier stays up for a second. While
+-- auto roll works on a slot, STOP keeps the soldier shown right now in
+-- that slot, and auto roll carries on with the other slots.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -13,7 +13,6 @@ local RollReel = {}
 
 local reels = {} -- [slot] = widgets
 local spinId = {} -- [slot] = number, so a new roll cancels the last spin
-local SPIN_TIME = 0.75 -- rolls come once a second; the result shows for the rest
 local SHOW_TIME = 4 -- how long a result stays when nothing else rolls
 
 local function hex(color: Color3): string
@@ -45,7 +44,8 @@ local function build(ui, slot: number, row)
 	stop.ZIndex = 7
 	stop.TextSize = 13
 	stop.Visible = false
-	ui.setButton(stop, "STOP", true, colors.action)
+	ui.setButton(stop, "STOP\n<font size=\"10\">keep this</font>", true, colors.action)
+	stop.RichText = true
 	stop.Activated:Connect(function()
 		ui.send("AutoRollSkip", tostring(slot))
 	end)
@@ -63,54 +63,24 @@ local function play(ui, info)
 	local id = spinId[slot]
 	reel.lastRoll = os.clock()
 	reel.panel.Visible = true
-	reel.tag.Text = "ROLLING"
-	reel.tag.TextColor3 = ui.colors.dim
-	local art = ui.art
-	local rarities = {}
-	for _, rarity in GameConfig.Rarities do
-		table.insert(rarities, rarity)
+	-- No spin: the rolled soldier shows right away and stays until the
+	-- next roll a second later, so the player can STOP and keep it.
+	local rarity = GameConfig.getRarity(info.rarity or "Common")
+	reel.stroke.Color = rarity.color
+	reel.text.Text = `<font color="{hex(rarity.color)}"><b>{string.upper(rarity.id)} {info.class or ""}</b></font>  {info.name or ""}\n`
+		.. `<font color="#F08A6A">{info.attack or 0} ATK</font>   <font color="#7FB4F0">{info.defense or 0} DEF</font>`
+	if info.kept then
+		reel.tag.Text = "KEPT!"
+		reel.tag.TextColor3 = Color3.fromRGB(120, 220, 120)
+	else
+		reel.tag.Text = `need {info.target or ""}`
+		reel.tag.TextColor3 = Color3.fromRGB(200, 120, 110)
 	end
-	task.spawn(function()
-		-- Spin: flick through rarities, slowing down.
-		local started = os.clock()
-		local step = 0
-		while os.clock() - started < SPIN_TIME do
-			if spinId[slot] ~= id then
-				return
-			end
-			step += 1
-			local rarity = rarities[(step % #rarities) + 1]
-			reel.text.Text = `<font color="{hex(rarity.color)}"><b>{string.upper(rarity.id)}</b></font>\n<font color="#7F7466">. . .</font>`
-			reel.stroke.Color = rarity.color
-			reel.text.Position = UDim2.fromOffset(8, -10)
-			art.tween(reel.text, 0.04, { Position = UDim2.fromOffset(8, 0) })
-			task.wait(0.04 + 0.1 * ((os.clock() - started) / SPIN_TIME))
+	-- Hide after a while, unless auto roll keeps working on this slot.
+	task.delay(SHOW_TIME, function()
+		if spinId[slot] == id and not reel.auto then
+			reel.panel.Visible = false
 		end
-		if spinId[slot] ~= id then
-			return
-		end
-		-- Land on the result.
-		local rarity = GameConfig.getRarity(info.rarity or "Common")
-		reel.stroke.Color = rarity.color
-		reel.text.Text = `<font color="{hex(rarity.color)}"><b>{string.upper(rarity.id)} {info.class or ""}</b></font>  {info.name or ""}\n`
-			.. `<font color="#F08A6A">{info.attack or 0} ATK</font>   <font color="#7FB4F0">{info.defense or 0} DEF</font>`
-		if info.kept then
-			reel.tag.Text = "KEPT!"
-			reel.tag.TextColor3 = Color3.fromRGB(120, 220, 120)
-		else
-			reel.tag.Text = `need {info.target or ""}`
-			reel.tag.TextColor3 = Color3.fromRGB(200, 120, 110)
-		end
-		local scale = reel.panel:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
-		scale.Parent = reel.panel
-		scale.Scale = 1.06
-		art.tween(scale, 0.25, { Scale = 1 })
-		-- Hide after a while, unless auto roll keeps working on this slot.
-		task.delay(SHOW_TIME, function()
-			if spinId[slot] == id and not reel.auto then
-				reel.panel.Visible = false
-			end
-		end)
 	end)
 end
 

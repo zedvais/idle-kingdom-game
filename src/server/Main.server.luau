@@ -1234,6 +1234,7 @@ function actions.Roll(player: Player, data, id: string)
 	auto.whenBroke = if once == "stop" then "stop" else "wait"
 	auto.waiting = false
 	auto.skip = {}
+	auto.shown = {}
 	sendToast(player, `Auto roll started: {tier.id} recruits until {rarityId} or better.`)
 end
 
@@ -1246,11 +1247,19 @@ function actions.AutoRollSkip(player: Player, data, id: string)
 	end
 	auto.skip = auto.skip or {}
 	auto.skip[tostring(slot)] = true
+	-- Keep the soldier shown on the slot right now (already paid for).
+	local shown = auto.shown and auto.shown[tostring(slot)]
+	local kept = "its soldier"
+	if type(shown) == "table" and shown.rarity then
+		data.crew[slot] = shown
+		auto.shown[tostring(slot)] = nil
+		kept = `the {shown.rarity} {shown.class} {shown.name}`
+	end
 	if auto.scope == "this" and auto.slot == slot then
 		auto.on = false
-		sendToast(player, `Auto roll stopped on slot {slot} after {auto.rolls} rolls.`)
+		sendToast(player, `Slot {slot} keeps {kept}. Auto roll stopped after {auto.rolls} rolls.`)
 	else
-		sendToast(player, `Slot {slot} keeps its soldier. Auto roll goes on for the other slots.`)
+		sendToast(player, `Slot {slot} keeps {kept}. Auto roll goes on for the other slots.`)
 	end
 end
 
@@ -2798,6 +2807,9 @@ local function runAutoRoll(player: Player, data)
 			data.nextItemId += 1
 			local hit = GameConfig.getRarityRank(soldier.rarity) >= targetRank
 			sendRollFx(player, target, soldier, hit, auto.rarity)
+			-- The soldier on screen for this slot, so STOP can keep it.
+			auto.shown = auto.shown or {}
+			auto.shown[tostring(target)] = if hit then nil else soldier
 			if hit then
 				data.crew[target] = soldier
 				sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {target}.`)

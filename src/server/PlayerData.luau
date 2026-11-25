@@ -75,6 +75,7 @@ local function newData()
 			whenBroke = "wait", -- out of gold: "wait" for more or "stop"
 			waiting = false,
 			skip = {}, -- ["3"] = true: the player stopped auto roll on that slot
+			shown = {}, -- ["3"] = the soldier last rolled for that slot (STOP keeps it)
 		},
 		autoBuy = {
 			on = false,
