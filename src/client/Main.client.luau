@@ -1678,6 +1678,7 @@ ui = {
 	art = Art,
 	itemArt = ItemArt,
 	crewRows = crewRows,
+	classGlyphs = CLASS_GLYPHS,
 	pages = pages,
 	player = player,
 	colors = {
@@ -2661,6 +2662,10 @@ local function draw(state)
 		end
 		-- Empty slots are short cards (no gear tiles).
 		row.frame.Size = UDim2.new(1, -10, 0, if soldier then 160 else 76)
+		-- While a roll is showing on this slot, the card shows the rolled soldier.
+		if ui.showRoll then
+			ui.showRoll(slot)
+		end
 	end
 
 	local nextSlot = #crew + 1

@@ -1,92 +1,98 @@
--- Roll display on each warband slot. Every recruit roll for a slot (a
--- single roll or auto roll) shows the soldier rolled on that slot's row:
--- rarity, class, name, attack and defense, and whether it was kept. Auto
--- roll rolls once a second, so each soldier stays up for a second. While
--- auto roll works on a slot, STOP keeps the soldier shown right now in
--- that slot, and auto roll carries on with the other slots.
+-- Rolls shown right on the warband card. Every recruit roll for a slot (a
+-- single roll or auto roll) puts the rolled soldier on that slot's card:
+-- portrait, name, rarity, class, attack and defense, and whether it was
+-- kept. Auto roll rolls once a second, so each soldier stays up for a
+-- second. While auto roll works on a slot, STOP on the card keeps the
+-- soldier shown right now, and auto roll carries on with the other slots.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
+local Format = require(Shared:WaitForChild("Format"))
 
 local RollReel = {}
 
-local reels = {} -- [slot] = widgets
-local spinId = {} -- [slot] = number, so a new roll cancels the last spin
+local reels = {} -- [slot] = { row, stop, last, lastRoll, auto }
 local SHOW_TIME = 4 -- how long a result stays when nothing else rolls
 
 local function hex(color: Color3): string
 	return string.format("#%02X%02X%02X", math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5))
 end
 
-local function build(ui, slot: number, row)
-	local colors = ui.colors
-	local art = ui.art
-	-- The reel sits over the middle of the row (where the gear text is).
-	local panel = ui.makeFrame(row.frame, UDim2.new(0.58, -244, 0, 66), UDim2.new(0.42, -6, 0, 5), Color3.fromRGB(18, 14, 11))
-	panel.Visible = false
-	panel.ZIndex = 5
-	ui.addCorner(panel, 6)
-	local stroke = art.stroke(panel, colors.dim, 2, 0)
-	local window = ui.makeFrame(panel, UDim2.new(1, -70, 1, -8), UDim2.fromOffset(4, 4), Color3.fromRGB(30, 24, 20))
-	window.ZIndex = 6
-	window.ClipsDescendants = true
-	ui.addCorner(window, 4)
-	local text = ui.makeText(window, UDim2.new(1, -12, 1, 0), UDim2.fromOffset(8, 0), colors.text, 13)
-	text.ZIndex = 7
-	text.RichText = true
-	text.TextYAlignment = Enum.TextYAlignment.Center
-	local tag = ui.makeText(panel, UDim2.fromOffset(62, 20), UDim2.new(1, -66, 0, 4), colors.dim, 11)
-	tag.ZIndex = 7
-	tag.Font = Enum.Font.GothamBold
-	tag.TextXAlignment = Enum.TextXAlignment.Center
-	local stop = ui.makeButton(panel, UDim2.fromOffset(60, 34), UDim2.new(1, -64, 1, -38), colors.action)
-	stop.ZIndex = 7
-	stop.TextSize = 13
-	stop.Visible = false
-	ui.setButton(stop, "STOP\n<font size=\"10\">keep this</font>", true, colors.action)
-	stop.RichText = true
-	stop.Activated:Connect(function()
-		ui.send("AutoRollSkip", tostring(slot))
-	end)
-	reels[slot] = { panel = panel, stroke = stroke, text = text, tag = tag, stop = stop, lastRoll = 0, auto = false }
+local function showing(reel): boolean
+	return reel.auto or (reel.last ~= nil and os.clock() - reel.lastRoll <= SHOW_TIME)
 end
 
--- Plays one roll on a slot's reel.
+-- Paints the card with the last roll (or a waiting note for auto roll).
+local function apply(ui, slot: number)
+	local reel = reels[slot]
+	if not reel then
+		return
+	end
+	local row = reel.row
+	reel.stop.Visible = reel.auto
+	if not showing(reel) then
+		return
+	end
+	local info = reel.last
+	if not info then
+		row.info.Text = `<font size="17"><b>Auto roll</b></font>\n<font color="#B2A690">Rolling this slot every second...</font>`
+		return
+	end
+	local rarity = GameConfig.getRarity(info.rarity or "Common")
+	local color = hex(rarity.color)
+	row.glyph.Text = ui.classGlyphs[info.class or ""] or ui.art.Icons.soldier
+	row.portrait.Color = rarity.color
+	row.edge.Color = rarity.color
+	local status
+	if info.kept then
+		status = `<font color="#78DC78"><b>KEPT!</b></font>`
+	elseif reel.auto and os.clock() - reel.lastRoll > 3 then
+		status = `<font color="#B2A690">Waiting for gold... need {info.target or ""}</font>`
+	else
+		status = `<font color="#C8786E">Rolling... need {info.target or ""}</font>`
+	end
+	row.info.Text = `<font color="{color}" size="17"><b>{info.name or ""}</b></font>\n`
+		.. `<font color="{color}"><b>{string.upper(rarity.id)}</b></font> {info.class or ""}\n{status}`
+	row.statsText.Text = `<font color="#F08A6A">+{Format.short(info.attack or 0)} ATTACK</font>\n<font color="#7FB4F0">+{Format.short(info.defense or 0)} DEFENSE</font>`
+end
+
 local function play(ui, info)
 	local slot = tonumber(info.slot)
 	local reel = slot and reels[slot]
 	if not reel then
 		return
 	end
-	spinId[slot] = (spinId[slot] or 0) + 1
-	local id = spinId[slot]
+	reel.last = info
 	reel.lastRoll = os.clock()
-	reel.panel.Visible = true
-	-- No spin: the rolled soldier shows right away and stays until the
-	-- next roll a second later, so the player can STOP and keep it.
-	local rarity = GameConfig.getRarity(info.rarity or "Common")
-	reel.stroke.Color = rarity.color
-	reel.text.Text = `<font color="{hex(rarity.color)}"><b>{string.upper(rarity.id)} {info.class or ""}</b></font>  {info.name or ""}\n`
-		.. `<font color="#F08A6A">{info.attack or 0} ATK</font>   <font color="#7FB4F0">{info.defense or 0} DEF</font>`
-	if info.kept then
-		reel.tag.Text = "KEPT!"
-		reel.tag.TextColor3 = Color3.fromRGB(120, 220, 120)
-	else
-		reel.tag.Text = `need {info.target or ""}`
-		reel.tag.TextColor3 = Color3.fromRGB(200, 120, 110)
-	end
-	-- Hide after a while, unless auto roll keeps working on this slot.
-	task.delay(SHOW_TIME, function()
-		if spinId[slot] == id and not reel.auto then
-			reel.panel.Visible = false
+	local stamp = reel.lastRoll
+	apply(ui, slot)
+	-- Afterwards the card goes back to the real soldier on the next update.
+	task.delay(SHOW_TIME + 0.1, function()
+		if reel.lastRoll == stamp and not reel.auto then
+			reel.last = nil
 		end
 	end)
 end
 
 function RollReel.build(ui)
 	for slot, row in ui.crewRows do
-		build(ui, slot, row)
+		-- STOP sits left of the card's buttons and shows only while auto
+		-- roll works on this slot.
+		local stop = ui.makeButton(row.frame, UDim2.fromOffset(84, 60), UDim2.new(1, -252, 0, 8), ui.colors.action)
+		stop.AnchorPoint = Vector2.new(1, 0)
+		stop.ZIndex = row.frame.ZIndex + 5
+		stop.TextSize = 14
+		stop.RichText = true
+		stop.Visible = false
+		ui.setButton(stop, "STOP\n<font size=\"10\">keep this</font>", true, ui.colors.action)
+		stop.Activated:Connect(function()
+			ui.send("AutoRollSkip", tostring(slot))
+		end)
+		reels[slot] = { row = row, stop = stop, last = nil, lastRoll = 0, auto = false }
+	end
+	function ui.showRoll(slot: number)
+		apply(ui, slot)
 	end
 	local Fx = require(script.Parent:WaitForChild("Fx"))
 	Fx.onRoll = function(info)
@@ -94,7 +100,7 @@ function RollReel.build(ui)
 	end
 end
 
--- Shows STOP on every slot auto roll is working on.
+-- Works out which slots auto roll is working on.
 function RollReel.draw(state, ui)
 	local auto = state.autoRoll or {}
 	local skip = auto.skip or {}
@@ -113,19 +119,6 @@ function RollReel.draw(state, ui)
 		end
 		reel.auto = working
 		reel.stop.Visible = working
-		if working then
-			reel.panel.Visible = true
-			if reel.lastRoll == 0 then
-				reel.text.Text = "<font color=\"#B2A690\">Auto roll will roll this slot.</font>"
-				reel.stroke.Color = ui.colors.dim
-			end
-			if reel.lastRoll > 0 and os.clock() - reel.lastRoll > 3 then
-				reel.tag.Text = "WAITING"
-				reel.tag.TextColor3 = ui.colors.dim
-			end
-		elseif os.clock() - reel.lastRoll > SHOW_TIME and reel.panel.Visible then
-			reel.panel.Visible = false
-		end
 	end
 end
 
