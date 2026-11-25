@@ -310,6 +310,45 @@ local function playReveal(info)
 	tap.TextTransparency = 1
 	Art.tween(tap, 0.6, { TextTransparency = 0.2 })
 
+	-- After opening a chest: open more of the same right from here.
+	local again = nil -- set to a count when an "open more" button is pressed
+	local offerMore = info.chestId ~= nil and (info.left or 0) > 0 and Fx.send ~= nil
+	if offerMore then
+		tap.Text = `{info.left} left`
+		local choices = { { label = "Open 1", count = 1 } }
+		if info.left > 1 then
+			table.insert(choices, { label = `Open {math.min(10, info.left)}`, count = 10 })
+		end
+		table.insert(choices, { label = "Done", count = 0 })
+		local width = 130
+		local y = (if many then 300 else 196) / 2 + 60
+		for index, choice in choices do
+			local x = (index - (#choices + 1) / 2) * (width + 10)
+			local button = Instance.new("TextButton")
+			button.AnchorPoint = Vector2.new(0.5, 0.5)
+			button.Size = UDim2.fromOffset(width, 42)
+			button.Position = UDim2.new(0.5, x, 0.5, y)
+			button.BackgroundColor3 = if choice.count == 0 then Color3.fromRGB(70, 60, 52) elseif choice.count == 1 then Color3.fromRGB(200, 150, 50) else Color3.fromRGB(60, 150, 80)
+			button.TextColor3 = Color3.new(1, 1, 1)
+			button.Font = Enum.Font.GothamBold
+			button.TextSize = 16
+			button.Text = choice.label
+			button.AutoButtonColor = true
+			button.ZIndex = Z + 15
+			button.Parent = stage
+			Art.corner(button, 8)
+			Art.gloss(button, 1, 0.7)
+			button.Activated:Connect(function()
+				if choice.count > 0 then
+					again = choice.count
+				end
+				if shade:GetAttribute("Close") == nil then
+					shade:SetAttribute("Close", true)
+				end
+			end)
+		end
+	end
+
 	-- Closes on a tap, or by itself so auto play is never blocked.
 	local closed = false
 	local done = Instance.new("BindableEvent")
@@ -333,11 +372,21 @@ local function playReveal(info)
 		shade:Destroy()
 		done:Fire()
 	end
+	shade:GetAttributeChangedSignal("Close"):Connect(close)
 	task.wait(0.4)
 	shade.Activated:Connect(close)
-	task.delay(if #queue > 0 then 1.6 elseif many then 8 else 5, close)
+	-- With "open more" buttons the player decides; otherwise it closes by
+	-- itself so auto play is never blocked.
+	if not offerMore then
+		task.delay(if #queue > 0 then 1.6 elseif many then 8 else 5, close)
+	else
+		task.delay(30, close)
+	end
 	done.Event:Wait()
 	done:Destroy()
+	if again and Fx.send then
+		Fx.send("ChestOpen", `{info.chestId}:{again}`)
+	end
 end
 
 local function runQueue()
@@ -596,9 +645,10 @@ function Fx.setAnchor(name: string, object: GuiObject)
 	anchors[name] = object
 end
 
-function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt)
+function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt, send)
 	Art = art
 	ItemArt = itemArt
+	Fx.send = send -- sends an action to the server (open more chests)
 	GameConfig = gameConfig
 	Fx.format = format
 	layer = Instance.new("ScreenGui")
@@ -632,6 +682,8 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt)
 				source = info.name or `{info.rarity} chest`,
 				chestName = info.name,
 				items = info.items,
+				chestId = info.chest,
+				left = tonumber(info.left) or 0,
 			})
 		elseif kind == "chestGot" then
 			Fx.chestGot(info)

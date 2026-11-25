@@ -3244,7 +3244,7 @@ end
 
 do
 	local Fx = require(script.Parent:WaitForChild("Fx"))
-	Fx.init(Art, GameConfig, Format.short, remotes:WaitForChild("Fx"), ItemArt)
+	Fx.init(Art, GameConfig, Format.short, remotes:WaitForChild("Fx"), ItemArt, send)
 	Fx.setAnchor("foe", foeFightBar.fill.Parent)
 	Fx.setAnchor("you", yourFightBar.fill.Parent)
 end

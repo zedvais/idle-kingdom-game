@@ -1929,7 +1929,7 @@ function actions.ChestOpen(player: Player, data, id: string)
 		end
 	end
 	sendToast(player, if count == 1 then `{chest.name}: {best.rarity} {best.name}!` else `Opened {count} {chest.name}s. Best: {best.rarity} {best.name}!`)
-	sendFx(player, "chestOpen", { rarity = ChestConfig.rarityOf(chest), name = chest.name, items = items })
+	sendFx(player, "chestOpen", { rarity = ChestConfig.rarityOf(chest), name = chest.name, items = items, chest = chestId, left = data.chests[chestId] or 0 })
 end
 
 -- Auto deposit was removed; any old setting is switched off.
