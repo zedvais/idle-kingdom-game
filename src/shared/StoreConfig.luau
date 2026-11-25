@@ -15,6 +15,8 @@
 -- purchase went through (nothing is charged), so every reward can be tested.
 -- In a live server an id of 0 just says the item is not on sale yet.
 
+local Format = require(script.Parent.Format)
+
 local StoreConfig = {}
 
 -- Crowns are the premium currency. Players buy them with Robux and spend
@@ -76,6 +78,27 @@ StoreConfig.Passes = {
 		name = "Armory Wing",
 		price = 149,
 		note = "Your armory holds 80 pieces of gear instead of 40",
+	},
+	{
+		key = "autoquest",
+		id = 0,
+		name = "Quest Herald",
+		price = 249,
+		note = "Auto quests: repeats your last quest whenever you have the energy",
+	},
+	{
+		key = "autoroll",
+		id = 0,
+		name = "Recruiting Sergeant",
+		price = 199,
+		note = "Auto roll: keeps rolling recruits, slot after slot, until the rarity you pick turns up",
+	},
+	{
+		key = "autobuy",
+		id = 0,
+		name = "Market Steward",
+		price = 149,
+		note = "Market auto-buy: buys gear that matches your rules every restock",
 	},
 }
 
@@ -334,6 +357,8 @@ function StoreConfig.describe(reward): string
 	local kind = reward.kind
 	if kind == "crowns" then
 		return `{reward.amount} Crowns`
+	elseif kind == "gold" and reward.amount then
+		return `{Format.short(reward.amount)} gold`
 	elseif kind == "gold" then
 		local hours = reward.minutes / 60
 		return if reward.minutes % 60 == 0 then `{hours}h of income` else `{reward.minutes}m of income`
@@ -349,6 +374,8 @@ function StoreConfig.describe(reward): string
 		return `{kind} refill`
 	elseif kind == "title" then
 		return `"{reward.text}" title`
+	elseif kind == "seals" then
+		return `{reward.amount} Seals`
 	end
 	return "a reward"
 end
