@@ -976,6 +976,21 @@ recentBuys.TextYAlignment = Enum.TextYAlignment.Top
 -- Warband: one row for you, one per unlocked slot, and the next locked slot.
 local openRecruitWindow -- defined further down, with the recruit window
 
+-- Single rolls from a slot's Recruit or Reroll button use the best recruit
+-- tier your level allows and your gold covers (Village if none).
+local function oneRollCost(state, tier): number
+	return math.floor(tier.cost * (1 - festivalDiscount(state, "rollCost")))
+end
+local function oneRollTier(state)
+	local best = GameConfig.RecruitTiers[1]
+	for _, tier in GameConfig.RecruitTiers do
+		if state.level >= tier.level and state.gold >= oneRollCost(state, tier) then
+			best = tier
+		end
+	end
+	return best
+end
+
 local warbandSummary, autoRollButton = makeRow(pages.Warband, nextOrder(), 56, true)
 setButton(autoRollButton, "Recruit", true, COLOR_ACTION)
 autoRollButton.Activated:Connect(function()
@@ -1090,8 +1105,12 @@ for slot = 1, GameConfig.MaxSoldierSlots do
 	row.train.Activated:Connect(function()
 		send("Train", tostring(slot))
 	end)
+	-- One roll for this slot (set up by the draw code below). Auto roll
+	-- lives in its own window.
 	row.roll.Activated:Connect(function()
-		openRecruitWindow(slot)
+		if row.rollId then
+			send("Roll", row.rollId)
+		end
 	end)
 	row.release.Activated:Connect(function()
 		send("Release", tostring(slot))
@@ -2142,7 +2161,7 @@ local function draw(state)
 		.. (if autoRoll.on
 			then `Auto roll is on: {autoRoll.tier} recruits until {autoRoll.rarity}, {autoRoll.rolls} rolls so far.`
 			else `Warband size bonus +{math.floor(stats.crewBonus * 100 + 0.5)}% attack and defense`)
-	setButton(autoRollButton, if autoRoll.on then "Auto roll: ON\nSettings" else "Recruit\nAuto roll", true, if autoRoll.on then COLOR_CLAIM else COLOR_ACTION)
+	setButton(autoRollButton, if autoRoll.on then "Auto roll: ON\nSettings" else "Auto roll", true, if autoRoll.on then COLOR_CLAIM else COLOR_ACTION)
 
 	equipNewOn = state.autoEquipNew == true
 	setButton(equipButtons[1], "Equip best", true, COLOR_BUY)
@@ -2172,7 +2191,16 @@ local function draw(state)
 			else
 				setButton(row.train, `Train +{soldier.train + 1}\n{Format.short(soldier.trainCost)}`, gold >= soldier.trainCost, COLOR_BUY)
 			end
-			setButton(row.roll, "Reroll", true, COLOR_ACTION)
+			-- A reroll only replaces the soldier with one at least as rare.
+			local tier = oneRollTier(state)
+			local keep = soldier.rarity
+			if GameConfig.getChanceAtLeast(tier, keep) <= 0 then
+				row.rollId = nil
+				setButton(row.roll, `Reroll\n{tier.id} can't beat`, false, COLOR_ACTION)
+			else
+				row.rollId = `{slot}:{tier.id}:{keep}:this:once`
+				setButton(row.roll, `Reroll\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
+			end
 			row.release.Visible = true
 			setButton(row.release, "Release", true, COLOR_DISABLED)
 		else
@@ -2181,7 +2209,9 @@ local function draw(state)
 			row.train.Visible = false
 			row.release.Visible = false
 			row.gear.Visible = false
-			setButton(row.roll, "Recruit", true, COLOR_ACTION)
+			local tier = oneRollTier(state)
+			row.rollId = `{slot}:{tier.id}:Common:this:once`
+			setButton(row.roll, `Recruit\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
 		end
 	end
 
@@ -2423,7 +2453,7 @@ do
 
 	local recruitTitle = makeText(recruitWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
 	recruitTitle.Font = Enum.Font.GothamBold
-	recruitTitle.Text = "RECRUIT"
+	recruitTitle.Text = "AUTO ROLL"
 
 	local closeButton = makeButton(recruitWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
 	closeButton.Text = "X"
@@ -2470,17 +2500,13 @@ do
 	local chanceText = makeText(chanceBox, UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), COLOR_TEXT, 12)
 
 	-- Cancel closes without rolling; the gold button saves and starts.
-	-- Cancel closes, Roll once makes one roll, and Start auto roll saves the
-	-- settings and keeps rolling (Recruiting Sergeant pass).
-	local cancelButton = makeButton(recruitWindow, UDim2.new(0.25, -16, 0, 44), UDim2.new(0, 16, 1, -14), COLOR_ROW)
+	-- Cancel closes; Start auto roll saves the settings and keeps rolling
+	-- (Recruiting Sergeant pass). Single rolls are on each slot's button.
+	local cancelButton = makeButton(recruitWindow, UDim2.new(0.5, -24, 0, 44), UDim2.new(0, 16, 1, -14), COLOR_ROW)
 	cancelButton.AnchorPoint = Vector2.new(0, 1)
 	cancelButton.TextSize = 15
 	cancelButton.Text = "CANCEL"
-	local onceButton = makeButton(recruitWindow, UDim2.new(0.3, -12, 0, 44), UDim2.new(0.25, 8, 1, -14), COLOR_SELECTED)
-	onceButton.AnchorPoint = Vector2.new(0, 1)
-	onceButton.TextSize = 15
-	onceButton.Text = "ROLL ONCE"
-	local startButton = makeButton(recruitWindow, UDim2.new(0.45, -24, 0, 44), UDim2.new(1, -16, 1, -14), COLOR_GOLD)
+	local startButton = makeButton(recruitWindow, UDim2.new(0.5, -24, 0, 44), UDim2.new(1, -16, 1, -14), COLOR_GOLD)
 	startButton.AnchorPoint = Vector2.new(1, 1)
 	startButton.TextColor3 = Color3.fromRGB(35, 28, 10)
 	startButton.TextSize = 15
@@ -2577,7 +2603,7 @@ do
 		elseif state.passes.autoroll then
 			chanceText.Text ..= `\nAuto roll makes {GameConfig.AutoRollsPerTick} roll a second until it hits, gold runs out or you stop it.`
 		else
-			chanceText.Text ..= "\nOne roll per press. The Recruiting Sergeant pass (Shop) keeps rolling until a hit."
+			chanceText.Text ..= "\nAuto roll needs the Recruiting Sergeant pass. Single rolls are on each slot's Recruit button."
 		end
 		local ready = state.level >= tier.level and gold >= rollCost and scopeCount(state, chosenScope) > 0
 		if auto.on then
@@ -2590,8 +2616,6 @@ do
 			startButton.BackgroundColor3 = if ready or not state.passes.autoroll then COLOR_GOLD else COLOR_DISABLED
 			startButton.TextColor3 = Color3.fromRGB(35, 28, 10)
 		end
-		onceButton.Visible = not auto.on
-		onceButton.BackgroundColor3 = if ready then COLOR_SELECTED else COLOR_DISABLED
 	end
 
 	function openRecruitWindow(slot: number)
@@ -2635,9 +2659,6 @@ do
 		local rarity = GameConfig.Rarities[chosenRarity]
 		return `{math.max(recruitSlot, 1)}:{tier.id}:{rarity.id}:{chosenScope}`
 	end
-	onceButton.Activated:Connect(function()
-		send("Roll", rollId() .. ":once")
-	end)
 	startButton.Activated:Connect(function()
 		if not lastState then
 			return
