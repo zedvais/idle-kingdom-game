@@ -13,7 +13,7 @@ local RollReel = {}
 
 local reels = {} -- [slot] = widgets
 local spinId = {} -- [slot] = number, so a new roll cancels the last spin
-local SPIN_TIME = 0.55
+local SPIN_TIME = 0.75 -- rolls come once a second; the result shows for the rest
 local SHOW_TIME = 4 -- how long a result stays when nothing else rolls
 
 local function hex(color: Color3): string
@@ -149,11 +149,11 @@ function RollReel.draw(state, ui)
 				reel.text.Text = "<font color=\"#B2A690\">Auto roll will roll this slot.</font>"
 				reel.stroke.Color = ui.colors.dim
 			end
-			if os.clock() - reel.lastRoll > 2 then
-				reel.tag.Text = "QUEUED"
+			if reel.lastRoll > 0 and os.clock() - reel.lastRoll > 3 then
+				reel.tag.Text = "WAITING"
 				reel.tag.TextColor3 = ui.colors.dim
 			end
-		elseif os.clock() - reel.lastRoll > SHOW_TIME then
+		elseif os.clock() - reel.lastRoll > SHOW_TIME and reel.panel.Visible then
 			reel.panel.Visible = false
 		end
 	end

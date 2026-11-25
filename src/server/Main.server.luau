@@ -2750,62 +2750,62 @@ local function runAutoRoll(player: Player, data)
 	end
 	local targetRank = GameConfig.getRarityRank(auto.rarity)
 	local rollCost = math.floor(tier.cost * (1 - festivalBonus("rollCost")))
-	for _ = 1, GameConfig.AutoRollsPerTick do
-		-- The next slot to roll for.
-		local target = nil
-		local skip = auto.skip or {}
-		if auto.scope == "this" then
-			-- Rolls until a hit replaces whoever is in the slot.
-			if data.crew[auto.slot] ~= nil and not skip[tostring(auto.slot)] then
-				target = auto.slot
+	-- Every slot auto roll is working on rolls at the same time: one roll
+	-- per slot each second (the server tick), each paid for on its own.
+	local skip = auto.skip or {}
+	local targets = {}
+	if auto.scope == "this" then
+		-- Rolls until a hit replaces whoever is in the slot.
+		if data.crew[auto.slot] ~= nil and not skip[tostring(auto.slot)] then
+			table.insert(targets, auto.slot)
+		end
+	else
+		for slot, soldier in data.crew do
+			if not skip[tostring(slot)] and (not soldier or (auto.scope == "below" and GameConfig.getRarityRank(soldier.rarity) < targetRank)) then
+				table.insert(targets, slot)
 			end
-		else
-			for slot, soldier in data.crew do
-				if skip[tostring(slot)] then
-					continue
+		end
+	end
+	if #targets == 0 then
+		auto.on = false
+		sendToast(player, `Auto roll done: every slot is filled. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
+		return
+	end
+	for _, target in targets do
+		for _ = 1, GameConfig.AutoRollsPerTick do
+			-- Hard check on the gold left before every single roll.
+			if not canAfford(data, rollCost) then
+				if auto.whenBroke == "stop" then
+					auto.on = false
+					sendToast(player, `Auto roll stopped: not enough gold. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
+				elseif not auto.waiting then
+					auto.waiting = true
+					sendToast(player, "Auto roll is waiting for more gold.")
 				end
-				if not soldier or (auto.scope == "below" and GameConfig.getRarityRank(soldier.rarity) < targetRank) then
-					target = slot
-					break
-				end
+				return
 			end
-		end
-		if not target then
-			auto.on = false
-			sendToast(player, `Auto roll done: every slot is filled. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
-			return
-		end
-		-- Hard check on the gold left before every single roll.
-		if not canAfford(data, rollCost) then
-			if auto.whenBroke == "stop" then
-				auto.on = false
-				sendToast(player, `Auto roll stopped: not enough gold. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
-			elseif not auto.waiting then
-				auto.waiting = true
-				sendToast(player, "Auto roll is waiting for more gold.")
-			end
-			return
-		end
-		auto.waiting = false
-		data.gold -= rollCost
-		if data.gold < 0 then -- never expected; undo and stop to be safe
-			data.gold += rollCost
-			auto.on = false
-			return
-		end
-		auto.rolls += 1
-		auto.spent += rollCost
-		track(data, "rolls", 1)
-		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
-		data.nextItemId += 1
-		local hit = GameConfig.getRarityRank(soldier.rarity) >= targetRank
-		sendRollFx(player, target, soldier, hit, auto.rarity)
-		if hit then
-			data.crew[target] = soldier
-			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {target} after {auto.rolls} rolls.`)
-			if auto.scope == "this" then
+			auto.waiting = false
+			data.gold -= rollCost
+			if data.gold < 0 then -- never expected; undo and stop to be safe
+				data.gold += rollCost
 				auto.on = false
 				return
+			end
+			auto.rolls += 1
+			auto.spent += rollCost
+			track(data, "rolls", 1)
+			local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
+			data.nextItemId += 1
+			local hit = GameConfig.getRarityRank(soldier.rarity) >= targetRank
+			sendRollFx(player, target, soldier, hit, auto.rarity)
+			if hit then
+				data.crew[target] = soldier
+				sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {target}.`)
+				if auto.scope == "this" then
+					auto.on = false
+					return
+				end
+				break -- this slot is done; the others keep rolling
 			end
 		end
 	end

@@ -213,7 +213,7 @@ GameConfig.RecruitTiers = {
 
 -- Auto roll (Recruiting Sergeant pass) makes this many rolls each second
 -- until it hits the chosen rarity, runs out of gold or is stopped.
-GameConfig.AutoRollsPerTick = 1
+GameConfig.AutoRollsPerTick = 1 -- auto roll: rolls per slot each second (all slots roll at once)
 
 -- Training adds this much to a soldier's stats per rank, and costs this
 -- share of their recruit tier's roll cost, growing each rank.
