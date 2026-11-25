@@ -1291,6 +1291,7 @@ local function makeCrewRow(order: number)
 	end
 	local release = button(50, -6)
 	local roll = button(64, -60)
+	roll.RichText = true
 	local train = button(118, -128)
 
 	-- Gear tiles.
@@ -1354,19 +1355,20 @@ local crewRows = {}
 for slot = 1, GameConfig.MaxSoldierSlots do
 	local row = makeCrewRow(nextOrder())
 	crewRows[slot] = row
+	-- On an empty slot this button is RECRUIT: one roll for the slot.
 	row.train.Activated:Connect(function()
-		if ui and ui.offerTrain then
+		if row.empty then
+			if row.rollId then
+				send("Roll", row.rollId)
+			end
+		elseif ui and ui.offerTrain then
 			ui.offerTrain(slot)
 		end
 	end)
-	-- Auto: opens the roll window for this slot (with the pass). Without
-	-- the pass it makes one roll, as before.
+	-- Auto: opens the auto roll window for this slot (it offers the pass
+	-- to players who don't own it).
 	row.roll.Activated:Connect(function()
-		if ownsAutoRoll then
-			openRecruitWindow(slot)
-		elseif row.rollId then
-			send("Roll", row.rollId)
-		end
+		openRecruitWindow(slot)
 	end)
 	row.up.Activated:Connect(function()
 		send("MoveSoldier", `{slot}:up`)
@@ -2636,11 +2638,8 @@ local function draw(state)
 			else
 				row.rollId = `{slot}:{tier.id}:{soldier.rarity}:this:once`
 			end
-			if ownsAutoRoll then
-				setButton(row.roll, "\u{21BB}\nAUTO", true, COLOR_ACTION)
-			else
-				setButton(row.roll, `REROLL\n{Format.short(oneRollCost(state, tier))}`, row.rollId ~= nil and gold >= oneRollCost(state, tier), COLOR_ACTION)
-			end
+			row.empty = false
+			setButton(row.roll, if ownsAutoRoll then "AUTO" else "AUTO\n<font size=\"10\">pass</font>", true, COLOR_ACTION)
 			row.release.Visible = true
 			setButton(row.release, "\u{1F5D1}\u{FE0F}", true, Color3.fromRGB(120, 40, 36))
 		else
@@ -2652,14 +2651,13 @@ local function draw(state)
 			for _, tile in row.tiles do
 				tile.button.Visible = false
 			end
-			row.train.Visible = false
 			row.release.Visible = false
 			row.rollId = `{slot}:{tier.id}:Common:this:once`
-			if ownsAutoRoll then
-				setButton(row.roll, "\u{21BB}\nAUTO", true, COLOR_ACTION)
-			else
-				setButton(row.roll, `RECRUIT\n{Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
-			end
+			row.empty = true
+			-- RECRUIT makes one roll; AUTO opens the auto roll window.
+			row.train.Visible = true
+			setButton(row.train, `RECRUIT\n{Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_BUY)
+			setButton(row.roll, if ownsAutoRoll then "AUTO" else "AUTO\n<font size=\"10\">pass</font>", true, COLOR_ACTION)
 		end
 		-- Empty slots are short cards (no gear tiles).
 		row.frame.Size = UDim2.new(1, -10, 0, if soldier then 160 else 76)
