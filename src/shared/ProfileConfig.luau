@@ -19,7 +19,13 @@ ProfileConfig.Codes = {
 		ends = 0,
 		adminOnly = true,
 		repeatable = true,
-		rewards = { { kind = "gold", amount = 1e12 }, { kind = "crowns", amount = 200000 } },
+		rewards = {
+			{ kind = "gold", amount = 1e12 },
+			{ kind = "crowns", amount = 200000 },
+			{ kind = "skill", amount = 500 },
+			{ kind = "toLevel", level = 30 },
+			{ kind = "allPasses" },
+		},
 	},
 	{
 		code = "WELCOME",

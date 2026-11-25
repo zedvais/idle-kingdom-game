@@ -393,6 +393,10 @@ function StoreConfig.describe(reward): string
 		return `"{reward.text}" title`
 	elseif kind == "seals" then
 		return `{reward.amount} Seals`
+	elseif reward.kind == "toLevel" then
+		return `XP up to level {reward.level}`
+	elseif reward.kind == "allPasses" then
+		return "every game pass"
 	end
 	return "a reward"
 end

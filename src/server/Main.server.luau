@@ -1703,6 +1703,22 @@ local function grantReward(player: Player, data, reward, source: string): string
 		data.titles[reward.text] = true
 	elseif kind == "seals" then
 		data.seals += reward.amount
+	elseif kind == "toLevel" then
+		-- XP for reaching that level (testing codes). Nothing if already there.
+		local need = -data.xp
+		for level = data.level, (reward.level or 1) - 1 do
+			need += GameConfig.getXpNeeded(level)
+		end
+		if need > 0 then
+			local boostUntil = data.xpBoostUntil
+			data.xpBoostUntil = 0 -- exact amount, no XP boost doubling
+			addXp(player, data, need)
+			data.xpBoostUntil = boostUntil
+		end
+	elseif kind == "allPasses" then
+		for _, pass in StoreConfig.Passes do
+			data.passes[pass.key] = true
+		end
 	end
 	return StoreConfig.describe(reward)
 end
