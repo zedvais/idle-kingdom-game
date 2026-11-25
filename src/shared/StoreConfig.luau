@@ -84,14 +84,14 @@ StoreConfig.Passes = {
 		id = 0,
 		name = "Quest Herald",
 		price = 249,
-		note = "Auto quests: repeats your last quest whenever you have the energy",
+		note = "Auto quests: does quests for you (repeat last, earn mastery, or most XP) whenever you have the energy",
 	},
 	{
 		key = "autoroll",
 		id = 0,
 		name = "Recruiting Sergeant",
 		price = 199,
-		note = "Auto roll: keeps rolling recruits, slot after slot, until the rarity you pick turns up",
+		note = "Auto roll: rolls recruits for you each second, slot after slot, until the rarity you pick turns up",
 	},
 	{
 		key = "autobuy",

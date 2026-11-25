@@ -61,6 +61,16 @@ local function newData()
 		trophies = {}, -- [trophyId] = true once earned
 		autoQuest = "", -- quest id that auto quests repeat
 		autoQuestOn = false,
+		autoQuestMode = "last", -- "last" quest, "mastery" (next medal) or "xp" (most XP per energy)
+		autoRoll = { -- Recruiting Sergeant: one roll per tick until a hit
+			on = false,
+			slot = 1,
+			tier = "Village",
+			rarity = "Rare",
+			scope = "empty", -- "this" slot, "empty" slots, or slots "below" the rarity
+			rolls = 0,
+			spent = 0,
+		},
 		autoBuy = {
 			on = false,
 			slots = { Weapon = true, Armor = true, Mount = true },
@@ -132,7 +142,9 @@ local function newData()
 		mail = {}, -- newest first: { id, time, title, text, rewards, claimed, read }
 		mailNext = 1,
 		newsSeen = {}, -- [news id] = true once delivered
-		relics = { points = 0, count = 0 },
+		-- Relic Hall: count = pieces held, items[name|rarity] = { name, slot,
+		-- rarity, set, count, levels = { ["L12"] = copies at level 12 } }
+		relics = { count = 0, auto = false, items = {} },
 		rebirth = { count = 0, stars = 0 },
 		-- Barracks, expeditions and the War Chronicle
 		troops = {}, -- [troop key] = count at home
@@ -157,7 +169,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition" } do
+	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default
@@ -165,6 +177,11 @@ local function repair(data)
 		end
 	end
 	data.foes = nil -- replaced by stages
+	-- Old Relic Hall saves only kept points; the hall now keeps the items.
+	if data.relics.points ~= nil then
+		data.relics.points = nil
+		data.relics.count = 0
+	end
 	return data
 end
 

@@ -210,8 +210,9 @@ GameConfig.RecruitTiers = {
 	{ id = "Royal", level = 25, cost = 5000000, power = 45, chances = { 0, 150, 350, 300, 150, 48, 2 } },
 }
 
--- Most rolls one auto-roll request may make, to keep the server fast.
-GameConfig.MaxRollsPerRequest = 1000
+-- Auto roll (Recruiting Sergeant pass) makes this many rolls each second
+-- until it hits the chosen rarity, runs out of gold or is stopped.
+GameConfig.AutoRollsPerTick = 1
 
 -- Training adds this much to a soldier's stats per rank, and costs this
 -- share of their recruit tier's roll cost, growing each rank.
@@ -221,12 +222,15 @@ GameConfig.TrainCostGrowth = 1.6
 GameConfig.MaxTrainRank = 20
 
 -- Soldier classes. attack and defense are for a Common Village soldier.
+-- Across all classes attack and defense add up to the same total, so a
+-- warband is as good at holding as at hitting (attack rolls against
+-- defense rolls in fights between players).
 GameConfig.SoldierClasses = {
 	{ id = "Militia", attack = 3, defense = 3 },
 	{ id = "Archer", attack = 5, defense = 1 },
-	{ id = "Knight", attack = 2, defense = 5 },
-	{ id = "Battle Mage", attack = 6, defense = 1 },
-	{ id = "Ranger", attack = 4, defense = 3 },
+	{ id = "Knight", attack = 1, defense = 5 },
+	{ id = "Battle Mage", attack = 5, defense = 2 },
+	{ id = "Ranger", attack = 2, defense = 5 },
 }
 
 GameConfig.FirstNames = {
@@ -526,6 +530,49 @@ GameConfig.TrophyBonusNames = {
 -- At most this many quests run each second.
 GameConfig.AutoQuestsPerSecond = 3
 
+-- Auto quest modes: which quest auto quests do next.
+--   last     repeat the last quest you did
+--   mastery  the first open quest still short of gold mastery
+--   xp       the open quest with the most XP per energy
+GameConfig.AutoQuestModes = {
+	{ id = "last", name = "Repeat last quest" },
+	{ id = "mastery", name = "Earn mastery medals" },
+	{ id = "xp", name = "Most XP" },
+}
+
+-- The quest auto quests do next, or nil. `done` is { [quest id] = times done }.
+function GameConfig.pickAutoQuest(mode: string, level: number, done, lastId: string)
+	local function open(quest)
+		return level >= quest.level and level >= GameConfig.getRegion(quest.region).level
+	end
+	if mode == "mastery" then
+		for _, quest in GameConfig.Quests do
+			if open(quest) and GameConfig.getMasteryRank(done[quest.id] or 0) < GameConfig.MaxMasteryRanks then
+				return quest
+			end
+		end
+		mode = "xp" -- every open quest has gold mastery
+	end
+	if mode == "xp" then
+		local best = nil
+		for _, quest in GameConfig.Quests do
+			if open(quest) then
+				local rate = quest.xp / quest.energy
+				if not best or rate > best.xp / best.energy or (rate == best.xp / best.energy and quest.xp > best.xp) then
+					best = quest
+				end
+			end
+		end
+		return best
+	end
+	for _, quest in GameConfig.Quests do
+		if quest.id == lastId and open(quest) then
+			return quest
+		end
+	end
+	return nil
+end
+
 -- Market auto-buy remembers this many recent purchases.
 GameConfig.AutoBuyRecent = 6
 
@@ -540,8 +587,6 @@ function GameConfig.getHit(attack: number, defense: number): number
 end
 GameConfig.HitRollMin = 0.85
 GameConfig.HitRollMax = 1.15
--- How many attacks the Attack x5 button makes at most.
-GameConfig.MultiAttack = 5
 
 -- Fills in each stage's numbers from its level and place in its house.
 -- `power` is roughly the attack a player has at that level.

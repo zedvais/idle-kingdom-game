@@ -24,8 +24,8 @@ FestivalConfig.Festivals = {
 	{
 		key = "tournament",
 		name = "Grand Tournament",
-		bonusText = "+15% attack",
-		bonus = { kind = "attack", amount = 0.15 },
+		bonusText = "+15% attack and defense",
+		bonus = { kind = "attack", amount = 0.15 }, -- counts for defense too
 		points = { foes = 25, train = 10, quests = 1 },
 	},
 	{

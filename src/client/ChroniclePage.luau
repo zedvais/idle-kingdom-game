@@ -1,4 +1,4 @@
--- War Chronicle page: reports of foe fights and expeditions, newest first.
+-- War Chronicle page (Arena section): reports of foe fights and expeditions, newest first.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -22,7 +22,7 @@ local function ago(seconds: number): string
 end
 
 function ChroniclePage.build(ui)
-	local page = ui.pages.Chronicle
+	local page = ui.pages["War Chronicle"]
 	emptyNote = ui.makeRow(page, ui.nextOrder(), 34, false)
 	emptyNote.TextColor3 = ui.colors.dim
 	emptyNote.Text = "No battles yet. Beat a foe or send an expedition and the report shows up here."

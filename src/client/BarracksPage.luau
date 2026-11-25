@@ -10,8 +10,15 @@ local Format = require(Shared:WaitForChild("Format"))
 local BarracksPage = {}
 
 local summary, finishButton
-local amountBox
 local cards = {}
+local latest = nil -- the last state drawn, for the Train X popup
+
+-- How many of a troop you could train right now.
+local function canTrain(state, troop): number
+	local total = ArmyConfig.countTroops(state.troops) + ArmyConfig.countTroops(state.expedition.sent) + state.training.count
+	local room = state.armyCap - total
+	return math.max(0, math.min(room, math.floor(state.gold / troop.cost)))
+end
 
 function BarracksPage.build(ui)
 	local page = ui.pages.Barracks
@@ -21,28 +28,43 @@ function BarracksPage.build(ui)
 		ui.send("TroopFinish")
 	end)
 
-	local amountRow = ui.makeFrame(page, UDim2.new(1, -10, 0, 48), UDim2.fromOffset(0, 0), ui.colors.row)
-	amountRow.LayoutOrder = ui.nextOrder()
-	ui.addCorner(amountRow, 6)
-	local label = ui.makeText(amountRow, UDim2.new(0, 170, 1, 0), UDim2.fromOffset(10, 0), ui.colors.text, 13)
-	label.Text = "How many to train"
-	amountBox = ui.makeAmountBox(amountRow, UDim2.new(1, -190, 1, -12), UDim2.fromOffset(180, 6), "Leave empty to train as many as you can afford")
-
 	ui.makeHeading(page, ui.nextOrder(), "Troops")
 	local grid = ui.makeGrid(page, ui.nextOrder(), 132, 3)
 	for _, troop in ArmyConfig.Troops do
 		local info, button = ui.makeCard(grid)
 		info.RichText = true
 		info.TextSize = 12
-		cards[troop.key] = { info = info, button = button }
+		-- Two buttons side by side: Train 1 and Train X (asks how many).
+		button.Size = UDim2.new(0.5, -12, 0, 36)
+		local many = ui.makeButton(button.Parent, UDim2.new(0.5, -12, 0, 36), UDim2.new(0.5, 4, 1, -42), ui.colors.buy)
+		many.TextSize = 13
+		cards[troop.key] = { info = info, button = button, many = many }
 		button.Activated:Connect(function()
-			local text = string.gsub(amountBox.Text, "%D", "")
-			ui.send("TroopTrain", `{troop.key}:{if text == "" then "max" else string.sub(text, 1, 6)}`)
+			ui.send("TroopTrain", `{troop.key}:1`)
+		end)
+		many.Activated:Connect(function()
+			if not latest then
+				return
+			end
+			local most = canTrain(latest, troop)
+			if most < 1 then
+				return
+			end
+			ui.askAmount({
+				title = `Train {troop.name}`,
+				note = `<b>{troop.name}</b>: {Format.short(troop.cost)} gold and {troop.seconds}s each.`,
+				max = most,
+				confirm = "Train",
+				onConfirm = function(amount)
+					ui.send("TroopTrain", `{troop.key}:{amount}`)
+				end,
+			})
 		end)
 	end
 end
 
 function BarracksPage.draw(state, ui)
+	latest = state
 	local colors = ui.colors
 	local home = ArmyConfig.countTroops(state.troops)
 	local away = ArmyConfig.countTroops(state.expedition.sent)
@@ -69,14 +91,19 @@ function BarracksPage.draw(state, ui)
 		local have = state.troops[troop.key] or 0
 		card.info.Text = `<b>{troop.name}</b>   you have {have}\n{troop.note}\n`
 			.. `Attack {troop.attack}, defense {troop.defense}\n{Format.short(troop.cost)} gold, {troop.seconds}s each`
+		local most = canTrain(state, troop)
 		if state.level < troop.level then
 			ui.setButton(card.button, `Level {troop.level}`, false, colors.buy)
+			ui.setButton(card.many, "Locked", false, colors.buy)
 		elseif busy then
-			ui.setButton(card.button, "Barracks busy", false, colors.buy)
+			ui.setButton(card.button, "Busy", false, colors.buy)
+			ui.setButton(card.many, "Busy", false, colors.buy)
 		elseif room <= 0 then
 			ui.setButton(card.button, "Army full", false, colors.buy)
+			ui.setButton(card.many, "Army full", false, colors.buy)
 		else
-			ui.setButton(card.button, "Train", state.gold >= troop.cost, colors.buy)
+			ui.setButton(card.button, "Train 1", state.gold >= troop.cost, colors.buy)
+			ui.setButton(card.many, "Train X", most >= 1, colors.buy)
 		end
 	end
 end
