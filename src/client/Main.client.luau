@@ -1366,7 +1366,7 @@ do
 		{ key = "Mail", title = "Mail" },
 		{ key = "AutoQuest", title = "Auto quests", width = 520, height = 400 },
 		{ key = "AutoBuy", title = "Auto-buy", width = 600, height = 560 },
-		{ key = "Amount", title = "How many?", width = 440, height = 300 },
+		{ key = "Amount", title = "How many?", width = 440, height = 330 },
 		{ key = "Skills", title = "Skill points", width = 640, height = 590 },
 		{ key = "Pass", title = "Game pass", width = 520, height = 300 },
 	}

@@ -140,10 +140,15 @@ local function maxGear(data): number
 	return GameConfig.MaxGearOwned + (if hasPass(data, "armory") then StoreConfig.ArmoryExtra else 0)
 end
 
--- True when no more gear fits. With auto deposit on, new gear goes to the
--- Relic Hall, so the armory never counts as full.
+-- True when no more gear fits.
 local function armoryFull(data): boolean
-	return #data.gear >= maxGear(data) and not data.relics.auto
+	return #data.gear >= maxGear(data)
+end
+
+-- Marks an item as discovered in the Relic Hall catalog.
+local function markSeen(data, item)
+	data.relics.seen = data.relics.seen or {}
+	data.relics.seen[RelicConfig.getKey(item)] = true
 end
 
 -- Research bonus of one kind ("income", "attack", "energy", ...), added up.
@@ -495,7 +500,7 @@ local function relicState(data)
 	for key, entry in data.relics.items do
 		items[key] = { name = entry.name, slot = entry.slot, rarity = entry.rarity, set = entry.set, count = entry.count }
 	end
-	return { count = data.relics.count, auto = data.relics.auto, items = items }
+	return { count = data.relics.count, items = items, seen = data.relics.seen or {} }
 end
 
 local function refresh(player: Player)
@@ -797,6 +802,7 @@ end
 ---------------------------------------------------------------------------
 
 local function relicDeposit(data, item)
+	markSeen(data, item)
 	local key = RelicConfig.getKey(item)
 	local entry = data.relics.items[key]
 	if not entry then
@@ -857,14 +863,10 @@ local function relicTake(data, key: string)
 end
 
 -- Adds a new item to the armory. If "New gear fills empty slots" is on, it
--- goes straight onto the first person with that slot empty. With Relic
--- Hall auto deposit on, anything nobody puts on goes to the hall.
+-- goes straight onto the first person with that slot empty.
 -- Returns a short note about who wears it, for the toast.
 local function addGear(data, item): string
-	if data.relics.auto and #data.gear >= maxGear(data) then
-		relicDeposit(data, item)
-		return " It went to the Relic Hall."
-	end
+	markSeen(data, item)
 	item.uid = "i" .. data.nextItemId
 	data.nextItemId += 1
 	table.insert(data.gear, item)
@@ -873,11 +875,6 @@ local function addGear(data, item): string
 		if member ~= nil then
 			return if member == 0 then " You put it on." else ` {memberName(data, member)} put it on.`
 		end
-	end
-	if data.relics.auto then
-		table.remove(data.gear)
-		relicDeposit(data, item)
-		return " It went to the Relic Hall."
 	end
 	return ""
 end
@@ -1797,28 +1794,69 @@ function actions.RelicWithdraw(player: Player, data, id: string)
 	sendToast(player, `{moved} pieces are back in your armory.{note}`)
 end
 
--- Auto deposit "on" or "off". Turning it on also puts every spare piece in
--- the hall; from then on, new gear nobody puts on goes there too.
-function actions.RelicAuto(player: Player, data, id: string)
-	if id == "off" then
-		data.relics.auto = false
-		sendToast(player, "Relic Hall auto deposit is off. New gear stays in your armory.")
-		return
+-- Deposit all / withdraw all match an optional filter "<slot>:<rarity>",
+-- where slot is "All", "Weapon", "Armor", "Mount" or "Set" and rarity is
+-- "All" or a rarity id (that rarity only).
+local function relicFilter(id: string)
+	local slot, rarity = string.match(id or "", "^(%a+):(%a+)$")
+	slot = slot or "All"
+	rarity = rarity or "All"
+	return function(entry)
+		local slotOk = slot == "All" or (slot == "Set" and entry.set ~= nil) or (entry.slot == slot and entry.set == nil)
+		return slotOk and (rarity == "All" or entry.rarity == rarity)
 	end
-	if id ~= "on" then
-		return
-	end
-	data.relics.auto = true
+end
+
+-- Puts every spare (unworn) piece that matches the filter in the hall.
+function actions.RelicDepositAll(player: Player, data, id: string)
+	local matches = relicFilter(id)
 	local moved = 0
 	for index = #data.gear, 1, -1 do
 		local item = data.gear[index]
-		if item.wornBy == nil then
+		if item.wornBy == nil and matches(item) then
 			table.remove(data.gear, index)
 			relicDeposit(data, item)
 			moved += 1
 		end
 	end
-	sendToast(player, `Auto deposit is on. {moved} spare pieces went to the Relic Hall, and new gear nobody wears will follow.`)
+	sendToast(player, if moved > 0 then `{moved} pieces went to the Relic Hall.` else "No spare gear to deposit. Worn gear stays out.")
+end
+
+-- Takes pieces that match the filter back out, as far as the armory has room.
+function actions.RelicWithdrawAll(player: Player, data, id: string)
+	local matches = relicFilter(id)
+	local room = maxGear(data) - #data.gear
+	if room <= 0 then
+		sendToast(player, "Your armory is full. Make room before taking pieces out.")
+		return
+	end
+	local keys = {}
+	for key, entry in data.relics.items do
+		if matches(entry) then
+			table.insert(keys, key)
+		end
+	end
+	table.sort(keys)
+	local moved = 0
+	for _, key in keys do
+		while moved < room do
+			local item = relicTake(data, key)
+			if not item then
+				break
+			end
+			item.uid = "i" .. data.nextItemId
+			data.nextItemId += 1
+			table.insert(data.gear, item)
+			moved += 1
+		end
+	end
+	local note = if moved == room then " The armory is full now." else ""
+	sendToast(player, `{moved} pieces are back in your armory.{note}`)
+end
+
+-- Auto deposit was removed; any old setting is switched off.
+function actions.RelicAuto(_player: Player, data, _id: string)
+	data.relics.auto = false
 end
 
 -- Starts a new life for Stars. id must be "confirm".
