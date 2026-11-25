@@ -77,6 +77,27 @@ StoreConfig.Passes = {
 		price = 149,
 		note = "Your armory holds 80 pieces of gear instead of 40",
 	},
+	{
+		key = "autoquest",
+		id = 0,
+		name = "Quest Herald",
+		price = 249,
+		note = "Auto quests: repeats your last quest whenever you have the energy",
+	},
+	{
+		key = "autoroll",
+		id = 0,
+		name = "Recruiting Sergeant",
+		price = 199,
+		note = "Auto roll: keeps rolling recruits, slot after slot, until the rarity you pick turns up",
+	},
+	{
+		key = "autobuy",
+		id = 0,
+		name = "Market Steward",
+		price = 149,
+		note = "Market auto-buy: buys gear that matches your rules every restock",
+	},
 }
 
 -- What the passes do, used by the server.

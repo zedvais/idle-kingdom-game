@@ -834,6 +834,23 @@ function actions.Roll(player: Player, data, id: string)
 		return
 	end
 
+	-- Without the Recruiting Sergeant pass, each press is one roll for one
+	-- slot. It is kept if the slot is empty or it reaches the chosen rarity.
+	if not hasPass(data, "autoroll") then
+		local slot = targets[1]
+		data.gold -= rollCost
+		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
+		data.nextItemId += 1
+		track(data, "rolls", 1)
+		if not data.crew[slot] or GameConfig.getRarityRank(soldier.rarity) >= targetRank then
+			data.crew[slot] = soldier
+			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {slot}.`)
+		else
+			sendToast(player, `Rolled a {soldier.rarity} {soldier.class}, below {rarityId}, so slot {slot} kept its soldier. The Recruiting Sergeant pass keeps rolling for you.`)
+		end
+		return
+	end
+
 	local rolls, filled, best = 0, 0, nil
 	for _, slot in targets do
 		while rolls < GameConfig.MaxRollsPerRequest and data.gold >= rollCost do
@@ -1125,6 +1142,10 @@ end
 -- Auto quests: "on" or "off". They repeat the last quest you did.
 function actions.AutoQuest(player: Player, data, id: string)
 	if id == "on" then
+		if not hasPass(data, "autoquest") then
+			sendToast(player, "Auto quests come with the Quest Herald game pass. Find it in the Shop.")
+			return
+		end
 		if not questById[data.autoQuest] then
 			sendToast(player, "Do a quest once first. Auto quests repeat the last quest you did.")
 			return
@@ -1141,6 +1162,10 @@ function actions.AutoBuy(player: Player, data, id: string)
 	local rule = data.autoBuy
 	local command, value = string.match(id, "^(%a+):?(.*)$")
 	if command == "on" then
+		if not hasPass(data, "autobuy") then
+			sendToast(player, "Auto-buy comes with the Market Steward game pass. Find it in the Shop.")
+			return
+		end
 		rule.on = true
 		sendToast(player, "Auto-buy is running. It buys while you are in the game.")
 	elseif command == "off" then
@@ -1655,7 +1680,7 @@ end
 
 local function runAutoQuests(player: Player, data)
 	local quest = questById[data.autoQuest]
-	if not data.autoQuestOn or not quest then
+	if not data.autoQuestOn or not quest or not hasPass(data, "autoquest") then
 		return
 	end
 	for _ = 1, GameConfig.AutoQuestsPerSecond do
@@ -1668,7 +1693,7 @@ end
 
 local function runAutoBuy(player: Player, data)
 	local rule = data.autoBuy
-	if not rule.on then
+	if not rule.on or not hasPass(data, "autobuy") then
 		return
 	end
 	restockIfDue(player, data)

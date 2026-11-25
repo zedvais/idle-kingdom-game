@@ -299,7 +299,7 @@ local PAGE_INFO = {
 	},
 	Quests = {
 		about = "Spend energy for gold, experience and the odd piece of gear.",
-		tip = "Repeat a quest to earn bronze, silver and gold mastery. Turn on auto quests to keep repeating your last one.",
+		tip = "Repeat a quest to earn bronze, silver and gold mastery. The Quest Herald pass adds auto quests that repeat your last one.",
 	},
 	Foes = {
 		about = "Bring down each foe once a day for gold, tokens and set gear.",
@@ -307,7 +307,7 @@ local PAGE_INFO = {
 	},
 	Warband = {
 		about = "Soldiers add their attack and defense to yours.",
-		tip = "Roll recruits until you get the rarity you want, then train them and give them gear.",
+		tip = "Roll recruits for empty slots, then train them and give them gear. The Recruiting Sergeant pass rolls until your rarity turns up.",
 	},
 	Inventory = {
 		about = "Your gear, gear sets and trophies.",
@@ -315,7 +315,7 @@ local PAGE_INFO = {
 	},
 	Market = {
 		about = "Gear for sale. The stock changes every 5 minutes.",
-		tip = "Set auto-buy rules below and the Market will buy matching gear for you while you play.",
+		tip = "Buy gear here. With the Market Steward pass, auto-buy picks up matching gear for you while you play.",
 	},
 	["Royal Pass"] = {
 		about = "Fifty tiers of rewards each season.",
@@ -682,7 +682,12 @@ local questRows = {}
 local autoQuestInfo, autoQuestButton = makeRow(pages.Quests, nextOrder(), 50, true)
 autoQuestInfo.RichText = true
 local autoQuestOn = false
+local ownsAutoQuest = false
 autoQuestButton.Activated:Connect(function()
+	if not ownsAutoQuest then
+		send("Robux", "pass:autoquest")
+		return
+	end
 	send("AutoQuest", if autoQuestOn then "off" else "on")
 end)
 local questBoost = makeRow(pages.Quests, nextOrder(), 30, false)
@@ -836,7 +841,12 @@ makeHeading(pages.Market, nextOrder(), "Auto-buy")
 local autoBuyInfo, autoBuyButton = makeRow(pages.Market, nextOrder(), 56, true)
 autoBuyInfo.RichText = true
 local autoBuyRunning = false
+local ownsAutoBuy = false
 autoBuyButton.Activated:Connect(function()
+	if not ownsAutoBuy then
+		send("Robux", "pass:autobuy")
+		return
+	end
 	send("AutoBuy", if autoBuyRunning then "off" else "on")
 end)
 
@@ -891,7 +901,7 @@ recentBuys.TextYAlignment = Enum.TextYAlignment.Top
 local openRecruitWindow -- defined further down, with the recruit window
 
 local warbandSummary, autoRollButton = makeRow(pages.Warband, nextOrder(), 56, true)
-setButton(autoRollButton, "Auto Roll", true, COLOR_ACTION)
+setButton(autoRollButton, "Recruit", true, COLOR_ACTION)
 autoRollButton.Activated:Connect(function()
 	openRecruitWindow(0)
 end)
@@ -1679,10 +1689,10 @@ local function draw(state)
 	if state.xpBoostLeft > 0 then
 		table.insert(boosts, { `2x XP {formatClock(state.xpBoostLeft)}`, COLOR_XP })
 	end
-	if state.autoQuestOn then
+	if state.autoQuestOn and state.passes.autoquest then
 		table.insert(boosts, { "Auto quests", COLOR_INFO })
 	end
-	if state.autoBuy.on then
+	if state.autoBuy.on and state.passes.autobuy then
 		table.insert(boosts, { "Auto-buy", COLOR_INFO })
 	end
 	if state.passes.charter then
@@ -1762,20 +1772,27 @@ local function draw(state)
 	end
 
 	-- Quests
-	autoQuestOn = state.autoQuestOn
+	ownsAutoQuest = state.passes.autoquest == true
+	autoQuestOn = state.autoQuestOn and ownsAutoQuest
 	local autoTarget = nil
 	for _, quest in GameConfig.Quests do
 		if quest.id == state.autoQuest then
 			autoTarget = quest
 		end
 	end
-	if autoTarget then
+	if not ownsAutoQuest then
+		autoQuestInfo.Text = "<b>Auto quests</b>\nThe Quest Herald game pass repeats your last quest whenever you have the energy."
+	elseif autoTarget then
 		autoQuestInfo.Text = `<b>Auto quests: {if autoQuestOn then "ON" else "OFF"}</b>\n`
 			.. `Repeats <b>{autoTarget.name}</b> whenever you have {autoTarget.energy} energy. Do another quest to switch.`
 	else
 		autoQuestInfo.Text = "<b>Auto quests: OFF</b>\nDo a quest once, then turn this on to keep repeating it while you play."
 	end
-	setButton(autoQuestButton, if autoQuestOn then "Turn off" else "Turn on", autoTarget ~= nil, if autoQuestOn then COLOR_DISABLED else COLOR_ACTION)
+	if ownsAutoQuest then
+		setButton(autoQuestButton, if autoQuestOn then "Turn off" else "Turn on", autoTarget ~= nil, if autoQuestOn then COLOR_DISABLED else COLOR_ACTION)
+	else
+		setButton(autoQuestButton, `Get pass\n{robuxText(StoreConfig.getPass("autoquest").price)}`, true, COLOR_BUY)
+	end
 	questBoost.Text = if state.xpBoostLeft > 0 then `Double XP active: {formatClock(state.xpBoostLeft)} left` else ""
 	questBoost.Parent.Visible = state.xpBoostLeft > 0
 	local medalColors = { "#C8844E", "#C9D2DE", "#F0C85A" }
@@ -1857,10 +1874,16 @@ local function draw(state)
 
 	-- Auto-buy
 	local rule = state.autoBuy
-	autoBuyRunning = rule.on
-	autoBuyInfo.Text = `<b>{if rule.on then "RUNNING" else "STOPPED"}</b>   Bought {rule.bought}, spent {Format.short(rule.spent)} gold\n`
-		.. "Buys matching Market items as they appear, while you are in the game."
-	setButton(autoBuyButton, if rule.on then "Stop" else "Start", true, if rule.on then COLOR_ACTION else COLOR_BUY)
+	ownsAutoBuy = state.passes.autobuy == true
+	autoBuyRunning = rule.on and ownsAutoBuy
+	if ownsAutoBuy then
+		autoBuyInfo.Text = `<b>{if rule.on then "RUNNING" else "STOPPED"}</b>   Bought {rule.bought}, spent {Format.short(rule.spent)} gold\n`
+			.. "Buys matching Market items as they appear, while you are in the game."
+		setButton(autoBuyButton, if rule.on then "Stop" else "Start", true, if rule.on then COLOR_ACTION else COLOR_BUY)
+	else
+		autoBuyInfo.Text = "<b>Auto-buy</b>\nThe Market Steward game pass buys gear that matches the rules below every restock."
+		setButton(autoBuyButton, `Get pass\n{robuxText(StoreConfig.getPass("autobuy").price)}`, true, COLOR_BUY)
+	end
 	for index, slot in GameConfig.GearSlots do
 		setButton(slotButtons[index], slot, rule.slots[slot] == true, COLOR_SELECTED)
 	end
@@ -2203,9 +2226,9 @@ local rarityButtons = buttonRow(#GameConfig.Rarities, 196, 32, 4)
 sectionLabel("SLOTS", 272)
 local scopeButtons = buttonRow(3, 292, 34)
 
-local chanceBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 30), UDim2.fromOffset(16, 334), COLOR_ROW)
+local chanceBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 36), UDim2.fromOffset(16, 332), COLOR_ROW)
 addCorner(chanceBox, 6)
-local chanceText = makeText(chanceBox, UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), COLOR_TEXT, 13)
+local chanceText = makeText(chanceBox, UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), COLOR_TEXT, 12)
 
 local startButton = makeButton(recruitWindow, UDim2.fromOffset(260, 44), UDim2.new(0.5, 0, 1, -14), COLOR_GOLD)
 startButton.AnchorPoint = Vector2.new(0.5, 1)
@@ -2298,6 +2321,10 @@ function refreshRecruitWindow()
 	local expected = if chance > 0 then rollCost / chance else 0
 	chanceText.Text = string.format("Chance per roll: %.2f%%   |   Average cost per hit: %s gold", chance * 100, Format.short(expected))
 
+	if not state.passes.autoroll then
+		chanceText.Text ..= "\nOne roll per press. The Recruiting Sergeant pass (Shop) keeps rolling until a hit."
+	end
+	startButton.Text = if state.passes.autoroll then "START" else "ROLL ONCE"
 	local ready = state.level >= tier.level and gold >= rollCost and scopeCount(state, chosenScope) > 0
 	startButton.BackgroundColor3 = if ready then COLOR_GOLD else COLOR_DISABLED
 end
