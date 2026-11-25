@@ -1,7 +1,11 @@
 -- Who wears which piece of gear, and what that gear adds up to.
 --
--- Each owned item may have `wornBy`: 0 means you, a number from 1 up means
--- the soldier in that warband slot, and nil means the item is spare.
+-- data.gear holds two kinds of entries:
+--   * spare stacks: identical items (same name, rarity and set; stats are
+--     fixed by those) kept together with a `count`, so a player can own
+--     millions of pieces without the save growing
+--   * worn pieces: one item each (count 1) with `wornBy`: 0 means you, a
+--     number from 1 up means the soldier in that warband slot
 -- Gear only counts while someone wears it. Each person wears at most one
 -- weapon, one armor and one mount.
 
@@ -13,6 +17,117 @@ local Loadout = {}
 
 local function itemPower(item): number
 	return item.attack + item.defense
+end
+
+-- Items that stack together: same name, rarity and set.
+function Loadout.stackKey(item): string
+	return `{item.name}|{item.rarity}|{item.set or ""}`
+end
+
+function Loadout.newUid(data): string
+	local uid = "i" .. data.nextItemId
+	data.nextItemId += 1
+	return uid
+end
+
+-- How many pieces an entry holds (worn pieces and old saves count 1).
+function Loadout.count(item): number
+	return if type(item.count) == "number" and item.count >= 1 then item.count else 1
+end
+
+-- The spare stack for an item, or nil.
+function Loadout.findStack(data, item)
+	local key = Loadout.stackKey(item)
+	for _, other in data.gear do
+		if other.wornBy == nil and Loadout.stackKey(other) == key then
+			return other
+		end
+	end
+	return nil
+end
+
+-- Adds `count` copies of `item` to the spare stacks (merging into the
+-- stack for that item). The price kept is the average. Returns the stack.
+function Loadout.addSpare(data, item, count: number?)
+	local amount = count or 1
+	local stack = Loadout.findStack(data, item)
+	if stack then
+		local have = Loadout.count(stack)
+		stack.price = math.floor(((stack.price or 0) * have + (item.price or 0) * amount) / (have + amount))
+		stack.count = have + amount
+		return stack
+	end
+	local fresh = table.clone(item)
+	fresh.wornBy = nil
+	fresh.sold = nil
+	fresh.uid = Loadout.newUid(data)
+	fresh.count = amount
+	table.insert(data.gear, fresh)
+	return fresh
+end
+
+-- Takes up to `amount` copies off a spare stack (removing it when empty).
+-- Returns how many were taken.
+function Loadout.takeSpare(data, stack, amount: number): number
+	if stack.wornBy ~= nil then
+		return 0
+	end
+	local have = Loadout.count(stack)
+	local taken = math.min(have, math.max(0, math.floor(amount)))
+	if taken >= have then
+		local index = table.find(data.gear, stack)
+		if index then
+			table.remove(data.gear, index)
+		end
+	else
+		stack.count = have - taken
+	end
+	return taken
+end
+
+-- A worn piece goes back to the spare stacks.
+function Loadout.unwear(data, item)
+	if item.wornBy == nil then
+		return
+	end
+	item.wornBy = nil
+	local stack = Loadout.findStack(data, item)
+	if stack and stack ~= item then
+		local index = table.find(data.gear, item)
+		if index then
+			table.remove(data.gear, index)
+		end
+		Loadout.addSpare(data, item, 1)
+	else
+		item.count = 1
+	end
+end
+
+-- Total pieces owned (worn and spare).
+function Loadout.total(data): number
+	local total = 0
+	for _, item in data.gear do
+		total += Loadout.count(item)
+	end
+	return total
+end
+
+-- Merges loose spare pieces into stacks (older saves kept one entry each).
+function Loadout.restack(data)
+	local spares = {}
+	for index = #data.gear, 1, -1 do
+		local item = data.gear[index]
+		if item.wornBy == nil then
+			table.remove(data.gear, index)
+			table.insert(spares, item)
+		else
+			item.count = 1
+		end
+	end
+	for index = #spares, 1, -1 do
+		local item = spares[index]
+		Loadout.addSpare(data, item, Loadout.count(item))
+	end
 end
 
 -- True when `member` is you (0) or a filled warband slot.
@@ -50,12 +165,13 @@ end
 function Loadout.tidy(data)
 	local taken = {}
 	local worn = {}
+	local loose = {}
 	for _, item in data.gear do
 		if item.wornBy ~= nil then
 			if Loadout.isMember(data, item.wornBy) then
 				table.insert(worn, item)
 			else
-				item.wornBy = nil
+				table.insert(loose, item)
 			end
 		end
 	end
@@ -65,10 +181,13 @@ function Loadout.tidy(data)
 	for _, item in worn do
 		local key = `{item.wornBy}:{item.slot}`
 		if taken[key] then
-			item.wornBy = nil
+			table.insert(loose, item)
 		else
 			taken[key] = true
 		end
+	end
+	for _, item in loose do
+		Loadout.unwear(data, item)
 	end
 end
 
@@ -163,9 +282,11 @@ local function findItem(data, uid: string)
 end
 Loadout.findItem = findItem
 
--- Puts an item on a member. Whatever they wore in that slot becomes spare,
--- and if someone else wore this item, they now have that slot empty.
--- Returns the item that was taken off (or nil), or false and a reason.
+-- Puts an item on a member. `uid` may be a spare stack (one copy is taken
+-- off it) or a piece someone else wears (it moves). Whatever the member
+-- wore in that slot goes back to the spare stacks.
+-- Returns true and the item that was taken off (or nil), or false and a
+-- reason, plus the piece now worn.
 function Loadout.equip(data, uid: string, member: number)
 	local item = findItem(data, uid)
 	if not item then
@@ -175,20 +296,28 @@ function Loadout.equip(data, uid: string, member: number)
 		return false, "Nobody is in that slot."
 	end
 	local removed = nil
-	for _, other in data.gear do
+	for _, other in table.clone(data.gear) do
 		if other ~= item and other.wornBy == member and other.slot == item.slot then
-			other.wornBy = nil
 			removed = other
+			Loadout.unwear(data, other)
 		end
 	end
-	item.wornBy = member
-	return true, removed
+	local piece = item
+	if item.wornBy == nil and Loadout.count(item) > 1 then
+		item.count = Loadout.count(item) - 1
+		piece = table.clone(item)
+		piece.uid = Loadout.newUid(data)
+		table.insert(data.gear, piece)
+	end
+	piece.count = 1
+	piece.wornBy = member
+	return true, removed, piece
 end
 
 function Loadout.unequip(data, uid: string): boolean
 	local item = findItem(data, uid)
 	if item and item.wornBy ~= nil then
-		item.wornBy = nil
+		Loadout.unwear(data, item)
 		return true
 	end
 	return false
@@ -196,9 +325,9 @@ end
 
 -- Takes everything off one member (when a soldier is released).
 function Loadout.clearMember(data, member: number)
-	for _, item in data.gear do
+	for _, item in table.clone(data.gear) do
 		if item.wornBy == member then
-			item.wornBy = nil
+			Loadout.unwear(data, item)
 		end
 	end
 end
@@ -208,23 +337,35 @@ end
 -- players who want sets equip those by hand.
 function Loadout.autoEquip(data)
 	local members = Loadout.members(data)
-	for _, item in data.gear do
-		item.wornBy = nil
+	for _, item in table.clone(data.gear) do
+		Loadout.unwear(data, item)
 	end
 	for _, gearSlot in GameConfig.GearSlots do
-		local pieces = {}
+		local stacks = {}
 		for _, item in data.gear do
-			if item.slot == gearSlot then
-				table.insert(pieces, item)
+			if item.slot == gearSlot and item.wornBy == nil then
+				table.insert(stacks, item)
 			end
 		end
-		table.sort(pieces, function(a, b)
+		table.sort(stacks, function(a, b)
 			return itemPower(a) > itemPower(b)
 		end)
-		for index, member in members do
-			local piece = pieces[index]
-			if piece then
-				piece.wornBy = member
+		local index = 1
+		for _, member in members do
+			local stack = stacks[index]
+			while stack and Loadout.count(stack) <= 0 do
+				index += 1
+				stack = stacks[index]
+			end
+			if not stack then
+				break
+			end
+			if stack.uid and findItem(data, stack.uid) == stack then
+				local ok, _, piece = Loadout.equip(data, stack.uid, member)
+				if ok and piece == stack then
+					-- The last copy was worn; move on to the next stack.
+					index += 1
+				end
 			end
 		end
 	end
@@ -237,6 +378,7 @@ function Loadout.fillEmpty(data, item): number?
 	for _, member in Loadout.members(data) do
 		if not wearing[member][item.slot] then
 			item.wornBy = member
+			item.count = 1
 			return member
 		end
 	end

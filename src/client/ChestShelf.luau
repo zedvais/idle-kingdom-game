@@ -185,7 +185,7 @@ end
 function ChestShelf.draw(state, ui)
 	local colors = ui.colors
 	local chests = state.chests or {}
-	local room = state.maxGear - #state.gear
+	local room = math.huge -- the armory has no limit
 	local total = 0
 	for id, card in cards do
 		local have = tonumber(chests[id]) or 0

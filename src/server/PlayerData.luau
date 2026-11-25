@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local EstateConfig = require(ReplicatedStorage.Shared.EstateConfig)
+local Loadout = require(script.Parent.Loadout)
 
 local PlayerData = {}
 
@@ -189,12 +190,20 @@ local function repair(data)
 		end
 	end
 	data.foes = nil -- replaced by stages
-	-- Gear stats are fixed by name and rarity: bring older items in line.
-	for _, item in data.gear do
+	-- Gear stats are fixed by name and rarity: bring older items in line,
+	-- then merge identical spare pieces into stacks.
+	for index = #data.gear, 1, -1 do
+		local item = data.gear[index]
 		if type(item) == "table" and type(item.slot) == "string" and type(item.name) == "string" then
 			item.attack, item.defense = GameConfig.getGearStats(item.slot, item.name, item.rarity or "Common")
+		else
+			table.remove(data.gear, index)
 		end
 	end
+	if type(data.nextItemId) ~= "number" then
+		data.nextItemId = 1
+	end
+	Loadout.restack(data)
 	-- Every castle needs its levels and builder, and the home castle exists.
 	local estate = data.estate
 	for _, resource in EstateConfig.Resources do

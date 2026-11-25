@@ -1288,16 +1288,51 @@ for _, set in GameConfig.GearSets do
 	button.AutoButtonColor = false
 	setRows[set.id] = { info = info, button = button }
 end
+-- Inventory rows: one per stack of identical spare pieces or worn piece.
+-- Rows are made as needed (the armory has no limit).
 local gearRows = {}
-for index = 1, GameConfig.MaxGearOwned + StoreConfig.ArmoryExtra do
-	local row = makeItemRow(pages.Inventory, nextOrder())
+local gearHolder = makeFrame(pages.Inventory, UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 0), COLOR_PANEL)
+gearHolder.BackgroundTransparency = 1
+gearHolder.AutomaticSize = Enum.AutomaticSize.Y
+gearHolder.LayoutOrder = nextOrder()
+do
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 5)
+	list.Parent = gearHolder
+end
+local function gearRow(index: number)
+	local row = gearRows[index]
+	if row then
+		return row
+	end
+	row = makeItemRow(gearHolder, index)
 	row.uid = nil
+	row.count = 1
 	gearRows[index] = row
 	row.button.Activated:Connect(function()
-		if row.uid then
+		if not row.uid then
+			return
+		end
+		if row.count > 1 and ui and ui.askAmount then
+			local uid, price, name = row.uid, row.price or 0, row.name or "pieces"
+			ui.askAmount({
+				title = "Sell how many?",
+				note = `<b>{name}</b>: {row.count} spare.`,
+				max = row.count,
+				confirm = "Sell",
+				preview = function(amount: number)
+					return `+{Format.short(math.floor(price * GameConfig.SellShare) * amount)} gold`
+				end,
+				onConfirm = function(amount: number)
+					send("Sell", `{uid}:{amount}`)
+				end,
+			})
+		else
 			send("Sell", row.uid)
 		end
 	end)
+	return row
 end
 
 -- Foes: a fight panel for the chosen stage, then every stage by house,
@@ -2500,7 +2535,11 @@ local function draw(state)
 		for _ in state.gearInUse do
 			wornCount += 1
 		end
-		armorySummary.Text = `Gear {#state.gear} / {state.maxGear}, {wornCount} worn. Gear only counts while someone wears it. `
+		local pieces = 0
+		for _, item in state.gear do
+			pieces += item.count or 1
+		end
+		armorySummary.Text = `Gear: {Format.short(pieces)} pieces, {wornCount} worn. No limit: identical spares stack. Gear only counts while someone wears it. `
 			.. `Use the Gear buttons on the Warband page, or Equip best there. Take gear off before selling it.`
 	end
 	local gear = {}
@@ -2517,18 +2556,25 @@ local function draw(state)
 		end
 		return a.attack + a.defense > b.attack + b.defense
 	end)
-	for index, row in gearRows do
+	for index = 1, math.max(#gear, #gearRows) do
 		local item = gear[index]
+		local row = if item then gearRow(index) else gearRows[index]
 		row.uid = if item then item.uid else nil
+		row.count = if item then (item.count or 1) else 1
+		row.price = if item then item.price else 0
+		row.name = if item then `{item.rarity} {item.name}` else nil
 		row.info.Parent.Visible = item ~= nil
 		if item then
 			ItemArt.set(row.picture, item)
 			local worn = item.wornBy ~= nil
 			local status = if worn then `Worn by {memberLabel(state, item.wornBy)}` else "Spare"
 			local counts = if worn then memberSetCounts(state, item.wornBy) else nil
-			row.info.Text = `{rarityName(item)}  ({string.lower(item.slot)}){setTag(item, counts)}\n{statText(item.attack, item.defense)}   |   {status}`
+			local stackText = if (item.count or 1) > 1 then `  <b>x{Format.short(item.count)}</b>` else ""
+			row.info.Text = `{rarityName(item)}{stackText}  ({string.lower(item.slot)}){setTag(item, counts)}\n{statText(item.attack, item.defense)}   |   {status}`
 			if worn then
 				setButton(row.button, "Worn", false, COLOR_ACTION)
+			elseif (item.count or 1) > 1 then
+				setButton(row.button, `Sell...\n+{Format.short(item.price * GameConfig.SellShare)} each`, true, COLOR_ACTION)
 			else
 				setButton(row.button, `Sell\n+{Format.short(item.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
 			end
@@ -2987,7 +3033,10 @@ do
 	emptyNote.Text = "You own nothing for this slot yet. Buy gear in the Market or win it from quests and foes."
 
 	local equipRows = {}
-	for index = 1, GameConfig.MaxGearOwned + StoreConfig.ArmoryExtra do
+	local function equipRow(index: number)
+		if equipRows[index] then
+			return equipRows[index]
+		end
 		local row = makeFrame(equipList, UDim2.new(1, -10, 0, 46), UDim2.fromOffset(0, 0), COLOR_ROW)
 		row.LayoutOrder = index
 		addCorner(row, 6)
@@ -3003,6 +3052,7 @@ do
 				send("Equip", `{entry.uid}:{equipMember}`)
 			end
 		end)
+		return entry
 	end
 
 	function refreshEquipWindow()
@@ -3076,8 +3126,9 @@ do
 		listLabel.Text = `YOUR {string.upper(equipSlot)}S ({#pieces}), STRONGEST FIRST`
 		emptyNote.Visible = #pieces == 0
 
-		for index, row in equipRows do
+		for index = 1, math.max(#pieces, #equipRows) do
 			local item = pieces[index]
+			local row = if item then equipRow(index) else equipRows[index]
 			row.uid = if item then item.uid else nil
 			row.frame.Visible = item ~= nil
 			if not item then
@@ -3091,7 +3142,8 @@ do
 			else
 				where = "Spare"
 			end
-			row.info.Text = `{rarityName(item)} {setTag(item, nil)}\n{statText(item.attack, item.defense)}   |   {where}`
+			local stackText = if (item.count or 1) > 1 then ` x{Format.short(item.count)}` else ""
+			row.info.Text = `{rarityName(item)}{stackText} {setTag(item, nil)}\n{statText(item.attack, item.defense)}   |   {where}`
 			if item.wornBy == equipMember then
 				row.usable = false
 				setButton(row.button, "Wearing", false, COLOR_BUY)

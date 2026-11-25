@@ -93,7 +93,7 @@ local function spareByKey(state)
 	for _, item in state.gear do
 		if item.wornBy == nil then
 			local key = RelicConfig.getKey(item)
-			spare[key] = (spare[key] or 0) + 1
+			spare[key] = (spare[key] or 0) + (item.count or 1)
 		end
 	end
 	return spare
@@ -149,14 +149,13 @@ local function askAmount(ui, entry, depositing: boolean)
 	local held = state.relics.items[entry.key]
 	local heldCount = if held then held.count else 0
 	local spare = spareByKey(state)[entry.key] or 0
-	local room = state.maxGear - #state.gear
-	local most = if depositing then spare else math.min(heldCount, math.max(0, room))
+	local most = if depositing then spare else heldCount
 	if most <= 0 then
 		return
 	end
 	ui.askAmount({
 		title = if depositing then "Deposit to the hall" else "Withdraw from the hall",
-		note = `<b>{entry.rarity} {entry.name}</b>: {if depositing then `{spare} spare in your armory` else `{heldCount} in the hall, room for {math.max(0, room)}`}.`,
+		note = `<b>{entry.rarity} {entry.name}</b>: {if depositing then `{spare} spare in your armory` else `{heldCount} in the hall`}.`,
 		max = most,
 		confirm = if depositing then "Deposit" else "Withdraw",
 		preview = function(amount)
@@ -424,7 +423,7 @@ function RelicPage.draw(state, ui)
 	local relics = state.relics
 	local seen = relics.seen or {}
 	local spare = spareByKey(state)
-	local room = state.maxGear - #state.gear
+	local room = math.huge -- the armory has no limit
 
 	local collectedCount = 0
 	for _, entry in catalog do

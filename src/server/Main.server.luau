@@ -136,14 +136,16 @@ local function hasPass(data, key: string): boolean
 	return data.passes[key] == true
 end
 
--- How many pieces of gear the armory holds.
-local function maxGear(data): number
-	return GameConfig.MaxGearOwned + (if hasPass(data, "armory") then StoreConfig.ArmoryExtra else 0)
+-- The armory has no limit: identical spare pieces stack (see Loadout), so
+-- even millions of pieces stay small in the save. These stay so older code
+-- paths read the same.
+local NO_LIMIT = 2 ^ 31
+local function maxGear(_data): number
+	return NO_LIMIT
 end
 
--- True when no more gear fits.
-local function armoryFull(data): boolean
-	return #data.gear >= maxGear(data)
+local function armoryFull(_data): boolean
+	return false
 end
 
 -- Marks an item as discovered in the Relic Hall catalog.
@@ -803,19 +805,21 @@ end
 -- with how many of each level, so they can be taken back out.
 ---------------------------------------------------------------------------
 
-local function relicDeposit(data, item)
+local function relicDeposit(data, item, count: number?)
+	local amount = count or 1
 	markSeen(data, item)
 	local key = RelicConfig.getKey(item)
 	local entry = data.relics.items[key]
 	if not entry then
-		entry = { name = item.name, slot = item.slot, rarity = item.rarity, set = item.set, count = 0, levels = {} }
+		entry = { name = item.name, slot = item.slot, rarity = item.rarity, set = item.set, count = 0, price = item.price or 0 }
 		data.relics.items[key] = entry
 	end
-	entry.count += 1
-	local levelKey = "L" .. item.level
-	entry.levels[levelKey] = (entry.levels[levelKey] or 0) + 1
+	local had = entry.count
+	entry.price = math.floor(((entry.price or item.price or 0) * had + (item.price or 0) * amount) / (had + amount))
+	entry.count += amount
+	entry.levels = nil -- older saves kept copies by level; stats no longer depend on it
 	local before = data.relics.count
-	data.relics.count += 1
+	data.relics.count += amount
 	for _, milestone in RelicConfig.Milestones do
 		if before < milestone.pieces and data.relics.count >= milestone.pieces then
 			data.titles[milestone.title] = true
@@ -824,28 +828,16 @@ local function relicDeposit(data, item)
 	end
 end
 
--- Takes one copy out of the hall, highest level first, as a new item
--- without a uid. Returns nil when there is none.
-local function relicTake(data, key: string)
+-- Takes up to `amount` copies out of the hall. Returns an item (one copy's
+-- details) and how many were taken, or nil and 0.
+local function relicTake(data, key: string, amount: number)
 	local entry = data.relics.items[key]
-	if not entry or entry.count <= 0 then
-		return nil
+	if not entry or entry.count <= 0 or amount <= 0 then
+		return nil, 0
 	end
-	local best = nil
-	for levelKey, copies in entry.levels do
-		local level = tonumber(string.sub(levelKey, 2))
-		if level and copies > 0 and (not best or level > best) then
-			best = level
-		end
-	end
-	best = best or 1
-	local levelKey = "L" .. best
-	entry.levels[levelKey] = (entry.levels[levelKey] or 1) - 1
-	if entry.levels[levelKey] <= 0 then
-		entry.levels[levelKey] = nil
-	end
-	entry.count -= 1
-	data.relics.count -= 1
+	local taken = math.min(entry.count, math.floor(amount))
+	entry.count -= taken
+	data.relics.count -= taken
 	if entry.count <= 0 then
 		data.relics.items[key] = nil
 	end
@@ -857,12 +849,12 @@ local function relicTake(data, key: string)
 		slot = entry.slot,
 		name = entry.name,
 		rarity = rarity.id,
-		level = best,
+		level = 1,
 		set = entry.set,
 		attack = attack,
 		defense = defense,
-		price = GameConfig.getItemPrice(gearType.price, best, rarity),
-	}
+		price = entry.price or GameConfig.getItemPrice(gearType.price, 1, rarity),
+	}, taken
 end
 
 -- Adds a new item to the armory. If "New gear fills empty slots" is on, it
@@ -870,15 +862,16 @@ end
 -- Returns a short note about who wears it, for the toast.
 local function addGear(data, item): string
 	markSeen(data, item)
-	item.uid = "i" .. data.nextItemId
-	data.nextItemId += 1
-	table.insert(data.gear, item)
+	item.sold = nil
 	if data.autoEquipNew then
 		local member = Loadout.fillEmpty(data, item)
 		if member ~= nil then
+			item.uid = Loadout.newUid(data)
+			table.insert(data.gear, item)
 			return if member == 0 then " You put it on." else ` {memberName(data, member)} put it on.`
 		end
 	end
+	Loadout.addSpare(data, item, 1)
 	return ""
 end
 
@@ -1330,21 +1323,33 @@ function actions.Buy(player: Player, data, id: string)
 	end
 end
 
--- Sells a piece of gear for part of its price.
+-- Sells spare gear for part of its price. id is "<uid>" (one piece),
+-- "<uid>:all" or "<uid>:<amount>".
 function actions.Sell(player: Player, data, id: string)
-	for index, item in data.gear do
-		if item.uid == id then
-			if item.wornBy ~= nil then
-				sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} before selling it.`)
-				return
-			end
-			table.remove(data.gear, index)
-			local refund = math.floor(item.price * GameConfig.SellShare)
-			data.gold += refund
-			sendToast(player, `Sold {item.rarity} {item.name} for {Format.short(refund)} gold.`)
-			return
-		end
+	local uid, amountText = string.match(id or "", "^(i%d+):?(%w*)$")
+	if not uid then
+		return
 	end
+	local item = Loadout.findItem(data, uid)
+	if not item then
+		return
+	end
+	if item.wornBy ~= nil then
+		sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} before selling it.`)
+		return
+	end
+	local want = if amountText == "all" then Loadout.count(item) elseif amountText == "" then 1 else tonumber(amountText)
+	if not want or want < 1 then
+		return
+	end
+	local sold = Loadout.takeSpare(data, item, want)
+	if sold <= 0 then
+		return
+	end
+	local refund = math.floor((item.price or 0) * GameConfig.SellShare) * sold
+	data.gold += refund
+	local what = if sold > 1 then `{sold} x {item.rarity} {item.name}` else `{item.rarity} {item.name}`
+	sendToast(player, `Sold {what} for {Format.short(refund)} gold.`)
 end
 
 -- One attack on a foe stage. Returns "cleared", "down" or "hit" with the
@@ -1752,17 +1757,17 @@ end
 
 -- Puts one spare piece in the Relic Hall. id is its uid.
 function actions.RelicDeposit(player: Player, data, id: string)
-	for index, item in data.gear do
-		if item.uid == id then
-			if item.wornBy ~= nil then
-				sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} first.`)
-				return
-			end
-			table.remove(data.gear, index)
-			relicDeposit(data, item)
-			sendToast(player, `The {item.rarity} {item.name} is now in the Relic Hall.`)
-			return
-		end
+	local item = Loadout.findItem(data, id or "")
+	if not item then
+		return
+	end
+	if item.wornBy ~= nil then
+		sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} first.`)
+		return
+	end
+	if Loadout.takeSpare(data, item, 1) > 0 then
+		relicDeposit(data, item, 1)
+		sendToast(player, `The {item.rarity} {item.name} is now in the Relic Hall.`)
 	end
 end
 
@@ -1775,47 +1780,34 @@ function actions.RelicDepositMany(player: Player, data, id: string)
 		return
 	end
 	local moved = 0
-	for index = #data.gear, 1, -1 do
-		local item = data.gear[index]
+	for _, item in table.clone(data.gear) do
 		if moved < amount and item.wornBy == nil and RelicConfig.getKey(item) == key then
-			table.remove(data.gear, index)
-			relicDeposit(data, item)
-			moved += 1
+			local taken = Loadout.takeSpare(data, item, amount - moved)
+			if taken > 0 then
+				relicDeposit(data, item, taken)
+				moved += taken
+			end
 		end
 	end
 	if moved > 0 then
-		sendToast(player, `{moved} pieces went to the Relic Hall.`)
+		sendToast(player, `{Format.short(moved)} pieces went to the Relic Hall.`)
 	else
 		sendToast(player, "No spare copies of that item. Worn gear stays out.")
 	end
 end
 
--- "<amount>:<key>": takes up to that many copies back out, as far as the
--- armory has room. The highest levels come out first.
+-- "<amount>:<key>": takes up to that many copies back out.
 function actions.RelicWithdraw(player: Player, data, id: string)
 	local amountText, key = string.match(id, "^(%d+):(.+)$")
 	local amount = tonumber(amountText)
 	if not amount or amount < 1 or not data.relics.items[key] then
 		return
 	end
-	local room = maxGear(data) - #data.gear
-	if room <= 0 then
-		sendToast(player, "Your armory is full. Make room before taking pieces out.")
-		return
+	local item, moved = relicTake(data, key, amount)
+	if item and moved > 0 then
+		Loadout.addSpare(data, item, moved)
 	end
-	local moved = 0
-	while moved < math.min(amount, room) do
-		local item = relicTake(data, key)
-		if not item then
-			break
-		end
-		item.uid = "i" .. data.nextItemId
-		data.nextItemId += 1
-		table.insert(data.gear, item)
-		moved += 1
-	end
-	local note = if moved < amount and moved == room then " The armory is full now." else ""
-	sendToast(player, `{moved} pieces are back in your armory.{note}`)
+	sendToast(player, `{Format.short(moved)} pieces are back in your armory.`)
 end
 
 -- Deposit all / withdraw all match an optional filter "<slot>:<rarity>",
@@ -1835,47 +1827,34 @@ end
 function actions.RelicDepositAll(player: Player, data, id: string)
 	local matches = relicFilter(id)
 	local moved = 0
-	for index = #data.gear, 1, -1 do
-		local item = data.gear[index]
+	for _, item in table.clone(data.gear) do
 		if item.wornBy == nil and matches(item) then
-			table.remove(data.gear, index)
-			relicDeposit(data, item)
-			moved += 1
+			local taken = Loadout.takeSpare(data, item, Loadout.count(item))
+			relicDeposit(data, item, taken)
+			moved += taken
 		end
 	end
-	sendToast(player, if moved > 0 then `{moved} pieces went to the Relic Hall.` else "No spare gear to deposit. Worn gear stays out.")
+	sendToast(player, if moved > 0 then `{Format.short(moved)} pieces went to the Relic Hall.` else "No spare gear to deposit. Worn gear stays out.")
 end
 
--- Takes pieces that match the filter back out, as far as the armory has room.
+-- Takes every piece that matches the filter back out.
 function actions.RelicWithdrawAll(player: Player, data, id: string)
 	local matches = relicFilter(id)
-	local room = maxGear(data) - #data.gear
-	if room <= 0 then
-		sendToast(player, "Your armory is full. Make room before taking pieces out.")
-		return
-	end
 	local keys = {}
 	for key, entry in data.relics.items do
 		if matches(entry) then
 			table.insert(keys, key)
 		end
 	end
-	table.sort(keys)
 	local moved = 0
 	for _, key in keys do
-		while moved < room do
-			local item = relicTake(data, key)
-			if not item then
-				break
-			end
-			item.uid = "i" .. data.nextItemId
-			data.nextItemId += 1
-			table.insert(data.gear, item)
-			moved += 1
+		local item, taken = relicTake(data, key, math.huge)
+		if item and taken > 0 then
+			Loadout.addSpare(data, item, taken)
+			moved += taken
 		end
 	end
-	local note = if moved == room then " The armory is full now." else ""
-	sendToast(player, `{moved} pieces are back in your armory.{note}`)
+	sendToast(player, `{Format.short(moved)} pieces are back in your armory.`)
 end
 
 -- Opens chests from the inventory. id is "<chest id>:<count>", count 1 or
@@ -1895,12 +1874,7 @@ function actions.ChestOpen(player: Player, data, id: string)
 	if have <= 0 then
 		return
 	end
-	local room = maxGear(data) - #data.gear
-	if room <= 0 then
-		sendToast(player, "Your armory is full. Sell or deposit some gear, then open the chest.")
-		return
-	end
-	local count = math.min(want, have, room)
+	local count = math.min(want, have)
 	local items = {}
 	for _ = 1, count do
 		local rarityId = ChestConfig.rollRarity(chest, random)
