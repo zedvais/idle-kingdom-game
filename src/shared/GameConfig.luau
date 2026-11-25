@@ -540,6 +540,8 @@ function GameConfig.getHit(attack: number, defense: number): number
 end
 GameConfig.HitRollMin = 0.85
 GameConfig.HitRollMax = 1.15
+-- How many attacks the Attack x5 button makes at most.
+GameConfig.MultiAttack = 5
 
 -- Fills in each stage's numbers from its level and place in its house.
 -- `power` is roughly the attack a player has at that level.
@@ -567,6 +569,9 @@ local function buildStages()
 		stage.xp = math.floor(GameConfig.getXpNeeded(level) * (0.15 + 0.05 * place))
 		stage.tokens = houseIndex * 2 + place
 		stage.renown = stage.tokens * 2
+		-- Paid once ever, the first time the stage is beaten.
+		stage.firstCrowns = houseIndex * 5
+		stage.firstTokens = stage.tokens * 2
 		local house = GameConfig.Houses[houseIndex]
 		stage.houseName = house.name
 		stage.chest = if place == 4 then house.chest else nil

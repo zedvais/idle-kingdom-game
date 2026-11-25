@@ -124,6 +124,16 @@ local function newData()
 			active = "", -- tech being researched, "" for none
 			endsAt = 0,
 		},
+		-- Profile, mail, Relic Hall and rebirth
+		titles = {}, -- [title text] = true for every title earned
+		codes = {}, -- [CODE] = true once redeemed
+		lifetime = {}, -- [stat] = all-time count (quests, foes, attacks, goldEarned, ...)
+		firstClears = {}, -- [stage id] = true once its first clear reward is paid
+		mail = {}, -- newest first: { id, time, title, text, rewards, claimed, read }
+		mailNext = 1,
+		newsSeen = {}, -- [news id] = true once delivered
+		relics = { points = 0, count = 0 },
+		rebirth = { count = 0, stars = 0 },
 		lastSeen = 0,
 	}
 end
@@ -141,7 +151,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "pass", "weekly", "bounty", "streak", "festival", "research" } do
+	for _, name in { "autoBuy", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default

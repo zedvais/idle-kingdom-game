@@ -14,6 +14,9 @@ local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
 local BountyConfig = require(ReplicatedStorage.Shared.BountyConfig)
 local FestivalConfig = require(ReplicatedStorage.Shared.FestivalConfig)
 local ResearchConfig = require(ReplicatedStorage.Shared.ResearchConfig)
+local ProfileConfig = require(ReplicatedStorage.Shared.ProfileConfig)
+local RelicConfig = require(ReplicatedStorage.Shared.RelicConfig)
+local RebirthConfig = require(ReplicatedStorage.Shared.RebirthConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
 local Recruit = require(script.Parent.Recruit)
@@ -41,6 +44,7 @@ remotes.Parent = ReplicatedStorage
 local sessions = {} -- [Player] = { data, canSave, actionCount, regen }
 local festivalTop = {} -- { { name, points } } for this week, refreshed each minute
 local festivalTopWeek = -1
+local boardTops = {} -- [ranking board key] = { { name, score } }, all servers
 local random = Random.new()
 
 -- Quick lookups from an id to its settings.
@@ -65,6 +69,41 @@ local tokenItemById = indexById(GameConfig.TokenShop)
 local function sendToast(player: Player, text: string)
 	player:SetAttribute("ToastText", text)
 	player:SetAttribute("ToastId", (player:GetAttribute("ToastId") or 0) + 1)
+end
+
+-- Puts a letter in the player's mail. rewards is a list of rewards to
+-- claim (see StoreConfig), or nil for a letter that only tells something.
+local function sendMail(data, title: string, text: string, rewards)
+	local id = "m" .. data.mailNext
+	data.mailNext += 1
+	table.insert(data.mail, 1, {
+		id = id,
+		time = os.time(),
+		title = title,
+		text = text,
+		rewards = rewards,
+		claimed = rewards == nil,
+		read = false,
+	})
+	-- Too many letters: throw away the oldest one with nothing to claim.
+	while #data.mail > ProfileConfig.MailKept do
+		local dropped = false
+		for index = #data.mail, 1, -1 do
+			if data.mail[index].claimed then
+				table.remove(data.mail, index)
+				dropped = true
+				break
+			end
+		end
+		if not dropped then
+			table.remove(data.mail)
+		end
+	end
+end
+
+-- Adds to an all-time number shown on the Profile page.
+local function countLifetime(data, stat: string, amount: number)
+	data.lifetime[stat] = (data.lifetime[stat] or 0) + amount
 end
 
 -- True if the player owns this game pass ("charter", "couriers", ...).
@@ -142,6 +181,13 @@ local function getPerkBonus(data, gear)
 	end
 	total.income += festivalBonus("income")
 	total.attack += festivalBonus("attack")
+	-- Rebirth Stars and the Relic Hall last forever.
+	for key, amount in RebirthConfig.PerStar do
+		total[key] += amount * data.rebirth.stars
+	end
+	local relicBonus = RelicConfig.getBonus(data.relics.points)
+	total.attack += relicBonus
+	total.defense += relicBonus
 	return total
 end
 
@@ -329,6 +375,7 @@ end
 -- Counts one kind of action for the Bounty Board and Festival Week.
 -- stat is one of BountyConfig.Stats.
 local function track(data, stat: string, amount: number)
+	countLifetime(data, stat, amount)
 	checkBounty(data)
 	data.bounty.daily[stat] = (data.bounty.daily[stat] or 0) + amount
 	data.bounty.weekly[stat] = (data.bounty.weekly[stat] or 0) + amount
@@ -393,6 +440,7 @@ local function checkTrophies(player: Player, data)
 		if not data.trophies[trophy.id] and trophyProgress(data, trophy.kind) >= trophy.value then
 			data.trophies[trophy.id] = true
 			sendToast(player, `Trophy earned: {trophy.name}! Check your Inventory.`)
+			sendMail(data, `Trophy: {trophy.name}`, `{trophy.note}. Its bonus is yours for good.`, nil)
 		end
 	end
 end
@@ -514,6 +562,16 @@ local function refresh(player: Player)
 		festivalTop = if festivalTopWeek == data.festival.week then festivalTop else {},
 		research = data.research,
 		researchLeft = math.max(0, data.research.endsAt - now),
+		firstSeen = data.firstSeen,
+		lifetime = data.lifetime,
+		titles = data.titles,
+		firstClears = data.firstClears,
+		mail = data.mail,
+		relics = data.relics,
+		relicBonus = RelicConfig.getBonus(data.relics.points),
+		rebirth = data.rebirth,
+		rebirthStars = RebirthConfig.getStars(data.level),
+		rankings = boardTops,
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -622,7 +680,9 @@ function actions.Quest(player: Player, data, id: string)
 	local trophyBonus = getPerkBonus(data)
 	data.energy -= quest.energy
 	onQuestEnergy(data, quest.energy)
-	data.gold += math.floor(GameConfig.getQuestGold(quest, completions) * (1 + trophyBonus.questGold))
+	local questGold = math.floor(GameConfig.getQuestGold(quest, completions) * (1 + trophyBonus.questGold))
+	data.gold += questGold
+	countLifetime(data, "goldEarned", questGold)
 	data.quests[id] = completions + 1
 	track(data, "quests", 1)
 	data.autoQuest = id
@@ -982,32 +1042,34 @@ function actions.Sell(player: Player, data, id: string)
 	end
 end
 
--- One attack on a foe stage. id is the stage id ("s1").
-function actions.Fight(player: Player, data, id: string)
-	local stage = stageById[id]
-	if not stage or data.level < stage.level then
-		return
+-- One attack on a foe stage. Returns "cleared", "down" or "hit" with the
+-- damage dealt and taken, or nil if the attack could not be made. A toast
+-- says why, unless `quiet` is set (later attacks of Attack x5).
+local function attackStage(player: Player, data, stage, quiet: boolean): (string?, number, number)
+	local id = stage.id
+	local function refuse(text: string)
+		if not quiet then
+			sendToast(player, text)
+		end
+		return nil, 0, 0
 	end
 	checkStageDay(data)
 	if stage.index > data.highestStage + 1 then
-		sendToast(player, "Beat the stage before this one first.")
-		return
+		return refuse("Beat the stage before this one first.")
 	end
 	if data.stageCleared[id] then
-		sendToast(player, `{stage.name} is already beaten today. Foes return at 00:00 UTC.`)
-		return
+		return refuse(`{stage.name} is already beaten today. Foes return at 00:00 UTC.`)
 	end
 	if data.stamina < 1 then
-		sendToast(player, "Not enough stamina. It refills over time.")
-		return
+		return refuse("Not enough stamina. It refills over time.")
 	end
 	if data.health < GameConfig.MinHealthToFight then
-		sendToast(player, `You are too wounded. Rest until you have {GameConfig.MinHealthToFight} health.`)
-		return
+		return refuse(`You are too wounded. Rest until you have {GameConfig.MinHealthToFight} health.`)
 	end
 
 	local stats = getStats(data)
 	data.stamina -= 1
+	countLifetime(data, "attacks", 1)
 
 	local roll = random:NextNumber(GameConfig.HitRollMin, GameConfig.HitRollMax)
 	local damage = math.max(1, math.floor(GameConfig.getHit(stats.attack, stage.defense) * roll))
@@ -1018,13 +1080,21 @@ function actions.Fight(player: Player, data, id: string)
 		data.stageCleared[id] = true
 		data.highestStage = math.max(data.highestStage, stage.index)
 		data.gold += stage.gold
+		countLifetime(data, "goldEarned", stage.gold)
 		data.tokens += stage.tokens
 		data.renown += stage.renown
 		onFoeBeaten(data)
 		track(data, "foes", 1)
+		local first = ""
+		if not data.firstClears[id] then
+			data.firstClears[id] = true
+			data.crowns += stage.firstCrowns
+			data.tokens += stage.firstTokens
+			first = ` First clear bonus: +{stage.firstCrowns} Crowns, +{stage.firstTokens} tokens!`
+		end
 		sendToast(
 			player,
-			`Stage {stage.index} cleared! {stage.name} is beaten. +{Format.short(stage.gold)} gold, +{stage.xp} XP, +{stage.tokens} boss tokens.`
+			`Stage {stage.index} cleared! {stage.name} is beaten. +{Format.short(stage.gold)} gold, +{stage.xp} XP, +{stage.tokens} boss tokens.{first}`
 		)
 		addXp(player, data, stage.xp)
 		if stage.chest then
@@ -1042,7 +1112,7 @@ function actions.Fight(player: Player, data, id: string)
 			local minRank = math.max(1, GameConfig.getRarityRank(house and house.chest or "Common") - 1)
 			giveGear(player, data, minRank, `{set.name} set piece from {stage.name}`, set)
 		end
-		return
+		return "cleared", damage, 0
 	end
 	data.stageHealth[id] = health
 
@@ -1052,10 +1122,50 @@ function actions.Fight(player: Player, data, id: string)
 	if data.health <= 0 then
 		-- Losing sends the foe back to full health.
 		data.stageHealth[id] = nil
+		countLifetime(data, "knockdowns", 1)
 		sendToast(player, `{stage.name} knocked you down and recovered. Rest, grow stronger and try again.`)
+		return "down", damage, hurt
+	end
+	if not quiet then
+		sendToast(player, `You hit for {Format.short(damage)}. {stage.name} hits back for {Format.short(hurt)}.`)
+	end
+	return "hit", damage, hurt
+end
+
+-- One attack on a foe stage. id is the stage id ("s1").
+function actions.Fight(player: Player, data, id: string)
+	local stage = stageById[id]
+	if stage and data.level >= stage.level then
+		attackStage(player, data, stage, false)
+	end
+end
+
+-- Several attacks in a row (Attack x5). Stops early when the foe falls, you
+-- are knocked down, or you run out of stamina or health.
+function actions.FightMany(player: Player, data, id: string)
+	local stage = stageById[id]
+	if not stage or data.level < stage.level then
 		return
 	end
-	sendToast(player, `You hit for {Format.short(damage)}. {stage.name} hits back for {Format.short(hurt)}.`)
+	local attacks, dealt, taken = 0, 0, 0
+	for _ = 1, GameConfig.MultiAttack do
+		local result, damage, hurt = attackStage(player, data, stage, true)
+		if not result then
+			if attacks == 0 then
+				attackStage(player, data, stage, false) -- shows why it could not start
+			end
+			break
+		end
+		attacks += 1
+		dealt += damage
+		taken += hurt
+		if result ~= "hit" then
+			return -- the clear or the knockdown already has its own message
+		end
+	end
+	if attacks > 0 then
+		sendToast(player, `{attacks} attacks on {stage.name}: you dealt {Format.short(dealt)} and took {Format.short(taken)}.`)
+	end
 end
 
 -- Spends boss tokens in the token shop.
@@ -1220,6 +1330,7 @@ local function grantReward(player: Player, data, reward, source: string): string
 		data.health = math.max(data.health, stats.maxHealth)
 	elseif kind == "title" then
 		data.title = reward.text
+		data.titles[reward.text] = true
 	elseif kind == "seals" then
 		data.seals += reward.amount
 	end
@@ -1232,6 +1343,175 @@ local function grantRewards(player: Player, data, rewards, source: string): stri
 		table.insert(parts, grantReward(player, data, reward, source))
 	end
 	return table.concat(parts, ", ")
+end
+
+---------------------------------------------------------------------------
+-- Profile, promo codes, mail, Relic Hall and rebirth
+---------------------------------------------------------------------------
+
+-- Picks a title to show before your name. id is the title, or "" for none.
+function actions.Title(player: Player, data, id: string)
+	if id == "" then
+		data.title = ""
+	elseif data.titles[id] then
+		data.title = id
+		sendToast(player, `You are now known as {id} {player.DisplayName}.`)
+	end
+end
+
+-- Redeems a promo code. id is what the player typed.
+function actions.Code(player: Player, data, id: string)
+	local entry = ProfileConfig.getCode(id)
+	if not entry then
+		sendToast(player, "That code does not work. Check the spelling.")
+		return
+	end
+	local key = string.upper(entry.code)
+	if data.codes[key] then
+		sendToast(player, "You already used that code.")
+		return
+	end
+	if entry.ends > 0 and os.time() > entry.ends then
+		sendToast(player, "That code has ended.")
+		return
+	end
+	data.codes[key] = true
+	countLifetime(data, "codes", 1)
+	local got = grantRewards(player, data, entry.rewards, `Code {key}`)
+	sendToast(player, `Code redeemed: {got}.`)
+end
+
+-- Claims what is attached to a letter. id is the letter id, or "all".
+function actions.MailClaim(player: Player, data, id: string)
+	local got = {}
+	for _, letter in data.mail do
+		if (id == "all" or letter.id == id) and not letter.claimed and letter.rewards then
+			letter.claimed = true
+			letter.read = true
+			table.insert(got, grantRewards(player, data, letter.rewards, letter.title))
+		end
+	end
+	if #got > 0 then
+		sendToast(player, `From your mail: {table.concat(got, ", ")}.`)
+	end
+end
+
+-- Marks a letter as read. id is the letter id, or "all".
+function actions.MailRead(player: Player, data, id: string)
+	for _, letter in data.mail do
+		if id == "all" or letter.id == id then
+			letter.read = true
+		end
+	end
+end
+
+-- Throws away a letter with nothing left to claim. id is the letter id, or
+-- "read" for every read letter with nothing left to claim.
+function actions.MailDelete(player: Player, data, id: string)
+	for index = #data.mail, 1, -1 do
+		local letter = data.mail[index]
+		if letter.claimed and (letter.id == id or (id == "read" and letter.read)) then
+			table.remove(data.mail, index)
+		end
+	end
+end
+
+local function addRelicPoints(data, points: number)
+	local before = data.relics.points
+	data.relics.points += points
+	for _, milestone in RelicConfig.Milestones do
+		if before < milestone.points and data.relics.points >= milestone.points then
+			data.titles[milestone.title] = true
+			sendMail(data, "The Relic Hall honours you", `You have earned the title "{milestone.title}". Pick it on your Profile page.`, nil)
+		end
+	end
+end
+
+-- Gives one spare piece of gear to the Relic Hall for good. id is its uid.
+function actions.Relic(player: Player, data, id: string)
+	for index, item in data.gear do
+		if item.uid == id then
+			if item.wornBy ~= nil then
+				sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} first.`)
+				return
+			end
+			table.remove(data.gear, index)
+			local points = RelicConfig.getPoints(item)
+			data.relics.count += 1
+			addRelicPoints(data, points)
+			sendToast(player, `The {item.rarity} {item.name} now rests in the Relic Hall: +{points} relic points.`)
+			return
+		end
+	end
+end
+
+-- Gives every spare piece of one rarity. Set pieces are never given in
+-- bulk. id is the rarity, e.g. "Common".
+function actions.RelicBulk(player: Player, data, id: string)
+	if GameConfig.getRarity(id).id ~= id then
+		return
+	end
+	local count, points = 0, 0
+	for index = #data.gear, 1, -1 do
+		local item = data.gear[index]
+		if item.rarity == id and item.wornBy == nil and not item.set then
+			table.remove(data.gear, index)
+			count += 1
+			points += RelicConfig.getPoints(item)
+		end
+	end
+	if count == 0 then
+		sendToast(player, `You have no spare {id} gear to give. Worn pieces and set pieces are kept.`)
+		return
+	end
+	data.relics.count += count
+	addRelicPoints(data, points)
+	sendToast(player, `{count} {id} pieces now rest in the Relic Hall: +{points} relic points.`)
+end
+
+-- Starts a new life for Stars. id must be "confirm".
+function actions.Rebirth(player: Player, data, id: string)
+	if id ~= "confirm" then
+		return
+	end
+	local stars = RebirthConfig.getStars(data.level)
+	if stars <= 0 then
+		sendToast(player, `Rebirth opens at level {RebirthConfig.MinLevel}.`)
+		return
+	end
+	local fromLevel = data.level
+	data.rebirth.count += 1
+	data.rebirth.stars += stars
+	local title = RebirthConfig.getTitle(data.rebirth.count)
+	data.titles[title] = true
+
+	-- A new life: see RebirthConfig for what is kept.
+	data.level = 1
+	data.xp = 0
+	data.skillPoints = 0
+	data.skills = {}
+	data.quests = {}
+	data.holdings = {}
+	data.keep = 1
+	data.banked = 0
+	data.gold = GameConfig.StartingGold + RebirthConfig.StartGoldPerStar * data.rebirth.stars
+	data.autoQuest = ""
+	data.autoQuestOn = false
+	data.highestStage = 0
+	data.stageHealth = {}
+	data.stageCleared = {}
+	local stats = getStats(data)
+	data.energy = stats.maxEnergy
+	data.stamina = stats.maxStamina
+	data.health = stats.maxHealth
+
+	sendMail(
+		data,
+		`Reborn at level {fromLevel}`,
+		`You gave up a life at level {fromLevel} for {stars} Stars. You now hold {data.rebirth.stars} Stars and the title "{title}".`,
+		nil
+	)
+	sendToast(player, `You are reborn! +{stars} Stars ({data.rebirth.stars} in all). Your warband, gear and research came with you.`)
 end
 
 -- Called by Store once Roblox has taken the Robux (or in a Studio test).
@@ -1658,12 +1938,69 @@ local function payFestivalRank(player: Player, data)
 	end
 	local entry = FestivalConfig.getRankReward(rank or math.huge)
 	local name = FestivalConfig.getFestival(festival.lastWeek).name
-	local got = {}
-	for _, reward in entry.rewards do
-		table.insert(got, grantReward(player, data, reward, name))
-	end
 	local place = if rank then `#{rank}` else entry.label
-	sendToast(player, `Last week's {name}: you placed {place}. Reward: {table.concat(got, ", ")}.`)
+	sendMail(data, `{name}: you placed {place}`, `Thank you for taking part in last week's {name}. Your reward is attached.`, entry.rewards)
+	sendToast(player, `Last week's {name}: you placed {place}. Your reward is waiting in your Mail.`)
+end
+
+---------------------------------------------------------------------------
+-- Rankings: all-time boards shared by every server
+---------------------------------------------------------------------------
+
+local function boardStore(key: string)
+	local ok, store = pcall(function()
+		return DataStoreService:GetOrderedDataStore("Rank_" .. key)
+	end)
+	return if ok then store else nil
+end
+
+local function boardScore(data, key: string, stats): number
+	if key == "power" then
+		return stats.attack + stats.defense
+	elseif key == "level" then
+		return data.level
+	elseif key == "renown" then
+		return data.renown
+	elseif key == "rebirths" then
+		return data.rebirth.count
+	end
+	return 0
+end
+
+-- Writes a player's scores, skipping any that did not change.
+local function saveBoardScores(player: Player, session)
+	local data = session.data
+	local stats = getStats(data)
+	for _, board in ProfileConfig.Boards do
+		local score = math.floor(boardScore(data, board.key, stats))
+		local store = score > 0 and session.boardSent[board.key] ~= score and boardStore(board.key)
+		if store then
+			local ok = pcall(function()
+				store:SetAsync(tostring(player.UserId), score)
+			end)
+			if ok then
+				session.boardSent[board.key] = score
+			end
+		end
+	end
+end
+
+local function refreshBoards()
+	for _, board in ProfileConfig.Boards do
+		local store = boardStore(board.key)
+		if store then
+			local ok, pages = pcall(function()
+				return store:GetSortedAsync(false, ProfileConfig.BoardSize)
+			end)
+			if ok then
+				local list = {}
+				for _, entry in pages:GetCurrentPage() do
+					table.insert(list, { nameFor(tonumber(entry.key) or 0), entry.value })
+				end
+				boardTops[board.key] = list
+			end
+		end
+	end
 end
 
 -- Hides a page's tip for good. id is the page name.
@@ -1779,6 +2116,7 @@ local function applyTimeAway(player: Player, data)
 	local earned = math.floor(stats.incomePerHour / 3600 * paidSeconds * rate)
 	if earned > 0 then
 		data.gold += earned
+		countLifetime(data, "goldEarned", earned)
 		player:SetAttribute("OfflineGold", earned)
 	end
 end
@@ -1822,11 +2160,30 @@ local function onPlayerAdded(player: Player)
 	applyTimeAway(player, data)
 	checkResearch(player, data)
 
+	-- Saves from before titles, first clears and mail.
+	if data.title ~= "" then
+		data.titles[data.title] = true
+	end
+	if next(data.firstClears) == nil then
+		for _, stage in GameConfig.Stages do
+			if stage.index <= data.highestStage then
+				data.firstClears[stage.id] = true
+			end
+		end
+	end
+	for _, news in ProfileConfig.News do
+		if not data.newsSeen[news.id] then
+			data.newsSeen[news.id] = true
+			sendMail(data, news.title, news.text, news.rewards)
+		end
+	end
+
 	sessions[player] = {
 		data = data,
 		canSave = canSave,
 		actionCount = 0,
 		regen = { energy = 0, stamina = 0, health = 0 },
+		boardSent = {}, -- [board key] = last score written
 	}
 	refresh(player)
 
@@ -1849,6 +2206,7 @@ local function onPlayerRemoving(player: Player)
 	if session.canSave then
 		PlayerData.save(player, session.data)
 		saveFestivalScore(player, session.data)
+		saveBoardScores(player, session)
 	end
 end
 
@@ -1909,6 +2267,8 @@ task.spawn(function()
 			checkWeek(data)
 			data.weekly.play += 1
 			data.gold += stats.incomePerHour / 3600
+			countLifetime(data, "goldEarned", stats.incomePerHour / 3600)
+			countLifetime(data, "playSeconds", 1)
 			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
 			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)
 			regenerate(session, "health", GameConfig.HealthRegenSeconds, stats.maxHealth)
@@ -1935,5 +2295,19 @@ task.spawn(function()
 end)
 
 task.spawn(refreshFestivalTop)
+
+-- Ranking boards: write scores and read the top of each board.
+task.spawn(function()
+	refreshBoards()
+	while true do
+		task.wait(ProfileConfig.BoardSeconds)
+		for player, session in sessions do
+			if session.canSave then
+				task.spawn(saveBoardScores, player, session)
+			end
+		end
+		refreshBoards()
+	end
+end)
 
 print(`[{GameConfig.GameName}] server started`)

@@ -370,6 +370,8 @@ function StoreConfig.describe(reward): string
 		return `{kind} refill`
 	elseif kind == "title" then
 		return `"{reward.text}" title`
+	elseif kind == "seals" then
+		return `{reward.amount} Seals`
 	end
 	return "a reward"
 end
