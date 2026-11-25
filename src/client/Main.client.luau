@@ -2470,15 +2470,21 @@ do
 	local chanceText = makeText(chanceBox, UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), COLOR_TEXT, 12)
 
 	-- Cancel closes without rolling; the gold button saves and starts.
-	local cancelButton = makeButton(recruitWindow, UDim2.new(0.5, -24, 0, 44), UDim2.new(0, 16, 1, -14), COLOR_ROW)
+	-- Cancel closes, Roll once makes one roll, and Start auto roll saves the
+	-- settings and keeps rolling (Recruiting Sergeant pass).
+	local cancelButton = makeButton(recruitWindow, UDim2.new(0.25, -16, 0, 44), UDim2.new(0, 16, 1, -14), COLOR_ROW)
 	cancelButton.AnchorPoint = Vector2.new(0, 1)
-	cancelButton.TextSize = 16
+	cancelButton.TextSize = 15
 	cancelButton.Text = "CANCEL"
-	local startButton = makeButton(recruitWindow, UDim2.new(0.5, -24, 0, 44), UDim2.new(1, -16, 1, -14), COLOR_GOLD)
+	local onceButton = makeButton(recruitWindow, UDim2.new(0.3, -12, 0, 44), UDim2.new(0.25, 8, 1, -14), COLOR_SELECTED)
+	onceButton.AnchorPoint = Vector2.new(0, 1)
+	onceButton.TextSize = 15
+	onceButton.Text = "ROLL ONCE"
+	local startButton = makeButton(recruitWindow, UDim2.new(0.45, -24, 0, 44), UDim2.new(1, -16, 1, -14), COLOR_GOLD)
 	startButton.AnchorPoint = Vector2.new(1, 1)
 	startButton.TextColor3 = Color3.fromRGB(35, 28, 10)
-	startButton.TextSize = 16
-	startButton.Text = "START"
+	startButton.TextSize = 15
+	startButton.Text = "START AUTO ROLL"
 
 	local SCOPES = { "this", "empty", "below" }
 	local recruitSlot = 0
@@ -2579,10 +2585,13 @@ do
 			startButton.BackgroundColor3 = COLOR_ACTION
 			startButton.TextColor3 = Color3.new(1, 1, 1)
 		else
-			startButton.Text = if state.passes.autoroll then "SAVE & START" else "ROLL ONCE"
-			startButton.BackgroundColor3 = if ready then COLOR_GOLD else COLOR_DISABLED
+			startButton.Text = if state.passes.autoroll then "START AUTO ROLL" else `START AUTO ROLL\n<font size="11">pass {robuxText(StoreConfig.getPass("autoroll").price)}</font>`
+			startButton.RichText = true
+			startButton.BackgroundColor3 = if ready or not state.passes.autoroll then COLOR_GOLD else COLOR_DISABLED
 			startButton.TextColor3 = Color3.fromRGB(35, 28, 10)
 		end
+		onceButton.Visible = not auto.on
+		onceButton.BackgroundColor3 = if ready then COLOR_SELECTED else COLOR_DISABLED
 	end
 
 	function openRecruitWindow(slot: number)
@@ -2621,14 +2630,25 @@ do
 		end)
 	end
 
-	startButton.Activated:Connect(function()
-		if lastState and lastState.autoRoll.on then
-			send("AutoRollStop")
-			return
-		end
+	local function rollId(): string
 		local tier = GameConfig.RecruitTiers[chosenTier]
 		local rarity = GameConfig.Rarities[chosenRarity]
-		send("Roll", `{math.max(recruitSlot, 1)}:{tier.id}:{rarity.id}:{chosenScope}`)
+		return `{math.max(recruitSlot, 1)}:{tier.id}:{rarity.id}:{chosenScope}`
+	end
+	onceButton.Activated:Connect(function()
+		send("Roll", rollId() .. ":once")
+	end)
+	startButton.Activated:Connect(function()
+		if not lastState then
+			return
+		end
+		if lastState.autoRoll.on then
+			send("AutoRollStop")
+		elseif not lastState.passes.autoroll then
+			send("Robux", "pass:autoroll")
+		else
+			send("Roll", rollId())
+		end
 	end)
 end
 

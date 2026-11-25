@@ -979,7 +979,8 @@ end
 --   scope "empty" = every empty slot
 --   scope "below" = every slot that is empty or below that rarity
 function actions.Roll(player: Player, data, id: string)
-	local slotText, tierId, rarityId, scope = string.match(id, "^(%d+):(%a+):(%a+):(%a+)$")
+	-- A 5th part ":once" makes one roll even with the pass.
+	local slotText, tierId, rarityId, scope, once = string.match(id, "^(%d+):(%a+):(%a+):(%a+):?(%a*)$")
 	local tier = tierId and GameConfig.getRecruitTier(tierId)
 	if not tier then
 		return
@@ -1020,7 +1021,7 @@ function actions.Roll(player: Player, data, id: string)
 
 	-- Without the Recruiting Sergeant pass, each press is one roll for one
 	-- slot. It is kept if the slot is empty or it reaches the chosen rarity.
-	if not hasPass(data, "autoroll") then
+	if not hasPass(data, "autoroll") or once == "once" then
 		local slot = targets[1]
 		data.gold -= rollCost
 		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
@@ -1030,7 +1031,7 @@ function actions.Roll(player: Player, data, id: string)
 			data.crew[slot] = soldier
 			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {slot}.`)
 		else
-			sendToast(player, `Rolled a {soldier.rarity} {soldier.class}, below {rarityId}, so slot {slot} kept its soldier. The Recruiting Sergeant pass keeps rolling for you.`)
+			sendToast(player, `Rolled a {soldier.rarity} {soldier.class}, below {rarityId}, so slot {slot} kept its soldier.`)
 		end
 		return
 	end
