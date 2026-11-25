@@ -184,7 +184,9 @@ local function buildSkillWindow(ui)
 		local name = label(ui, row, UDim2.new(1, -330, 0, 22), UDim2.fromOffset(60, 8), colors.text, 16)
 		name.Text = string.upper(skill.name)
 		local note = label(ui, row, UDim2.new(1, -330, 0, 16), UDim2.fromOffset(60, 31), colors.dim, 12, Enum.Font.GothamMedium)
-		note.Text = if skill.growth then `{skill.note} (cost grows each time)` else `{skill.note} per upgrade`
+		note.Text = if skill.doubleEvery then `{skill.note} (cost doubles every {skill.doubleEvery})`
+			elseif skill.step then `{skill.note} (cost +1 every {skill.step})`
+			else `{skill.note} per upgrade`
 		local value = label(ui, row, UDim2.fromOffset(80, 30), UDim2.new(1, -262, 0.5, -15), colors.text, 20)
 		value.TextXAlignment = Enum.TextXAlignment.Right
 		local added = label(ui, row, UDim2.fromOffset(40, 14), UDim2.new(1, -222, 0.5, 13), colors.gold, 11)

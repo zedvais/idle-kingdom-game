@@ -15,7 +15,7 @@ GameConfig.BaseMaxStamina = 5
 GameConfig.BaseMaxHealth = 100
 GameConfig.BaseAttack = 3
 GameConfig.BaseDefense = 3
-GameConfig.BaseLots = 4
+GameConfig.BaseLots = 1
 
 -- Seconds to regain one point.
 GameConfig.EnergyRegenSeconds = 12
@@ -48,19 +48,27 @@ GameConfig.MinHealthToFight = 20
 -- Skills: what one skill point buys
 ---------------------------------------------------------------------------
 
--- cost is skill points for the first purchase. With growth, each later
--- purchase of the same skill costs that many times more.
+-- cost is skill points for the first purchase, and every purchase of the
+-- same skill makes the next one cost more:
+--   * step: +1 point every `step` purchases (1, 1, ... 2, 2, ... 3 ...)
+--   * doubleEvery: the price doubles every `doubleEvery` purchases
+--     (lots: 1, 1, 2, 2, 4, 4, 8 ... so lot 18 costs 256)
 GameConfig.Skills = {
-	{ id = "energy", name = "Max Energy", amount = 2, cost = 1, note = "+2 max energy" },
-	{ id = "stamina", name = "Max Stamina", amount = 1, cost = 1, note = "+1 max stamina" },
-	{ id = "health", name = "Max Health", amount = 10, cost = 1, note = "+10 max health" },
-	{ id = "attack", name = "Attack", amount = 1, cost = 1, note = "+1 attack" },
-	{ id = "defense", name = "Defense", amount = 1, cost = 1, note = "+1 defense" },
-	{ id = "lots", name = "Holding Lots", amount = 1, cost = 2, growth = 1.5, note = "+1 lot to build a holding on" },
+	{ id = "energy", name = "Max Energy", amount = 2, cost = 1, step = 10, note = "+2 max energy" },
+	{ id = "stamina", name = "Max Stamina", amount = 1, cost = 1, step = 10, note = "+1 max stamina" },
+	{ id = "health", name = "Max Health", amount = 10, cost = 1, step = 10, note = "+10 max health" },
+	{ id = "attack", name = "Attack", amount = 1, cost = 1, step = 10, note = "+1 attack" },
+	{ id = "defense", name = "Defense", amount = 1, cost = 1, step = 10, note = "+1 defense" },
+	{ id = "lots", name = "Holding Lots", amount = 1, cost = 1, doubleEvery = 2, note = "+1 lot to build a holding on" },
 }
 
 function GameConfig.getSkillCost(skill, bought: number): number
-	return math.floor(skill.cost * (skill.growth or 1) ^ bought + 0.5)
+	if skill.doubleEvery then
+		return skill.cost * 2 ^ (bought // skill.doubleEvery)
+	elseif skill.step then
+		return skill.cost + bought // skill.step
+	end
+	return skill.cost
 end
 
 ---------------------------------------------------------------------------
