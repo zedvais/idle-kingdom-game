@@ -56,9 +56,14 @@ local function buildCatalog()
 			})
 		end
 	end
-	for _, slot in GameConfig.GearSlots do
-		for _, name in GameConfig.GearTypes[slot].names do
-			add(name, slot, nil, "MARKET \u{00B7} QUESTS \u{00B7} CHESTS", 1)
+	-- Market, chest and Royal Coffer items (Royal Coffers start at Rare).
+	local lowest = { market = 1, chest = 1, premium = GameConfig.getRarityRank("Rare") }
+	for _, poolId in GameConfig.GearPoolOrder do
+		local pool = GameConfig.GearPools[poolId]
+		for _, slot in GameConfig.GearSlots do
+			for _, name in pool.items[slot].names do
+				add(name, slot, nil, pool.label, lowest[poolId])
+			end
 		end
 	end
 	for _, set in GameConfig.GearSets do

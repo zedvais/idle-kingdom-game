@@ -500,8 +500,74 @@ GameConfig.GearSplits = {
 }
 local DEFAULT_SPLIT = { Weapon = 1, Armor = 0, Mount = 0.5 }
 
+-- Where items come from. Each pool has its own items; the Market sells only
+-- the Market pool. Items from harder or paid sources are stronger than
+-- Market items of the same rarity (`power` scales the stat budget).
+--   market   Market and quest drops
+--   chest    chests (quests, foes, token shop, rewards)
+--   premium  Royal Coffers (bought with Crowns)
+--   set      foe house set pieces (power only; names are in GearSets)
+GameConfig.GearPools = {
+	market = {
+		label = "MARKET \u{00B7} QUESTS",
+		power = 1,
+		items = GameConfig.GearTypes, -- the names listed in GearTypes
+	},
+	chest = {
+		label = "CHESTS",
+		power = 1.15,
+		items = {
+			Weapon = { names = { "Bastard Sword", "Boar Spear", "Bearded Axe", "Flanged Mace", "Recurve Bow", "Oak Staff" } },
+			Armor = { names = { "Gambeson", "Ringmail Hauberk", "Coat of Plates", "Pilgrim's Robe" } },
+			Mount = { names = { "Destrier", "Palfrey", "Pack Mule", "Great Elk" } },
+		},
+	},
+	premium = {
+		label = "ROYAL COFFERS",
+		power = 1.35,
+		items = {
+			Weapon = { names = { "Royal Greatsword", "Dragonbone Spear", "Kingsfall Axe", "Sunforged Hammer", "Starlight Longbow", "Archmage Staff" } },
+			Armor = { names = { "Royal Plate", "Gilded Chainmail", "Dragonscale Mail", "Archmage Robe" } },
+			Mount = { names = { "Royal Griffin", "Silver Warhorse", "White Stag", "Moonlit Nightmare" } },
+		},
+	},
+	set = { label = "FOES", power = 1.25 },
+}
+GameConfig.GearPoolOrder = { "market", "chest", "premium" }
+
+for name, share in {
+	["Bastard Sword"] = 0.6, ["Boar Spear"] = 0.8, ["Bearded Axe"] = 1, ["Flanged Mace"] = 0.8, ["Recurve Bow"] = 1, ["Oak Staff"] = 0.8,
+	["Gambeson"] = 0.4, ["Ringmail Hauberk"] = 0.2, ["Coat of Plates"] = 0, ["Pilgrim's Robe"] = 0.4,
+	["Destrier"] = 0.7, ["Palfrey"] = 0.5, ["Pack Mule"] = 0.3, ["Great Elk"] = 0.5,
+	["Royal Greatsword"] = 0.6, ["Dragonbone Spear"] = 0.8, ["Kingsfall Axe"] = 1, ["Sunforged Hammer"] = 0.6, ["Starlight Longbow"] = 1, ["Archmage Staff"] = 0.8,
+	["Royal Plate"] = 0, ["Gilded Chainmail"] = 0.2, ["Dragonscale Mail"] = 0.2, ["Archmage Robe"] = 0.4,
+	["Royal Griffin"] = 0.7, ["Silver Warhorse"] = 0.7, ["White Stag"] = 0.5, ["Moonlit Nightmare"] = 0.3,
+} do
+	GameConfig.GearSplits[name] = share
+end
+
+-- Which pool each item name belongs to.
+GameConfig.GearPoolOf = {}
+for _, poolId in GameConfig.GearPoolOrder do
+	for _, slotInfo in GameConfig.GearPools[poolId].items do
+		for _, name in slotInfo.names do
+			GameConfig.GearPoolOf[name] = poolId
+		end
+	end
+end
+for _, set in GameConfig.GearSets do
+	for _, name in set.pieces do
+		GameConfig.GearPoolOf[name] = "set"
+	end
+end
+
 function GameConfig.getGearSplit(slot: string, name: string): number
 	return GameConfig.GearSplits[name] or DEFAULT_SPLIT[slot] or 0.5
+end
+
+function GameConfig.getGearPower(name: string): number
+	local pool = GameConfig.GearPools[GameConfig.GearPoolOf[name] or "market"]
+	return pool and pool.power or 1
 end
 
 -- Fixed attack and defense of an item. `rarity` is a rarity table or id.
@@ -509,7 +575,7 @@ function GameConfig.getGearStats(slot: string, name: string, rarity): (number, n
 	if type(rarity) ~= "table" then
 		rarity = GameConfig.getRarity(rarity)
 	end
-	local budget = GameConfig.GearBudget * rarity.stats
+	local budget = GameConfig.GearBudget * rarity.stats * GameConfig.getGearPower(name)
 	local attack = math.floor(budget * GameConfig.getGearSplit(slot, name) + 0.5)
 	return attack, math.floor(budget + 0.5) - attack
 end

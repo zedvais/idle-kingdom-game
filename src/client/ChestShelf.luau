@@ -14,7 +14,7 @@ local odds = {} -- the odds popup's widgets
 local oddsShown = nil -- the chest rarity the odds popup was built for
 
 -- Everything a chest of this rarity can give, with the chance of each.
--- A chest picks a slot (even odds), then a name in that slot (even odds),
+-- A chest picks a slot (even odds), then a chest item in that slot (even odds),
 -- then a rarity at or above the chest's own, by the Market odds.
 local function dropTable(rarityId: string)
 	local minRank = GameConfig.getRarityRank(rarityId)
@@ -33,7 +33,7 @@ local function dropTable(rarityId: string)
 			local rarityChance = rarity.chance / total
 			table.insert(byRarity, { rarity = rarity, chance = rarityChance })
 			for _, slot in GameConfig.GearSlots do
-				local names = GameConfig.GearTypes[slot].names
+				local names = GameConfig.GearPools.chest.items[slot].names
 				for _, name in names do
 					table.insert(rows, {
 						slot = slot,

@@ -1888,7 +1888,7 @@ function actions.ChestOpen(player: Player, data, id: string)
 	local minRank = GameConfig.getRarityRank(rarity)
 	local items = {}
 	for _ = 1, count do
-		local item = Market.rollGear(random, data.level, minRank)
+		local item = Market.rollGear(random, data.level, minRank, "chest")
 		addGear(data, item)
 		table.insert(items, { rarity = item.rarity, name = item.name, slot = item.slot })
 	end

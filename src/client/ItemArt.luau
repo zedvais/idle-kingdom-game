@@ -536,6 +536,15 @@ function ItemArt.draw(holder: GuiObject, item, hidden: boolean?)
 	local accent = SET_COLORS[item.set or ""] or rarity.color
 	local draw = pick(item.slot or "Weapon", item.name or "")
 	draw(pen, accent)
+	-- Royal Coffer items wear a small gold crown in the corner.
+	if not hidden and GameConfig.GearPoolOf and GameConfig.GearPoolOf[item.name or ""] == "premium" then
+		pen.layer = canvas
+		pen:box(51, 11, 13, 5, GOLD, 1)
+		for _, x in { 46, 51, 56 } do
+			pen:diamond(x, 7, 4, GOLD)
+		end
+		pen:box(51, 11, 3, 3, Color3.fromRGB(220, 60, 70), 0.5)
+	end
 	if #pen.steps > 0 then
 		table.insert(movers, { root = canvas, steps = pen.steps })
 		start()

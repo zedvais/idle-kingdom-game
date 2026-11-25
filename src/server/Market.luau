@@ -45,14 +45,16 @@ end
 
 -- One piece of gear rolled around `playerLevel`. Also used for quest drops
 -- and chests, which pass a minimum rarity.
-function Market.rollGear(random: Random, playerLevel: number, minRank: number?)
+-- `pool` picks the item list: "market" (default), "chest" or "premium".
+function Market.rollGear(random: Random, playerLevel: number, minRank: number?, pool: string?)
 	local slot = GameConfig.GearSlots[random:NextInteger(1, #GameConfig.GearSlots)]
 	local gearType = GameConfig.GearTypes[slot]
+	local names = GameConfig.GearPools[pool or "market"].items[slot].names
 	local rarity = rollRarity(random, minRank or 1)
 	-- The level only sets the price (Market prices follow the player's
 	-- level); stats are fixed by name and rarity.
 	local level = rollLevel(random, playerLevel)
-	local name = gearType.names[random:NextInteger(1, #gearType.names)]
+	local name = names[random:NextInteger(1, #names)]
 	local attack, defense = GameConfig.getGearStats(slot, name, rarity)
 	return {
 		kind = "Gear",
@@ -68,7 +70,7 @@ end
 
 -- One piece of gear of exactly this rarity (Royal Coffers).
 function Market.rollGearOfRarity(random: Random, playerLevel: number, rarityId: string)
-	local item = Market.rollGear(random, playerLevel, 1)
+	local item = Market.rollGear(random, playerLevel, 1, "premium")
 	local rarity = GameConfig.getRarity(rarityId)
 	local gearType = GameConfig.GearTypes[item.slot]
 	item.rarity = rarity.id
