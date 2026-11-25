@@ -35,7 +35,7 @@ function ExpeditionsPage.draw(state, ui)
 		local target = ArmyConfig.getExpedition(away.target)
 		status.Text = `<b>Your army is away at {target and target.name or away.target}</b>\n`
 			.. `Back in {ui.formatLong(state.expeditionLeft)} with {ArmyConfig.countTroops(away.sent)} troops. The battle is fought when they arrive.\n`
-			.. "The report will be in the War Chronicle."
+			.. "The report will be in the War Chronicle (the Battles button at the top)."
 	else
 		status.Text = `<b>{home} troops at home</b>\n`
 			.. "Sending an expedition marches your whole army. Train troops that counter the enemy for more power.\n"

@@ -54,7 +54,7 @@ rebuild the place file. The steps are written at the top of that file.
 `src/shared/ProfileConfig.luau` holds:
 
 - **Codes:** each has a code, an end time (0 for never) and rewards. Players
-  type codes on the Profile page and each works once per player.
+  type codes in the Profile popup (press your picture at the top left) and each works once per player.
 - **News:** letters every player gets once, the next time they join. Add one
   to announce an update or hand out a gift. Never reuse an id.
 - **Boards:** the all-time rankings. They use Roblox DataStores, so in Studio

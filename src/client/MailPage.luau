@@ -93,11 +93,11 @@ function MailPage.draw(state, ui)
 	end
 
 	-- Opening the page marks everything as read (at most every few seconds).
-	if ui.pages.Mail.Visible and unread > 0 and now - readSentAt > 3 then
+	if ui.isOpen("Mail") and unread > 0 and now - readSentAt > 3 then
 		readSentAt = now
 		ui.send("MailRead", "all")
 	end
-	ui.setBadge("Mail", if ui.pages.Mail.Visible then claimable else unread + claimable)
+	ui.setBadge("Mail", if ui.isOpen("Mail") then claimable else unread + claimable)
 end
 
 return MailPage

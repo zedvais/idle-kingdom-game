@@ -1468,7 +1468,7 @@ local function addRelicPoints(data, points: number)
 	for _, milestone in RelicConfig.Milestones do
 		if before < milestone.points and data.relics.points >= milestone.points then
 			data.titles[milestone.title] = true
-			sendMail(data, "The Relic Hall honours you", `You have earned the title "{milestone.title}". Pick it on your Profile page.`, nil)
+			sendMail(data, "The Relic Hall honours you", `You have earned the title "{milestone.title}". Pick it on your Profile (press your picture at the top left).`, nil)
 		end
 	end
 end

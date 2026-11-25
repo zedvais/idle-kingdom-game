@@ -46,6 +46,7 @@ local TOP_HEIGHT = 72
 local RAIL_WIDTH = 150
 local LEFT_BLOCK = 270 -- top bar: level, name and XP
 local RIGHT_BLOCK = 240 -- top bar: energy, stamina and health
+local ICON_BLOCK = 190 -- top bar: Mail, Rankings and War Chronicle buttons
 
 -- A plain backdrop that covers the whole screen, including the top strip.
 do
@@ -167,13 +168,58 @@ local topBar = makeFrame(gui, UDim2.new(1, -12, 0, TOP_HEIGHT), UDim2.fromOffset
 addCorner(topBar, 8)
 addStroke(topBar)
 
--- Level badge, name and experience.
-local levelBadge = makeText(topBar, UDim2.fromOffset(52, 52), UDim2.fromOffset(10, 10), Color3.fromRGB(40, 28, 12), 20)
-levelBadge.BackgroundTransparency = 0
-levelBadge.BackgroundColor3 = COLOR_GOLD
-levelBadge.Font = Enum.Font.GothamBlack
-levelBadge.TextXAlignment = Enum.TextXAlignment.Center
-addCorner(levelBadge, 26)
+-- Popups (Profile, Mail, Rankings...) open over the menus. Defined with
+-- the popup window further down.
+local openModal
+local railBadges = {} -- red count pills, by page or popup name
+
+-- Your Roblox picture with the level on it, name and experience. Pressing
+-- the picture or the name opens your Profile.
+local levelBadge
+do
+	local avatar = Instance.new("ImageButton")
+	avatar.Size = UDim2.fromOffset(56, 56)
+	avatar.Position = UDim2.fromOffset(8, 8)
+	avatar.BackgroundColor3 = COLOR_ROW
+	avatar.BorderSizePixel = 0
+	avatar.AutoButtonColor = true
+	avatar.ScaleType = Enum.ScaleType.Crop
+	avatar.Image = ""
+	avatar.Parent = topBar
+	addCorner(avatar, 28)
+	local ring = Instance.new("UIStroke")
+	ring.Color = COLOR_GOLD
+	ring.Thickness = 2
+	ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	ring.Parent = avatar
+	task.spawn(function()
+		local ok, image = pcall(Players.GetUserThumbnailAsync, Players, player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
+		if ok and image then
+			avatar.Image = image
+		end
+	end)
+
+	levelBadge = makeText(avatar, UDim2.fromOffset(26, 18), UDim2.new(1, 4, 1, 2), Color3.fromRGB(40, 28, 12), 12)
+	levelBadge.AnchorPoint = Vector2.new(1, 1)
+	levelBadge.BackgroundTransparency = 0
+	levelBadge.BackgroundColor3 = COLOR_GOLD
+	levelBadge.Font = Enum.Font.GothamBlack
+	levelBadge.TextXAlignment = Enum.TextXAlignment.Center
+	levelBadge.ZIndex = 2
+	addCorner(levelBadge, 9)
+
+	-- The name and XP bar are under this clear button, so they open the
+	-- Profile too.
+	local nameHit = makeButton(topBar, UDim2.fromOffset(190, 26), UDim2.fromOffset(70, 8), COLOR_PANEL)
+	nameHit.BackgroundTransparency = 1
+	nameHit.Text = ""
+	nameHit.ZIndex = 3
+	for _, button in { avatar, nameHit } do
+		button.Activated:Connect(function()
+			openModal("Profile")
+		end)
+	end
+end
 
 local nameLabel = makeText(topBar, UDim2.fromOffset(190, 24), UDim2.fromOffset(70, 10), COLOR_HEADER, 16)
 nameLabel.Font = Enum.Font.GothamBold
@@ -184,7 +230,7 @@ local xpBar = makeBar(topBar, UDim2.fromOffset(190, 16), UDim2.fromOffset(70, 40
 -- Resource chips: a big number with a small line under it.
 local chips = {}
 do
-	local chipRow = makeFrame(topBar, UDim2.new(1, -(LEFT_BLOCK + RIGHT_BLOCK), 1, -12), UDim2.fromOffset(LEFT_BLOCK, 6), COLOR_PANEL)
+	local chipRow = makeFrame(topBar, UDim2.new(1, -(LEFT_BLOCK + RIGHT_BLOCK + ICON_BLOCK), 1, -12), UDim2.fromOffset(LEFT_BLOCK, 6), COLOR_PANEL)
 	chipRow.BackgroundTransparency = 1
 	local chipLayout = Instance.new("UIListLayout")
 	chipLayout.FillDirection = Enum.FillDirection.Horizontal
@@ -216,6 +262,44 @@ do
 	makeChip("crowns", "Crowns", Color3.fromRGB(200, 150, 230))
 	makeChip("tokens", "Boss tokens", Color3.fromRGB(220, 120, 100))
 	makeChip("power", "Power", Color3.fromRGB(140, 180, 230))
+end
+
+-- Square buttons that open popups, between the chips and the bars.
+do
+	local iconRow = makeFrame(topBar, UDim2.new(0, ICON_BLOCK - 10, 1, -12), UDim2.new(1, -(RIGHT_BLOCK + ICON_BLOCK - 4), 0, 6), COLOR_PANEL)
+	iconRow.BackgroundTransparency = 1
+	local iconLayout = Instance.new("UIListLayout")
+	iconLayout.FillDirection = Enum.FillDirection.Horizontal
+	iconLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	iconLayout.Padding = UDim.new(0, 6)
+	iconLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	iconLayout.Parent = iconRow
+	for index, entry in { { "Mail", "\u{2709}", "Mail" }, { "Rankings", "\u{265B}", "Ranks" }, { "Chronicle", "\u{2694}", "Battles" } } do
+		local button = makeButton(iconRow, UDim2.new(0, 56, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
+		button.LayoutOrder = index
+		button.Text = ""
+		addStroke(button)
+		local icon = makeText(button, UDim2.new(1, 0, 0, 28), UDim2.fromOffset(0, 4), COLOR_HEADER, 22)
+		icon.TextXAlignment = Enum.TextXAlignment.Center
+		icon.Text = entry[2]
+		local label = makeText(button, UDim2.new(1, 0, 0, 14), UDim2.new(0, 0, 1, -18), COLOR_TEXT, 11)
+		label.TextXAlignment = Enum.TextXAlignment.Center
+		label.Font = Enum.Font.GothamBold
+		label.Text = string.upper(entry[3])
+		local badge = makeText(button, UDim2.fromOffset(22, 16), UDim2.new(1, 4, 0, -4), Color3.new(1, 1, 1), 10)
+		badge.AnchorPoint = Vector2.new(1, 0)
+		badge.BackgroundTransparency = 0
+		badge.BackgroundColor3 = COLOR_ACTION
+		badge.Font = Enum.Font.GothamBold
+		badge.TextXAlignment = Enum.TextXAlignment.Center
+		badge.Visible = false
+		badge.ZIndex = 2
+		addCorner(badge, 8)
+		railBadges[entry[1]] = badge
+		button.Activated:Connect(function()
+			openModal(entry[1])
+		end)
+	end
 end
 
 -- Energy, stamina and health, each with a + that opens the Shop's refills.
@@ -272,30 +356,13 @@ addStroke(main)
 -- Every page: its group, a one line description, and a tip shown until
 -- the player presses Got it.
 local PAGE_GROUPS = {
-	{ name = "Realm", pages = { "Profile", "Keep", "Holdings", "Research", "Bank", "Rebirth" } },
+	{ name = "Realm", pages = { "Keep", "Holdings", "Research", "Bank" } },
 	{ name = "Daily", pages = { "Bounties", "Festival" } },
-	{ name = "Community", pages = { "Rankings", "Mail" } },
-	{ name = "Campaign", pages = { "Quests", "Foes", "Expeditions", "Chronicle" } },
+	{ name = "Campaign", pages = { "Quests", "Foes", "Expeditions" } },
 	{ name = "Court", pages = { "Warband", "Barracks", "Inventory", "Relic Hall", "Market" } },
 	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
 }
 local PAGE_INFO = {
-	Profile = {
-		about = "You, your all-time record, your titles and promo codes.",
-		tip = "Pick a title to show before your name. Type promo codes in the box at the bottom.",
-	},
-	Rebirth = {
-		about = "Start again from level 1 for Stars that boost you forever.",
-		tip = "Your warband, gear and research come with you, so each new life goes faster.",
-	},
-	Rankings = {
-		about = "The mightiest players across every server.",
-		tip = "Scores are sent while you play and the boards refresh every couple of minutes.",
-	},
-	Mail = {
-		about = "Letters from the court: news, gifts and rewards.",
-		tip = "Festival rank rewards and gifts arrive here. Claim them before deleting the letter.",
-	},
 	Barracks = {
 		about = "Train troops for expeditions. Each type beats one kind of enemy.",
 		tip = "Spearmen beat riders, archers beat spearmen, cavalry beat archers, and siege rams break forts.",
@@ -303,10 +370,6 @@ local PAGE_INFO = {
 	Expeditions = {
 		about = "Send your army out on timed raids for gold, tokens and gear.",
 		tip = "Your whole army marches. Check your power against each enemy before you send it.",
-	},
-	Chronicle = {
-		about = "The War Chronicle: reports of your foe fights and expeditions.",
-		tip = "Expedition reports show each round, so you can see how close the fight was.",
 	},
 	["Relic Hall"] = {
 		about = "Give spare gear away for good, for lasting attack and defense.",
@@ -437,7 +500,6 @@ tipButton.TextSize = 12
 local tipsSeen = {} -- filled from the server's state
 local currentPage = ""
 local railButtons = {}
-local railBadges = {}
 local pages = {}
 
 local function placePage()
@@ -475,6 +537,9 @@ end)
 -- A red pill with a count on a menu button; 0 hides it.
 local function setBadge(name: string, count: number)
 	local badge = railBadges[name]
+	if not badge then
+		return
+	end
 	badge.Visible = count > 0
 	badge.Text = if count > 99 then "99+" else tostring(count)
 end
@@ -1205,6 +1270,114 @@ local function robuxText(price: number): string
 	return `R$ {price}`
 end
 
+---------------------------------------------------------------------------
+-- Popup window: Profile, Rebirth, Mail, Rankings and the War Chronicle open
+-- over the menus instead of having their own place in the left menu. Each
+-- popup's content is a scrolling list stored in `pages`, so page modules
+-- build into it the same way as into a page.
+---------------------------------------------------------------------------
+
+local isModalOpen
+do
+	local MODALS = {
+		{ key = "Profile", title = "Profile" },
+		{ key = "Rebirth", title = "Rebirth" },
+		{ key = "Mail", title = "Mail" },
+		{ key = "Rankings", title = "Rankings" },
+		{ key = "Chronicle", title = "War Chronicle" },
+	}
+	local WINDOW_WIDTH, WINDOW_HEIGHT = 680, 560
+
+	local popupGui = Instance.new("ScreenGui")
+	popupGui.Name = "KingdomPopups"
+	popupGui.DisplayOrder = 4
+	popupGui.ResetOnSpawn = false
+	popupGui.Enabled = false
+	popupGui.Parent = playerGui
+
+	-- Pressing the dark area around the window closes it.
+	local shade = makeButton(popupGui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(0, 0, 0))
+	shade.BackgroundTransparency = 0.45
+	shade.AutoButtonColor = false
+	shade.Text = ""
+
+	local window = makeFrame(popupGui, UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT), UDim2.fromScale(0.5, 0.5), COLOR_PANEL)
+	window.AnchorPoint = Vector2.new(0.5, 0.5)
+	window.Active = true
+	addCorner(window, 10)
+	local windowStroke = Instance.new("UIStroke")
+	windowStroke.Color = COLOR_HEADER
+	windowStroke.Thickness = 1.5
+	windowStroke.Parent = window
+	local windowScale = Instance.new("UIScale")
+	windowScale.Parent = window
+
+	local titleLabel = makeText(window, UDim2.new(1, -80, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
+	titleLabel.Font = Enum.Font.GothamBlack
+	local closeButton = makeButton(window, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
+	closeButton.Text = "X"
+	closeButton.TextSize = 18
+
+	local contents = {}
+	for _, modal in MODALS do
+		local content = Instance.new("ScrollingFrame")
+		content.Position = UDim2.fromOffset(12, 54)
+		content.Size = UDim2.new(1, -18, 1, -64)
+		content.BackgroundTransparency = 1
+		content.BorderSizePixel = 0
+		content.ScrollBarThickness = 6
+		content.CanvasSize = UDim2.new(0, 0, 0, 0)
+		content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		content.Visible = false
+		content.Parent = window
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 5)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Parent = content
+		contents[modal.key] = content
+		pages[modal.key] = content
+	end
+
+	local openKey = ""
+	local function closeModal()
+		openKey = ""
+		popupGui.Enabled = false
+		for _, content in contents do
+			content.Visible = false
+		end
+		redraw()
+	end
+
+	openModal = function(key: string)
+		if not contents[key] then
+			return
+		end
+		openKey = key
+		for name, content in contents do
+			content.Visible = name == key
+		end
+		contents[key].CanvasPosition = Vector2.zero
+		for _, modal in MODALS do
+			if modal.key == key then
+				titleLabel.Text = string.upper(modal.title)
+			end
+		end
+		-- Shrink the window on small screens so it always fits.
+		local camera = workspace.CurrentCamera
+		local view = if camera then camera.ViewportSize else Vector2.new(1280, 720)
+		windowScale.Scale = math.clamp(math.min((view.X - 20) / WINDOW_WIDTH, (view.Y - 40) / WINDOW_HEIGHT), 0.5, 1)
+		popupGui.Enabled = true
+		redraw()
+	end
+
+	isModalOpen = function(key: string): boolean
+		return openKey == key
+	end
+
+	shade.Activated:Connect(closeModal)
+	closeButton.Activated:Connect(closeModal)
+end
+
 -- Pages that live in their own modules. Each gets the shared helpers in
 -- `ui`, builds its widgets once and draws every state.
 local ui = {
@@ -1246,6 +1419,12 @@ local ui = {
 	robuxText = robuxText,
 	redraw = function()
 		redraw()
+	end,
+	openModal = function(key: string)
+		openModal(key)
+	end,
+	isOpen = function(key: string): boolean
+		return isModalOpen(key)
 	end,
 }
 local pageModules = {}

@@ -1,5 +1,9 @@
--- Profile page: who you are, your all-time numbers, your titles and the
--- promo code box. Built once by Main with the shared helpers in `ui`.
+-- Profile popup: your Roblox picture, attack, defense and warband size,
+-- your all-time numbers, your titles and the promo code box. Opened by
+-- pressing your picture in the top bar. Built once by Main with the shared
+-- helpers in `ui`.
+
+local Players = game:GetService("Players")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -60,7 +64,8 @@ local TILES = {
 	},
 }
 
-local header
+local nameText, subText, footText
+local statValues = {}
 local tileValues = {}
 local titleCards = {}
 local noTitleInfo, noTitleButton
@@ -69,9 +74,68 @@ function ProfilePage.build(ui)
 	local page = ui.pages.Profile
 	local colors = ui.colors
 
-	header = ui.makeRow(page, ui.nextOrder(), 92, false)
-	header.RichText = true
-	header.TextSize = 15
+	-- Header card: picture on the left, name and the big three numbers.
+	local header = ui.makeFrame(page, UDim2.new(1, -10, 0, 156), UDim2.fromOffset(0, 0), colors.row)
+	header.LayoutOrder = ui.nextOrder()
+	ui.addCorner(header, 8)
+	ui.addStroke(header)
+
+	local picture = Instance.new("ImageLabel")
+	picture.Size = UDim2.fromOffset(128, 128)
+	picture.Position = UDim2.fromOffset(14, 14)
+	picture.BackgroundColor3 = colors.panel
+	picture.BorderSizePixel = 0
+	picture.ScaleType = Enum.ScaleType.Crop
+	picture.Image = ""
+	picture.Parent = header
+	ui.addCorner(picture, 10)
+	local ring = Instance.new("UIStroke")
+	ring.Color = colors.gold
+	ring.Thickness = 2
+	ring.Parent = picture
+	task.spawn(function()
+		local player = ui.player
+		local ok, image = pcall(Players.GetUserThumbnailAsync, Players, player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+		if ok and image then
+			picture.Image = image
+		end
+	end)
+
+	nameText = ui.makeText(header, UDim2.new(1, -170, 0, 26), UDim2.fromOffset(156, 12), colors.header, 20)
+	nameText.Font = Enum.Font.GothamBlack
+	nameText.RichText = true
+	nameText.TextWrapped = false
+	nameText.TextTruncate = Enum.TextTruncate.AtEnd
+	subText = ui.makeText(header, UDim2.new(1, -170, 0, 16), UDim2.fromOffset(156, 38), colors.dim, 12)
+	subText.RichText = true
+
+	local statRow = ui.makeFrame(header, UDim2.new(1, -170, 0, 56), UDim2.fromOffset(156, 60), colors.row)
+	statRow.BackgroundTransparency = 1
+	local statLayout = Instance.new("UIGridLayout")
+	statLayout.CellSize = UDim2.new(0.25, -6, 1, 0)
+	statLayout.CellPadding = UDim2.fromOffset(6, 0)
+	statLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	statLayout.Parent = statRow
+	for index, label in { "Attack", "Defense", "Warband", "Renown" } do
+		local tile = ui.makeFrame(statRow, UDim2.fromOffset(80, 56), UDim2.fromOffset(0, 0), colors.panel)
+		tile.LayoutOrder = index
+		ui.addCorner(tile, 6)
+		local name = ui.makeText(tile, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 5), colors.dim, 10)
+		name.Font = Enum.Font.GothamBold
+		name.Text = string.upper(label)
+		local value = ui.makeText(tile, UDim2.new(1, -12, 0, 28), UDim2.fromOffset(8, 22), colors.text, 20)
+		value.Font = Enum.Font.GothamBlack
+		value.TextScaled = true
+		statValues[index] = value
+	end
+
+	footText = ui.makeText(header, UDim2.new(1, -300, 0, 28), UDim2.fromOffset(156, 122), colors.dim, 12)
+	footText.RichText = true
+	local rebirthButton = ui.makeButton(header, UDim2.fromOffset(120, 28), UDim2.new(1, -134, 0, 122), colors.selected)
+	ui.setButton(rebirthButton, "Rebirth", true, colors.selected)
+	rebirthButton.Activated:Connect(function()
+		ui.openModal("Rebirth")
+	end)
 
 	ui.makeHeading(page, ui.nextOrder(), "All-time record")
 	local grid = ui.makeGrid(page, ui.nextOrder(), 58, 4)
@@ -131,9 +195,13 @@ function ProfilePage.draw(state, ui)
 	local since = if state.firstSeen > 0 then os.date("!%d %b %Y", state.firstSeen) else "today"
 	local stars = state.rebirth.stars
 	local starText = if stars > 0 then `   |   <font color="#F0C450">{stars} rebirth Stars</font>` else ""
-	header.Text = `<b>{title}{ui.player.DisplayName}</b>   @{ui.player.Name}\n`
-		.. `Level {state.level}{starText}   |   Power {Format.short(stats.attack + stats.defense)}   |   Renown {Format.short(state.renown)}\n`
-		.. `In the realm since {since}   |   Highest foe stage this life: {state.highestStage}`
+	nameText.Text = `{title}{ui.player.DisplayName}`
+	subText.Text = `@{ui.player.Name}   |   Level {state.level}{starText}`
+	statValues[1].Text = Format.short(stats.attack)
+	statValues[2].Text = Format.short(stats.defense)
+	statValues[3].Text = `{stats.crewSize} / {#state.crew}`
+	statValues[4].Text = Format.short(state.renown)
+	footText.Text = `In the realm since {since}\nIncome {Format.short(stats.incomePerHour)}/hr   |   Best foe stage: {state.highestStage}`
 
 	for index, tile in TILES do
 		tileValues[index].Text = tile[2](state)
