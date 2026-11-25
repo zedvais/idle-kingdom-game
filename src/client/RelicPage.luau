@@ -19,7 +19,6 @@ local TABS = {
 	{ id = "Mount", label = "MOUNTS" },
 	{ id = "Set", label = "SET PIECES" },
 }
-local SLOT_ICONS = { Weapon = "\u{2694}\u{FE0F}", Armor = "\u{1F6E1}\u{FE0F}", Mount = "\u{1F40E}" }
 
 local page
 local catalog = {} -- every collectable item: { key, name, slot, rarity, rank, set, source, obtainable }
@@ -183,12 +182,12 @@ local function makeCard(ui, grid, entry, order: number)
 	local edge = art.stroke(card, colors.dim, 1.5, 0.6)
 
 	-- Picture: the slot's icon on the rarity color.
-	local picture = ui.makeFrame(card, UDim2.fromOffset(84, 84), UDim2.fromOffset(8, 8), rarity.color)
+	local picture = ui.makeFrame(card, UDim2.fromOffset(84, 84), UDim2.fromOffset(8, 8), Color3.fromRGB(30, 24, 20))
 	ui.addCorner(picture, 6)
 	art.gloss(picture, 0.55, 0.2)
 	art.stroke(picture, rarity.color, 1.5, 0.2)
-	local icon = art.icon(picture, SLOT_ICONS[entry.slot] or "", 54, UDim2.fromScale(0.5, 0.5))
-	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	local icon = ui.makeFrame(picture, UDim2.new(1, -6, 1, -6), UDim2.fromOffset(3, 3), rarity.color)
+	icon.BackgroundTransparency = 1
 	local unknown = ui.makeText(picture, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(1, 1, 1), 40)
 	unknown.Font = Enum.Font.GothamBlack
 	unknown.TextXAlignment = Enum.TextXAlignment.Center
@@ -386,6 +385,10 @@ function RelicPage.filter()
 	for _, entry in catalog do
 		cards[entry.key].frame.Visible = shows(entry)
 	end
+	-- Pictures are drawn only for shown cards, so draw the newly shown ones.
+	if latest and RelicPage.ui then
+		task.defer(RelicPage.draw, latest, RelicPage.ui)
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -419,7 +422,11 @@ function RelicPage.draw(state, ui)
 		local found = heldCount > 0 or spareCount > 0 or seen[entry.key] == true
 		local card = cards[entry.key]
 
-		card.icon.TextTransparency = if found then 0 else 0.8
+		-- Drawn on first view (and again once discovered), as a dark
+		-- silhouette until the item has been found.
+		if card.frame.Visible then
+			ui.itemArt.set(card.icon, { slot = entry.slot, name = entry.name, rarity = entry.rarity, set = entry.set }, not found)
+		end
 		card.unknown.Visible = not found
 		card.count.Text = if heldCount > 0 then `x{Format.short(heldCount)}` else ""
 		card.edge.Color = if heldCount > 0 then card.rarityColor else colors.dim

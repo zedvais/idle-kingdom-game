@@ -15,6 +15,7 @@ local ResearchConfig = require(Shared:WaitForChild("ResearchConfig"))
 local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 local Art = require(script.Parent:WaitForChild("Art")) -- colors, icons and styling, all drawn in code
+local ItemArt = require(script.Parent:WaitForChild("ItemArt")) -- item pictures with rarity glows
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local actionRemote = remotes:WaitForChild("Action")
@@ -1050,7 +1051,13 @@ end
 local function makeItemRow(page: Instance, order: number)
 	local info, button = makeRow(page, order, 52, true)
 	info.RichText = true
-	return { info = info, button = button }
+	-- The item's picture on the left, with its rarity glow.
+	local picture = makeFrame(info.Parent, UDim2.fromOffset(44, 44), UDim2.fromOffset(6, 4), COLOR_PANEL)
+	picture.BackgroundTransparency = 0.4
+	addCorner(picture, 6)
+	info.Position = info.Position + UDim2.fromOffset(48, 0)
+	info.Size = info.Size - UDim2.fromOffset(48, 0)
+	return { info = info, button = button, picture = picture }
 end
 
 -- Market: a fixed number of rows that are refilled each restock.
@@ -1483,6 +1490,7 @@ end
 -- `ui`, builds its widgets once and draws every state.
 ui = {
 	art = Art,
+	itemArt = ItemArt,
 	pages = pages,
 	player = player,
 	colors = {
@@ -1536,7 +1544,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -2267,6 +2275,7 @@ local function draw(state)
 			continue
 		end
 		row.info.Parent.Visible = true
+		ItemArt.set(row.picture, item)
 		row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}`
 		if item.sold then
 			setButton(row.button, "Sold", false, COLOR_BUY)
@@ -2485,6 +2494,7 @@ local function draw(state)
 		row.uid = if item then item.uid else nil
 		row.info.Parent.Visible = item ~= nil
 		if item then
+			ItemArt.set(row.picture, item)
 			local worn = item.wornBy ~= nil
 			local status = if worn then `Worn by {memberLabel(state, item.wornBy)}` else "Spare"
 			local counts = if worn then memberSetCounts(state, item.wornBy) else nil
@@ -3206,7 +3216,7 @@ end
 
 do
 	local Fx = require(script.Parent:WaitForChild("Fx"))
-	Fx.init(Art, GameConfig, Format.short, remotes:WaitForChild("Fx"))
+	Fx.init(Art, GameConfig, Format.short, remotes:WaitForChild("Fx"), ItemArt)
 	Fx.setAnchor("foe", foeFightBar.fill.Parent)
 	Fx.setAnchor("you", yourFightBar.fill.Parent)
 end

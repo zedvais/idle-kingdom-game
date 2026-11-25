@@ -572,6 +572,7 @@ local function refresh(player: Player)
 
 	stateRemote:FireClient(player, {
 		regenIn = regenIn,
+		chests = data.chests,
 		gold = data.gold,
 		level = data.level,
 		xp = data.xp,
@@ -896,6 +897,17 @@ local function giveGear(player: Player, data, minRank: number?, source: string, 
 	sendFx(player, "gear", { rarity = item.rarity, name = item.name, slot = item.slot, source = source, crate = crate == true })
 end
 
+-- Puts a chest in the player's inventory, to open later (Open 1 / Open 10).
+-- Chests are kept by rarity: an "Epic" chest holds Epic or better gear.
+local function giveChest(player: Player, data, rarity: string, source: string)
+	if GameConfig.getRarity(rarity).id ~= rarity then
+		return
+	end
+	data.chests[rarity] = (data.chests[rarity] or 0) + 1
+	sendToast(player, `{source}: a {rarity} chest! Open it in your Inventory.`)
+	sendFx(player, "chestGot", { rarity = rarity })
+end
+
 ---------------------------------------------------------------------------
 -- Player actions
 ---------------------------------------------------------------------------
@@ -1008,7 +1020,7 @@ function actions.Claim(player: Player, data, id: string)
 		data.stamina = math.max(data.stamina, stats.maxStamina)
 		sendToast(player, "Stamina refilled.")
 	elseif reward.kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{reward.label} opened`, nil, nil, true)
+		giveChest(player, data, reward.rarity, reward.label)
 	elseif reward.kind == "xpBoost" then
 		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.amount * 60
 		sendToast(player, `Double experience for {reward.amount} minutes!`)
@@ -1380,7 +1392,7 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 		)
 		addXp(player, data, stage.xp)
 		if stage.chest then
-			giveGear(player, data, GameConfig.getRarityRank(stage.chest), `{stage.chest} chest from {stage.name}`, nil, nil, true)
+			giveChest(player, data, stage.chest, stage.name)
 		end
 		local set = GameConfig.getHouseSet(stage.house)
 		if set and random:NextNumber() < GameConfig.SetDropChance then
@@ -1440,10 +1452,6 @@ function actions.TokenBuy(player: Player, data, id: string)
 		sendToast(player, `Not enough boss tokens. You need {item.cost}.`)
 		return
 	end
-	if item.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
-		return
-	end
 	data.tokens -= item.cost
 
 	local stats = getStats(data)
@@ -1463,7 +1471,7 @@ function actions.TokenBuy(player: Player, data, id: string)
 		data.skillPoints += 1
 		sendToast(player, "+1 skill point. Spend it in the Keep.")
 	elseif item.kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(item.rarity), `{item.name} opened`, nil, nil, true)
+		giveChest(player, data, item.rarity, "Token shop")
 	end
 end
 
@@ -1620,7 +1628,7 @@ local function grantReward(player: Player, data, reward, source: string): string
 		data.gold += amount
 		return `{Format.short(amount)} gold`
 	elseif kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{source}: {reward.rarity} chest`, nil, true, true)
+		giveChest(player, data, reward.rarity, source)
 	elseif kind == "xpBoost" then
 		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.minutes * 60
 	elseif kind == "skill" then
@@ -1852,6 +1860,48 @@ function actions.RelicWithdrawAll(player: Player, data, id: string)
 	end
 	local note = if moved == room then " The armory is full now." else ""
 	sendToast(player, `{moved} pieces are back in your armory.{note}`)
+end
+
+-- Opens chests from the inventory. id is "<rarity>:<count>", count 1 or 10
+-- (fewer if fewer are owned or the armory has less room).
+function actions.ChestOpen(player: Player, data, id: string)
+	local rarity, countText = string.match(id or "", "^(%a+):(%d+)$")
+	local want = tonumber(countText)
+	if not rarity or not want or (want ~= 1 and want ~= 10) then
+		return
+	end
+	if type(data.chests[rarity]) ~= "number" then
+		return
+	end
+	local have = data.chests[rarity] or 0
+	if have <= 0 then
+		return
+	end
+	local room = maxGear(data) - #data.gear
+	if room <= 0 then
+		sendToast(player, "Your armory is full. Sell or deposit some gear, then open the chest.")
+		return
+	end
+	local count = math.min(want, have, room)
+	local minRank = GameConfig.getRarityRank(rarity)
+	local items = {}
+	for _ = 1, count do
+		local item = Market.rollGear(random, data.level, minRank)
+		addGear(data, item)
+		table.insert(items, { rarity = item.rarity, name = item.name, slot = item.slot })
+	end
+	data.chests[rarity] = have - count
+	if data.chests[rarity] <= 0 then
+		data.chests[rarity] = nil
+	end
+	local best = items[1]
+	for _, item in items do
+		if GameConfig.getRarityRank(item.rarity) > GameConfig.getRarityRank(best.rarity) then
+			best = item
+		end
+	end
+	sendToast(player, if count == 1 then `{rarity} chest: {best.rarity} {best.name}!` else `Opened {count} {rarity} chests. Best: {best.rarity} {best.name}!`)
+	sendFx(player, "chestOpen", { rarity = rarity, items = items })
 end
 
 -- Auto deposit was removed; any old setting is switched off.
@@ -2247,18 +2297,10 @@ function actions.PassClaim(player: Player, data, id: string)
 		local key = tostring(tier)
 		local rewards = StoreConfig.PassRewards[tier]
 		if not pass.claimedFree[key] then
-			if rewards.free.kind == "chest" and armoryFull(data) then
-				sendToast(player, "Your armory is full. Sell some gear, then claim again.")
-				break
-			end
 			pass.claimedFree[key] = true
 			table.insert(got, grantReward(player, data, rewards.free, `Royal Pass tier {tier}`))
 		end
 		if pass.noble and not pass.claimedNoble[key] then
-			if rewards.noble.kind == "chest" and armoryFull(data) then
-				sendToast(player, "Your armory is full. Sell some gear, then claim again.")
-				break
-			end
 			pass.claimedNoble[key] = true
 			table.insert(got, grantReward(player, data, rewards.noble, `Royal Pass tier {tier}`))
 		end
@@ -2335,10 +2377,6 @@ function actions.SealBuy(player: Player, data, id: string)
 		sendToast(player, `Not enough Seals. You need {item.cost}. Finish bounties to earn more.`)
 		return
 	end
-	if item.reward.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
-		return
-	end
 	data.seals -= item.cost
 	data.bounty.bought[id] = bought + 1
 	local got = grantReward(player, data, item.reward, item.name)
@@ -2351,10 +2389,6 @@ function actions.StreakClaim(player: Player, data)
 		return
 	end
 	local reward = BountyConfig.Streak[day]
-	if reward.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear, then claim your streak reward.")
-		return
-	end
 	data.streak.count = day
 	data.streak.lastDay = GameConfig.getDay()
 	local got = grantReward(player, data, reward, `Day {day} reward`)
@@ -2367,10 +2401,6 @@ function actions.FestivalMilestone(player: Player, data, id: string)
 	local index = tonumber(id)
 	local milestone = index and FestivalConfig.Milestones[index]
 	if not milestone or data.festival.milestones[id] or data.festival.points < milestone.points then
-		return
-	end
-	if milestone.reward.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
 		return
 	end
 	data.festival.milestones[id] = true

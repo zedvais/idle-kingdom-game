@@ -11,6 +11,7 @@ local Fx = {}
 
 local Art
 local GameConfig
+local ItemArt -- item pictures (optional; falls back to emoji)
 local layer: ScreenGui
 local anchors = {} -- [name] = GuiObject, where damage numbers start
 
@@ -155,6 +156,21 @@ end
 local queue = {}
 local showing = false
 
+-- An item picture in a square holder: drawn art when ItemArt is loaded.
+local function prizePicture(parent: Instance, item, size: number, position: UDim2, zindex: number): Frame
+	local holder = frame(parent, UDim2.fromOffset(size, size), position, Color3.new(), zindex)
+	holder.BackgroundTransparency = 1
+	if ItemArt and item.slot then
+		ItemArt.draw(holder, item)
+	else
+		local glyph = if item.what == "soldier" then Art.Icons.soldier else (Art.Icons[item.slot or ""] or Art.Icons.chest)
+		local icon = Art.icon(holder, glyph, math.floor(size * 0.8), UDim2.fromScale(0.5, 0.5))
+		icon.AnchorPoint = Vector2.new(0.5, 0.5)
+		icon.ZIndex = zindex + 1
+	end
+	return holder
+end
+
 local function playReveal(info)
 	local rarity, rank = rarityOf(info.rarity or "Common")
 	local color = rarity.color
@@ -229,8 +245,10 @@ local function playReveal(info)
 	sparks(stage, color, 10 + rank * 4, Z + 6)
 	task.wait(0.25)
 
-	-- The prize card.
-	local card = frame(stage, UDim2.fromOffset(320, 168), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(34, 26, 20), Z + 10)
+	-- The prize card: one prize, or a grid of up to ten (Open 10).
+	local many = type(info.items) == "table" and #info.items > 1
+	local cardSize = if many then UDim2.fromOffset(520, 300) else UDim2.fromOffset(320, 196)
+	local card = frame(stage, cardSize, UDim2.fromScale(0.5, 0.5), Color3.fromRGB(34, 26, 20), Z + 10)
 	Art.corner(card, 12)
 	Art.gloss(card, 1, 0.8)
 	Art.stroke(card, color, 3, 0)
@@ -244,17 +262,39 @@ local function playReveal(info)
 	Art.gloss(ribbon, 1, 0.65)
 	local ribbonText = text(ribbon, UDim2.fromScale(1, 1), UDim2.fromScale(0.5, 0.5), Color3.new(1, 1, 1), 18, Z + 12)
 	ribbonText.Text = string.upper(rarity.id)
-
-	local glyph = if isSoldier then Art.Icons.soldier else (Art.Icons[info.slot or ""] or Art.Icons.chest)
-	local icon = Art.icon(card, glyph, 46, UDim2.new(0.5, 0, 0, 62))
-	icon.AnchorPoint = Vector2.new(0.5, 0.5)
-	icon.ZIndex = Z + 11
-	local name = text(card, UDim2.new(1, -20, 0, 26), UDim2.new(0.5, 0, 0, 104), color, 20, Z + 11)
+	if many then
+		ribbonText.Text = `{#info.items} {string.upper(rarity.id)} CHESTS OPENED`
+		for index, item in info.items do
+			if index > 10 then
+				break
+			end
+			local itemRarity = rarityOf(item.rarity or "Common")
+			local column, row = (index - 1) % 5, (index - 1) // 5
+			local cell = frame(card, UDim2.fromOffset(92, 120), UDim2.fromOffset(60 + column * 100, 100 + row * 128), Color3.fromRGB(48, 38, 30), Z + 11)
+			Art.corner(cell, 8)
+			Art.stroke(cell, itemRarity.color, 2, 0)
+			prizePicture(cell, item, 72, UDim2.new(0.5, 0, 0, 42), Z + 12)
+			local label = text(cell, UDim2.new(1, -8, 0, 34), UDim2.new(0.5, 0, 1, -20), itemRarity.color, 12, Z + 13)
+			label.TextWrapped = true
+			label.Text = item.name or ""
+			local cellScale = Instance.new("UIScale")
+			cellScale.Scale = 0
+			cellScale.Parent = cell
+			task.delay(0.05 * index, function()
+				Art.tween(cellScale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+			end)
+		end
+	else
+		prizePicture(card, info, 84, UDim2.new(0.5, 0, 0, 78), Z + 11)
+	end
+	local name = text(card, UDim2.new(1, -20, 0, 26), UDim2.new(0.5, 0, 0, 136), color, 20, Z + 11)
 	name.Text = info.name or ""
 	name.TextScaled = true
-	local note = text(card, UDim2.new(1, -20, 0, 32), UDim2.new(0.5, 0, 0, 140), Color3.fromRGB(220, 208, 186), 13, Z + 11)
+	name.Visible = not many
+	local note = text(card, UDim2.new(1, -20, 0, 32), UDim2.new(0.5, 0, 0, 170), Color3.fromRGB(220, 208, 186), 13, Z + 11)
 	note.Font = Enum.Font.GothamMedium
 	note.TextStrokeTransparency = 1
+	note.Visible = not many
 	if isSoldier then
 		note.Text = if info.kept then `{info.tier or ""} recruit joined your warband!` else "Not rare enough, so your soldier stayed."
 	else
@@ -264,7 +304,7 @@ local function playReveal(info)
 		Art.shine(card, 2)
 	end
 
-	local tap = text(stage, UDim2.new(1, 0, 0, 20), UDim2.new(0.5, 0, 0.5, 120), Color3.new(1, 1, 1), 14, Z + 11)
+	local tap = text(stage, UDim2.new(1, 0, 0, 20), UDim2.new(0.5, 0, 0.5, if many then 170 else 120), Color3.new(1, 1, 1), 14, Z + 11)
 	tap.Font = Enum.Font.GothamBold
 	tap.Text = "Tap to continue"
 	tap.TextTransparency = 1
@@ -295,7 +335,7 @@ local function playReveal(info)
 	end
 	task.wait(0.4)
 	shade.Activated:Connect(close)
-	task.delay(if #queue > 0 then 1.6 else 5, close)
+	task.delay(if #queue > 0 then 1.6 elseif many then 8 else 5, close)
 	done.Event:Wait()
 	done:Destroy()
 end
@@ -340,8 +380,7 @@ function Fx.drop(info)
 	Art.corner(card, 10)
 	Art.gloss(card, 1, 0.8)
 	Art.stroke(card, rarity.color, 2, 0)
-	local icon = Art.icon(card, Art.Icons[info.slot or ""] or Art.Icons.chest, 34, UDim2.fromOffset(8, 9))
-	icon.ZIndex = 31
+	local icon = prizePicture(card, info, 44, UDim2.fromOffset(28, 26), 31)
 	local label = text(card, UDim2.new(1, -56, 1, -8), UDim2.new(0.5, 22, 0.5, 0), Color3.new(1, 1, 1), 14, 31)
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.Font = Enum.Font.GothamBold
@@ -358,12 +397,59 @@ function Fx.drop(info)
 	task.delay(2.4, function()
 		Art.tween(card, 0.5, { Position = card.Position - UDim2.fromOffset(0, 40), BackgroundTransparency = 1 })
 		Art.tween(label, 0.5, { TextTransparency = 1 })
-		Art.tween(icon, 0.5, { TextTransparency = 1 })
+		for _, child in icon:GetDescendants() do
+			if child:IsA("GuiObject") then
+				Art.tween(child, 0.5, { BackgroundTransparency = 1 })
+			end
+		end
 		for _, child in card:GetDescendants() do
 			if child:IsA("UIStroke") then
 				Art.tween(child, 0.5, { Transparency = 1 })
 			end
 		end
+		task.wait(0.55)
+		card:Destroy()
+	end)
+end
+
+-- A chest went to the inventory: a small chest card pops up and fades.
+function Fx.chestGot(info)
+	local rarity = rarityOf(info.rarity or "Common")
+	dropCount += 1
+	local lane = dropCount % 3
+	local card = frame(layer, UDim2.fromOffset(250, 52), UDim2.new(0.5, 0, 1, -110 - lane * 58), Color3.fromRGB(34, 26, 20), 30)
+	Art.corner(card, 10)
+	Art.gloss(card, 1, 0.8)
+	Art.stroke(card, rarity.color, 2, 0)
+	local holder = frame(card, UDim2.fromOffset(44, 44), UDim2.fromOffset(28, 26), Color3.new(), 31)
+	holder.BackgroundTransparency = 1
+	if ItemArt then
+		ItemArt.chest(holder, rarity.id)
+	else
+		local icon = Art.icon(holder, Art.Icons.chest, 34, UDim2.fromScale(0.5, 0.5))
+		icon.AnchorPoint = Vector2.new(0.5, 0.5)
+		icon.ZIndex = 32
+	end
+	local label = text(card, UDim2.new(1, -56, 1, -8), UDim2.new(0.5, 22, 0.5, 0), Color3.new(1, 1, 1), 14, 31)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Font = Enum.Font.GothamBold
+	label.TextStrokeTransparency = 1
+	local r, g, b = math.floor(rarity.color.R * 255), math.floor(rarity.color.G * 255), math.floor(rarity.color.B * 255)
+	label.Text = `<font color="rgb({r},{g},{b})">{rarity.id} chest</font> added to Inventory`
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.5
+	scale.Parent = card
+	Art.tween(scale, 0.25, { Scale = 1 }, Enum.EasingStyle.Back)
+	task.delay(2.4, function()
+		Art.tween(label, 0.5, { TextTransparency = 1 })
+		for _, child in card:GetDescendants() do
+			if child:IsA("UIStroke") then
+				Art.tween(child, 0.5, { Transparency = 1 })
+			elseif child:IsA("GuiObject") then
+				Art.tween(child, 0.5, { BackgroundTransparency = 1 })
+			end
+		end
+		Art.tween(card, 0.5, { Position = card.Position - UDim2.fromOffset(0, 40), BackgroundTransparency = 1 })
 		task.wait(0.55)
 		card:Destroy()
 	end)
@@ -510,8 +596,9 @@ function Fx.setAnchor(name: string, object: GuiObject)
 	anchors[name] = object
 end
 
-function Fx.init(art, gameConfig, format, remote: RemoteEvent)
+function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt)
 	Art = art
+	ItemArt = itemArt
 	GameConfig = gameConfig
 	Fx.format = format
 	layer = Instance.new("ScreenGui")
@@ -532,6 +619,21 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent)
 			elseif GameConfig.getRarityRank(info.rarity or "Common") >= 3 then
 				Fx.drop(info)
 			end
+		elseif kind == "chestOpen" then
+			if type(info.items) ~= "table" or #info.items == 0 then
+				return
+			end
+			local first = info.items[1]
+			Fx.reveal({
+				what = "gear",
+				rarity = if #info.items == 1 then first.rarity else info.rarity,
+				name = first.name,
+				slot = first.slot,
+				source = `{info.rarity} chest`,
+				items = info.items,
+			})
+		elseif kind == "chestGot" then
+			Fx.chestGot(info)
 		elseif kind == "soldier" then
 			info.what = "soldier"
 			Fx.reveal(info)

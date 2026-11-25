@@ -147,7 +147,8 @@ local function newData()
 		newsSeen = {}, -- [news id] = true once delivered
 		-- Relic Hall: count = pieces held, items[name|rarity] = { name, slot,
 		-- rarity, set, count, levels = { ["L12"] = copies at level 12 } }
-		relics = { count = 0, auto = false, items = {} },
+		relics = { count = 0, auto = false, items = {}, seen = {} },
+		chests = {}, -- [rarity] = unopened chests in the inventory
 		rebirth = { count = 0, stars = 0 },
 		-- Barracks, expeditions and the War Chronicle
 		troops = {}, -- [troop key] = count at home
