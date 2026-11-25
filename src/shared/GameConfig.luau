@@ -217,10 +217,10 @@ GameConfig.AutoRollsPerTick = 1 -- auto roll: rolls per slot each second (all sl
 
 -- Training adds this much to a soldier's stats per rank, and costs this
 -- share of their recruit tier's roll cost, growing each rank.
-GameConfig.TrainStatBonus = 0.08
+GameConfig.TrainStatBonus = 0.01 -- +1% attack and defense per rank
 GameConfig.TrainCostShare = 0.5
 GameConfig.TrainCostGrowth = 1.6
-GameConfig.MaxTrainRank = 20
+GameConfig.MaxTrainRank = 10
 
 -- Soldier classes. attack and defense are for a Common Village soldier.
 -- Across all classes attack and defense add up to the same total, so a
@@ -289,12 +289,14 @@ function GameConfig.getSoldierStats(soldier): (number, number)
 end
 
 -- Training takes time: short at first, longer each rank, at most 8 hours.
-GameConfig.TrainBaseSeconds = 5 * 60 -- +0 to +1 takes 5 minutes
-GameConfig.TrainTimeGrowth = 1.92 -- so +7 to +8 takes 8 hours
+-- Minutes each rank takes: +0 to +1 is 5 minutes, then 15, 30, 1 hour,
+-- doubling each rank up to 8 hours (+6 to +7 and every rank after it).
+GameConfig.TrainMinutes = { 5, 15, 30, 60, 120, 240, 480, 480, 480, 480 }
 GameConfig.TrainMaxSeconds = 8 * 3600
 
 function GameConfig.getTrainSeconds(soldier): number
-	return math.min(GameConfig.TrainMaxSeconds, math.floor(GameConfig.TrainBaseSeconds * GameConfig.TrainTimeGrowth ^ soldier.train))
+	local minutes = GameConfig.TrainMinutes[(soldier.train or 0) + 1] or GameConfig.TrainMinutes[#GameConfig.TrainMinutes]
+	return math.min(GameConfig.TrainMaxSeconds, minutes * 60)
 end
 
 function GameConfig.getTrainCost(soldier): number

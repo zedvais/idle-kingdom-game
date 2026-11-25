@@ -131,7 +131,7 @@ function TrainPopup.draw(state, ui)
 		ui.setButton(widgets.confirm, "STOP", true, colors.action)
 	else
 		widgets.time.Text = clock(soldier.trainSeconds or 0)
-		widgets.note.Text = "Each rank adds attack and defense. Stopping early gives no refund."
+		widgets.note.Text = "Each rank adds +1% attack and defense (max +10). Stopping early gives no refund."
 		local canTrain = not full and (state.gold or 0) >= (soldier.trainCost or 0)
 		ui.setButton(widgets.confirm, if full then "MAXED" else "TRAIN", canTrain, colors.gold)
 	end

@@ -205,6 +205,15 @@ local function repair(data)
 	if type(data.nextItemId) ~= "number" then
 		data.nextItemId = 1
 	end
+	-- Training tops out at MaxTrainRank; older saves could go higher.
+	if type(data.crew) == "table" then
+		for _, soldier in data.crew do
+			if type(soldier) == "table" and type(soldier.train) == "number" and soldier.train > GameConfig.MaxTrainRank then
+				soldier.train = GameConfig.MaxTrainRank
+				soldier.trainUntil = nil
+			end
+		end
+	end
 	Loadout.restack(data)
 	-- Every castle needs its levels and builder, and the home castle exists.
 	local estate = data.estate
