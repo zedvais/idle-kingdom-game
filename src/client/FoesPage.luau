@@ -543,7 +543,7 @@ local function buildSetCard(ui, parent: Instance, entry, order: number)
 
 	local rarityLabel = centered(ui, card, 166, 20, 15, rarity.color)
 	rarityLabel.Font = Enum.Font.GothamBlack
-	rarityLabel.Text = string.upper(ui.rarityName and ui.rarityName(rarity.id) or rarity.id)
+	rarityLabel.Text = string.upper(rarity.id)
 	local name = centered(ui, card, 186, 26, 20, colors.text)
 	name.Font = Enum.Font.GothamBlack
 	name.Text = entry.name
@@ -598,7 +598,7 @@ local function buildShopTab(ui, page: Instance)
 		local house = houseOf(set.house)
 		local head = heading(ui, holder, nextOrder(), string.upper(set.name) .. " SET", HOUSE_COLORS[set.house] or ui.colors.gold)
 		setHeads[set.id] = { head = head, set = set, house = house }
-		local setGrid = grid(ui, holder, nextOrder(), 310)
+		local setGrid = grid(ui, holder, nextOrder(), 334)
 		local index = 0
 		for _, entry in GameConfig.SetShop do
 			if entry.set == set.id then
