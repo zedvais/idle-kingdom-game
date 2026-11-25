@@ -39,6 +39,7 @@ local latest = nil
 local shownHolding = nil -- the holding the popup shows
 local drawBonusNow -- set below: fills the income bonus popup
 local timer = { base = 0, at = 0 } -- seconds into the pay cycle at os.clock() `at`
+local building = nil -- { id, left, total, at }: the holding under construction
 
 local function holdingById(id: string)
 	for _, holding in GameConfig.Holdings do
@@ -228,6 +229,54 @@ local function landCard(ui, index: number)
 	return card
 end
 
+-- The card for a holding under construction: its picture darkened,
+-- hazard stripes, the seconds left and a bar.
+function HoldingsPage.makeBuildingCard(ui)
+	local colors = ui.colors
+	local frame = ui.makeFrame(w.landsGrid, UDim2.fromOffset(100, 100), UDim2.fromOffset(0, 0), Color3.fromRGB(40, 32, 24))
+	frame.LayoutOrder = 99999
+	frame.ClipsDescendants = true
+	frame.Visible = false
+	ui.addCorner(frame, 8)
+	ui.art.stroke(frame, Color3.fromRGB(240, 196, 80), 2, 0)
+	local picture = ui.makeFrame(frame, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), colors.panel)
+	picture.BackgroundTransparency = 1
+	local dim = ui.makeFrame(frame, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0))
+	dim.BackgroundTransparency = 0.45
+	dim.ZIndex = 60
+	-- Hazard tape across the top and bottom.
+	for _, y in { 0, 1 } do
+		local tape = ui.makeFrame(frame, UDim2.new(1, 0, 0, 14), UDim2.new(0, 0, y, if y == 0 then 0 else -14), Color3.fromRGB(240, 196, 60))
+		tape.ZIndex = 61
+		tape.ClipsDescendants = true
+		for index = 0, 40 do
+			local stripe = ui.makeFrame(tape, UDim2.fromOffset(8, 30), UDim2.fromOffset(index * 18, -8), Color3.fromRGB(30, 26, 20))
+			stripe.Rotation = 35
+			stripe.ZIndex = 62
+		end
+	end
+	local name = ui.makeText(frame, UDim2.new(1, 0, 0, 24), UDim2.fromOffset(0, 24), colors.text, 17)
+	name.Font = Enum.Font.GothamBold
+	name.TextXAlignment = Enum.TextXAlignment.Center
+	name.ZIndex = 63
+	local title = ui.makeText(frame, UDim2.new(1, 0, 0, 28), UDim2.new(0, 0, 0.5, -34), Color3.fromRGB(240, 196, 80), 22)
+	title.Font = Enum.Font.GothamBlack
+	title.TextXAlignment = Enum.TextXAlignment.Center
+	title.Text = "\u{1F6A7} UNDER CONSTRUCTION"
+	title.ZIndex = 63
+	local time = ui.makeText(frame, UDim2.new(1, 0, 0, 30), UDim2.new(0, 0, 0.5, -4), colors.text, 26)
+	time.Font = Enum.Font.GothamBlack
+	time.TextXAlignment = Enum.TextXAlignment.Center
+	time.ZIndex = 63
+	local bar = ui.makeFrame(frame, UDim2.new(0.7, 0, 0, 12), UDim2.new(0.15, 0, 1, -42), Color3.fromRGB(20, 16, 12))
+	bar.ZIndex = 63
+	ui.addCorner(bar, 5)
+	local fill = ui.makeFrame(bar, UDim2.fromScale(0, 1), UDim2.fromOffset(0, 0), Color3.fromRGB(240, 196, 80))
+	fill.ZIndex = 64
+	ui.addCorner(fill, 5)
+	return { frame = frame, picture = picture, name = name, time = time, fill = fill, id = nil }
+end
+
 -- An empty lot on YOUR LANDS: a big "+" that opens the BUILD tab.
 function emptyCard(ui, slot: number)
 	local colors = ui.colors
@@ -361,6 +410,12 @@ local function buildBuildTab(ui, page: Instance)
 					local state = latest
 					if state and state.level >= holding.level then
 						ui.send("Holding", holding.id)
+						-- Show the construction on YOUR LANDS if it can start.
+						if not state.construction and state.stats.lotsUsed < state.stats.lots and state.gold >= GameConfig.getHoldingCost(holding, state.holdings[holding.id] or 0) then
+							tab = "lands"
+							tabChosen = true
+							HoldingsPage.draw(latest, ui)
+						end
 					end
 				end)
 			end
@@ -434,6 +489,7 @@ function HoldingsPage.build(ui)
 	w.gateLands = function(): boolean
 		return page.Visible and tab == "lands"
 	end
+	w.buildingCard = HoldingsPage.makeBuildingCard(ui)
 
 	buildBuildTab(ui, page)
 	buildPopups(ui)
@@ -448,6 +504,12 @@ function HoldingsPage.build(ui)
 			if card.frame.Visible then
 				card.fill.Size = UDim2.fromScale(share, 1)
 			end
+		end
+		if building then
+			local left = math.max(0, building.left - (os.clock() - building.at))
+			local bc = w.buildingCard
+			bc.fill.Size = UDim2.fromScale(1 - left / building.total, 1)
+			bc.time.Text = `{math.ceil(left)} s`
 		end
 	end)
 
@@ -588,7 +650,20 @@ local function drawLands(state, ui)
 			card.Visible = false
 		end
 	end
-	w.landsEmpty.Visible = index == 0 and free == 0
+	-- The holding under construction sits after the built ones.
+	local bc = w.buildingCard
+	local construction = state.construction
+	bc.frame.Visible = construction ~= nil
+	if construction then
+		local holding = holdingById(construction.id)
+		if bc.id ~= construction.id then
+			bc.id = construction.id
+			bc.picture:ClearAllChildren()
+			Scenes.holding(bc.picture, construction.id, w.gateLands, 180)
+		end
+		bc.name.Text = if holding then holding.name else ""
+	end
+	w.landsEmpty.Visible = index == 0 and free == 0 and construction == nil
 end
 
 local function drawBuild(state, ui)
@@ -632,6 +707,9 @@ local function drawBuild(state, ui)
 		if locked then
 			card.status.Text = `UNLOCKS AT LEVEL {holding.level}`
 			card.status.TextColor3 = colors.dim
+		elseif state.construction then
+			card.status.Text = "BUILDER BUSY, WAIT A MOMENT"
+			card.status.TextColor3 = Color3.fromRGB(240, 196, 80)
 		elseif lotsFull then
 			card.status.Text = `LOTS FULL  ·  YOU HAVE {count}`
 			card.status.TextColor3 = Color3.fromRGB(220, 110, 90)
@@ -672,7 +750,7 @@ function HoldingsPage.drawPopup(state, ui)
 		.. `<font color="#B2A690">{holding.region}, from level {holding.level}</font>`
 	local price = GameConfig.getHoldingCost(holding, count)
 	local stats = state.stats
-	local canBuild = state.level >= holding.level and stats.lotsUsed < stats.lots and state.gold >= price
+	local canBuild = state.level >= holding.level and stats.lotsUsed < stats.lots and state.gold >= price and not state.construction
 	ui.setButton(w.popupBuild, `BUILD ANOTHER\n{Format.short(price)}`, canBuild, colors.buy)
 	if count > 0 then
 		local refund = math.floor(GameConfig.getHoldingCost(holding, count - 1) * GameConfig.DemolishRefund)
@@ -707,6 +785,15 @@ function HoldingsPage.draw(state, ui)
 	-- Where each pay cycle is, from the server.
 	local now = os.clock()
 	local seconds = state.holdingTimer or 0
+	if state.construction then
+		local c = state.construction
+		local guess = if building and building.id == c.id then building.left - (now - building.at) else -99
+		if math.abs(guess - c.left) > 0.5 then
+			building = { id = c.id, left = c.left, total = c.total or GameConfig.BuildSeconds, at = now }
+		end
+	else
+		building = nil
+	end
 	-- Only snap when the bar has drifted (avoids jitter every second).
 	if math.abs(timer.base + (now - timer.at) - seconds) > 1.5 then
 		timer = { base = seconds, at = now }

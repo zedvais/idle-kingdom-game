@@ -283,6 +283,10 @@ local function getStats(data)
 		lotsUsed += count
 		incomePerHour += holding.income * count
 	end
+	-- A holding under construction already takes its lot.
+	if data.construction then
+		lotsUsed += 1
+	end
 	local incomeBonus = keepBonus + perkBonus.income
 	local incomeMultiplier = if hasPass(data, "doubleincome") then StoreConfig.DoubleIncome else 1
 	local incomeFactor = (1 + incomeBonus) * incomeMultiplier
@@ -543,14 +547,10 @@ end
 
 -- Holdings pay in lumps: every HoldingCycle seconds all of them pay
 -- together, each its share of that stretch, and the client shows "+gold"
--- on each card. Called once a second.
+-- on each card. Called by its own loop at the bottom.
 local function payHoldings(player: Player, session, stats)
 	local data = session.data
-	session.holdingTimer += 1
-	if session.holdingTimer < GameConfig.HoldingCycle then
-		return
-	end
-	session.holdingTimer = 0
+	session.holdingPaidAt = os.clock()
 	local paid = {}
 	for _, holding in GameConfig.Holdings do
 		local count = data.holdings[holding.id] or 0
@@ -671,7 +671,14 @@ local function refresh(player: Player)
 		autoEquipNew = data.autoEquipNew,
 		market = data.market.items,
 		marketRestock = Market.secondsUntilRestock(),
-		holdingTimer = session.holdingTimer,
+		holdingTimer = os.clock() - (session.holdingPaidAt or os.clock()),
+		construction = if data.construction
+			then {
+				id = data.construction.id,
+				left = math.max(0, data.construction.endsAt - workspace:GetServerTimeNow()),
+				total = GameConfig.BuildSeconds,
+			}
+			else nil,
 		marketWindow = data.market.window,
 		tokens = data.tokens,
 		highestStage = data.highestStage,
@@ -1012,6 +1019,8 @@ function actions.Quest(player: Player, data, id: string)
 end
 
 -- Builds one more copy of a holding on a free lot.
+local checkConstruction -- defined below actions.Holding
+
 function actions.Holding(player: Player, data, id: string)
 	local holding = holdingById[id]
 	if not holding or data.level < holding.level then
@@ -1022,10 +1031,38 @@ function actions.Holding(player: Player, data, id: string)
 		sendToast(player, "Every lot is built on. Demolish one, or buy Holding Lots in the Keep.")
 		return
 	end
+	if data.construction then
+		local busy = holdingById[data.construction.id]
+		sendToast(player, `Your {if busy then busy.name else "holding"} is still being built.`)
+		return
+	end
 	local count = data.holdings[id] or 0
 	if spendGold(player, data, GameConfig.getHoldingCost(holding, count)) then
-		data.holdings[id] = count + 1
+		-- It stands after BuildSeconds (checkConstruction), one at a time.
+		local endsAt = workspace:GetServerTimeNow() + GameConfig.BuildSeconds
+		data.construction = { id = id, endsAt = endsAt }
+		task.delay(GameConfig.BuildSeconds, function()
+			if sessions[player] and data.construction and data.construction.endsAt == endsAt then
+				checkConstruction(player, data)
+				refresh(player)
+			end
+		end)
+	end
+end
+
+-- Finishes a holding under construction once its time is up.
+function checkConstruction(player: Player, data)
+	local building = data.construction
+	if not building or workspace:GetServerTimeNow() < building.endsAt then
+		return
+	end
+	data.construction = nil
+	local holding = holdingById[building.id]
+	if holding then
+		data.holdings[holding.id] = (data.holdings[holding.id] or 0) + 1
 		track(data, "holdings", 1)
+		sendToast(player, `Your {holding.name} is built!`)
+		sendFx(player, "built", { id = holding.id })
 	end
 end
 
@@ -3114,7 +3151,7 @@ local function onPlayerAdded(player: Player)
 		actionCount = 0,
 		regen = { energy = 0, stamina = 0, health = 0 },
 		boardSent = {}, -- [board key] = last score written
-		holdingTimer = 0, -- seconds into the holdings' pay cycle
+		holdingPaidAt = os.clock(), -- when holdings last paid
 		holdingCarry = {}, -- [holding id] = fraction of a gold not paid yet
 	}
 	refresh(player)
@@ -3216,7 +3253,7 @@ task.spawn(function()
 			data.playSeconds += 1
 			checkWeek(data)
 			data.weekly.play += 1
-			payHoldings(player, session, stats)
+			checkConstruction(player, data)
 			countLifetime(data, "playSeconds", 1)
 			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
 			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)
@@ -3231,6 +3268,17 @@ task.spawn(function()
 			produceEstate(data, 1)
 			checkEstateBuilds(player, data)
 
+			refresh(player)
+		end
+	end
+end)
+
+-- Holdings pay every HoldingCycle seconds.
+task.spawn(function()
+	while true do
+		task.wait(GameConfig.HoldingCycle)
+		for player, session in sessions do
+			payHoldings(player, session, getStats(session.data))
 			refresh(player)
 		end
 	end

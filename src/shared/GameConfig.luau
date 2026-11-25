@@ -110,7 +110,8 @@ GameConfig.Quests = {
 -- bar on each card), each its own share.
 ---------------------------------------------------------------------------
 
-GameConfig.HoldingCycle = 1 -- seconds
+GameConfig.HoldingCycle = 2.5 -- seconds between payouts
+GameConfig.BuildSeconds = 5 -- a new holding is under construction this long
 
 GameConfig.Holdings = {
 	{ id = "field", region = "Oakvale", name = "Wheat Field", level = 1, cost = 400, income = 360 },
