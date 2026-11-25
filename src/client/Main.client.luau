@@ -997,53 +997,7 @@ end
 
 -- Holdings: the page is built in HoldingsPage.luau.
 
--- Bank: move gold in and out. Gold in the bank is safe from raids.
-local bankSummary = makeRow(pages.Bank, nextOrder(), 74, false)
-do
-	local bankInputRow = makeFrame(pages.Bank, UDim2.new(1, -10, 0, 56), UDim2.fromOffset(0, 0), COLOR_ROW)
-	bankInputRow.LayoutOrder = nextOrder()
-	addCorner(bankInputRow, 6)
-	local bankInput = Instance.new("TextBox")
-	bankInput.Size = UDim2.new(1, -20, 1, -16)
-	bankInput.Position = UDim2.fromOffset(10, 8)
-	bankInput.BackgroundColor3 = Color3.fromRGB(20, 24, 22)
-	bankInput.TextColor3 = COLOR_TEXT
-	bankInput.PlaceholderText = "Amount, like 5000 or 2.5m"
-	bankInput.PlaceholderColor3 = COLOR_DIM
-	bankInput.Font = Enum.Font.GothamBold
-	bankInput.TextSize = 20
-	bankInput.Text = ""
-	bankInput.ClearTextOnFocus = false
-	bankInput.Parent = bankInputRow
-	addCorner(bankInput, 6)
-
-	local bankButtons = makeFrame(pages.Bank, UDim2.new(1, -10, 0, 96), UDim2.fromOffset(0, 0), COLOR_ROW)
-	bankButtons.LayoutOrder = nextOrder()
-	bankButtons.BackgroundTransparency = 1
-	local function bankButton(text: string, x: number, y: number, color: Color3, callback)
-		local b = makeButton(bankButtons, UDim2.new(0.5, -5, 0, 44), UDim2.new(x, if x > 0 then 5 else 0, 0, y), color)
-		b.Text = text
-		b.TextSize = 16
-		b.Activated:Connect(callback)
-		return b
-	end
-	bankButton("Deposit", 0, 0, COLOR_GOLD, function()
-		send("Deposit", bankInput.Text)
-	end).TextColor3 = Color3.fromRGB(35, 28, 10)
-	bankButton("Withdraw", 0.5, 0, COLOR_SELECTED, function()
-		send("Withdraw", bankInput.Text)
-	end)
-	bankButton("Deposit all", 0, 50, COLOR_ROW, function()
-		send("Deposit", "all")
-	end)
-	bankButton("Withdraw all", 0.5, 50, COLOR_ROW, function()
-		send("Withdraw", "all")
-	end)
-	local bankNote = makeRow(pages.Bank, nextOrder(), 50, false)
-	bankNote.TextColor3 = COLOR_DIM
-	bankNote.Text = `Depositing costs a {math.floor(GameConfig.BankFee * 100)}% fee. You spend gold on hand, so withdraw before buying. `
-		.. "Once raids arrive, only gold on hand can be stolen."
-end
+-- Bank: the page is built in BankPage.luau.
 
 -- This week's festival bonus of one kind ("marketPrice", "rollCost"), or 0.
 local function festivalDiscount(state, kind: string): number
@@ -1097,39 +1051,7 @@ local function makeItemRow(page: Instance, order: number)
 	return { info = info, button = button, picture = picture }
 end
 
--- Market: a fixed number of rows that are refilled each restock.
-local marketSummary = makeRow(pages.Market, nextOrder(), 50, false)
-local marketRows = {}
--- The restock window of the stock on screen, set each time the Market is drawn.
-local marketWindowShown: number? = nil
-for index = 1, GameConfig.MarketSize do
-	local row = makeItemRow(pages.Market, nextOrder())
-	marketRows[index] = row
-	row.button.Activated:Connect(function()
-		-- Send which stock the player is looking at with the row, so a click
-		-- that reaches the server after a restock can't buy the new item.
-		if marketWindowShown then
-			send("Buy", `{marketWindowShown}:{index}`)
-		end
-	end)
-end
-
-makeHeading(pages.Market, nextOrder(), "Auto-buy")
-local autoBuyInfo, autoBuyButton = makeRow(pages.Market, nextOrder(), 56, true)
-autoBuyInfo.RichText = true
-local autoBuyRunning = false
-local ownsAutoBuy = false
-autoBuyButton.Activated:Connect(function()
-	if ownsAutoBuy then
-		ui.openAutoBuy()
-	else
-		ui.offerPass("autobuy")
-	end
-end)
-
-local recentBuys = makeRow(pages.Market, nextOrder(), 110, false)
-recentBuys.RichText = true
-recentBuys.TextYAlignment = Enum.TextYAlignment.Top
+-- Market: the page is built in MarketPage.luau.
 
 -- Warband: one row for you, one per unlocked slot, and the next locked slot.
 local openRecruitWindow -- defined further down, with the recruit window
@@ -1644,7 +1566,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -2182,65 +2104,6 @@ local function draw(state)
 			setButton(row.button, `In {formatClock(reward.minutes * 60 - played)}`, false, COLOR_BUY)
 		end
 	end
-
-	-- Bank
-	bankSummary.Text = `On hand: {Format.short(gold)} gold\nBanked: {Format.short(state.banked)} gold\n`
-		.. `Deposit fee {math.floor(GameConfig.BankFee * 100)}%`
-
-	-- Market
-	marketWindowShown = state.marketWindow
-	Art.progress(marketSummary, GameConfig.MarketRestockSeconds - state.marketRestock, GameConfig.MarketRestockSeconds, COLOR_INFO, true)
-	marketSummary.Text = `New stock in {formatClock(state.marketRestock)}\nItems roll around your level. Rarer items are stronger and cost more.`
-	for index, row in marketRows do
-		local item = state.market[index]
-		if not item then
-			row.info.Parent.Visible = false
-			continue
-		end
-		row.info.Parent.Visible = true
-		ItemArt.set(row.picture, item)
-		local chest = if item.kind == "Chest" then ChestConfig.get(item.chest or "") else nil
-		if chest then
-			local c = chest.color
-			local hex = string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
-			row.info.Text = `<font color="{hex}"><b>{chest.name}</b></font>  (chest, opens in your Inventory)\n{chest.note}`
-		else
-			local needs = if state.level < item.level then `<font color="#F07060">Needs Lv {item.level}</font>` else `Lv {item.level}`
-			row.info.Text = `{rarityName(item)}  ({string.lower(item.slot or "")})  {needs}\n{statText(item.attack or 0, item.defense or 0)}`
-		end
-		if item.sold then
-			setButton(row.button, "Sold", false, COLOR_BUY)
-		elseif state.level < item.level then
-			setButton(row.button, `Level {item.level}`, false, COLOR_BUY)
-		else
-			local price = math.floor(item.price * (1 - festivalDiscount(state, "marketPrice")))
-			setButton(row.button, `Buy\n{Format.short(price)}`, gold >= price, COLOR_BUY)
-		end
-	end
-
-	-- Auto-buy
-	local rule = state.autoBuy
-	ownsAutoBuy = state.passes.autobuy == true
-	autoBuyRunning = rule.on and ownsAutoBuy
-	if ownsAutoBuy then
-		autoBuyInfo.Text = `<b>Auto-buy: {if autoBuyRunning then "RUNNING" else "OFF"}</b>   Bought {rule.bought}, spent {Format.short(rule.spent)} gold\n`
-			.. `{rule.minRarity} or better. Buys matching Market items as they appear, while you are in the game.`
-	else
-		autoBuyInfo.Text = "<b>Auto-buy</b>\nThe Market Steward game pass buys gear that matches your rules every restock."
-	end
-	if ownsAutoBuy then
-		setButton(autoBuyButton, if autoBuyRunning then "Auto: ON\nSettings" else "Auto-buy\nSettings", true, if autoBuyRunning then COLOR_CLAIM else COLOR_SELECTED)
-	else
-		setButton(autoBuyButton, "\u{1F512} Auto-buy\nGet pass", false, COLOR_SELECTED)
-	end
-	local recentLines = { "<b>Recent buys</b>" }
-	for _, buy in rule.recent do
-		table.insert(recentLines, `{rarityName(buy)}   {Format.short(buy.price)} gold`)
-	end
-	if #rule.recent == 0 then
-		table.insert(recentLines, "Nothing yet.")
-	end
-	recentBuys.Text = table.concat(recentLines, "\n")
 
 	-- Warband
 	local crew = state.crew

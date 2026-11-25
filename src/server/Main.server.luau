@@ -3099,7 +3099,7 @@ local function runAutoBuy(player: Player, data)
 		if buyItem(player, data, item, true) then
 			rule.bought += 1
 			rule.spent += marketPrice(item)
-			table.insert(rule.recent, 1, { name = item.name, rarity = item.rarity, price = marketPrice(item) })
+			table.insert(rule.recent, 1, { name = item.name, rarity = item.rarity, slot = item.slot, price = marketPrice(item) })
 			while #rule.recent > GameConfig.AutoBuyRecent do
 				table.remove(rule.recent)
 			end
