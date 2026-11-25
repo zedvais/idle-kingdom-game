@@ -62,6 +62,15 @@ function Market.rollGear(random: Random, playerLevel: number, minRank: number?)
 	}
 end
 
+-- One piece of a gear set (foe drops). The slot is random; the name comes
+-- from the set.
+function Market.rollSetPiece(random: Random, playerLevel: number, set, minRank: number)
+	local item = Market.rollGear(random, playerLevel, minRank)
+	item.name = set.pieces[item.slot]
+	item.set = set.id
+	return item
+end
+
 -- A fresh stock for one player. Seeded by player and window, so the same
 -- player at the same level sees the same stock if they rejoin.
 function Market.roll(userId: number, window: number, playerLevel: number)

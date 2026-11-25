@@ -48,7 +48,9 @@ local function newData()
 		-- One entry per unlocked warband slot: a soldier table, or false
 		-- when the slot is empty.
 		crew = { false },
-		gear = {}, -- list of owned gear items
+		gear = {}, -- list of owned gear items; item.wornBy is who wears it
+		equipReady = false, -- true once old saves got their first loadout
+		autoEquipNew = true, -- new gear goes onto an empty slot
 		nextItemId = 1,
 		market = { window = -1, items = {} },
 		tokens = 0, -- boss tokens
