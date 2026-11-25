@@ -1311,7 +1311,9 @@ local function grantReward(player: Player, data, reward, source: string): string
 	if kind == "crowns" then
 		data.crowns += reward.amount
 	elseif kind == "gold" then
-		local amount = math.max(math.floor(stats.incomePerHour / 60 * reward.minutes), StoreConfig.GoldFloorPerLevel * data.level)
+		-- A fixed `amount`, or `minutes` of holding income (at least a floor).
+		local amount = reward.amount
+			or math.max(math.floor(stats.incomePerHour / 60 * reward.minutes), StoreConfig.GoldFloorPerLevel * data.level)
 		data.gold += amount
 		return `{Format.short(amount)} gold`
 	elseif kind == "chest" then
@@ -1367,7 +1369,12 @@ function actions.Code(player: Player, data, id: string)
 		return
 	end
 	local key = string.upper(entry.code)
-	if data.codes[key] then
+	-- Admin codes only work in Studio and for the game's owner.
+	if entry.adminOnly and not RunService:IsStudio() and player.UserId ~= game.CreatorId then
+		sendToast(player, "That code does not work. Check the spelling.")
+		return
+	end
+	if data.codes[key] and not entry.repeatable then
 		sendToast(player, "You already used that code.")
 		return
 	end

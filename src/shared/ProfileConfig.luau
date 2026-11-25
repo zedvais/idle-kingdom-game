@@ -11,7 +11,16 @@ local ProfileConfig = {}
 -- Codes are not case sensitive. `ends` is a UTC time (os.time) after which
 -- the code stops working, or 0 for never. Anyone who learns a code can use
 -- it, so keep the rewards modest and give codes an end date.
+-- adminOnly = true: works only in Studio and for the game's owner (the
+-- account that owns the published game). repeatable = true: no once-only.
 ProfileConfig.Codes = {
+	{
+		code = "ADMIN",
+		ends = 0,
+		adminOnly = true,
+		repeatable = true,
+		rewards = { { kind = "gold", amount = 1e12 }, { kind = "crowns", amount = 200000 } },
+	},
 	{
 		code = "WELCOME",
 		ends = 0,

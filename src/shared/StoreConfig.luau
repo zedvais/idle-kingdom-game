@@ -15,6 +15,8 @@
 -- purchase went through (nothing is charged), so every reward can be tested.
 -- In a live server an id of 0 just says the item is not on sale yet.
 
+local Format = require(script.Parent.Format)
+
 local StoreConfig = {}
 
 -- Crowns are the premium currency. Players buy them with Robux and spend
@@ -355,6 +357,8 @@ function StoreConfig.describe(reward): string
 	local kind = reward.kind
 	if kind == "crowns" then
 		return `{reward.amount} Crowns`
+	elseif kind == "gold" and reward.amount then
+		return `{Format.short(reward.amount)} gold`
 	elseif kind == "gold" then
 		local hours = reward.minutes / 60
 		return if reward.minutes % 60 == 0 then `{hours}h of income` else `{reward.minutes}m of income`
