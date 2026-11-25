@@ -264,6 +264,10 @@ StoreConfig.SeasonDays = 28
 StoreConfig.PassTiers = 50
 StoreConfig.PointsPerTier = 200
 StoreConfig.TierSkipCost = 120 -- Crowns to buy one tier
+-- After tier 50, every BonusPoints more points give a small bonus reward
+-- (claimed from the BONUS card at the end of the track).
+StoreConfig.BonusPoints = 200
+StoreConfig.BonusReward = { kind = "gold", minutes = 15 }
 
 -- Where pass points come from.
 StoreConfig.PointsPerQuestEnergy = 1 / 5 -- 1 point per 5 energy spent on quests

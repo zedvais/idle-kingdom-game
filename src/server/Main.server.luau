@@ -380,7 +380,17 @@ end
 local function addPassPoints(data, points: number)
 	checkPassSeason(data)
 	local cap = StoreConfig.PassTiers * StoreConfig.PointsPerTier
-	data.pass.points = math.min(cap, data.pass.points + points)
+	local total = data.pass.points + points
+	data.pass.points = math.min(cap, total)
+	-- Points past the last tier fill the bonus rewards.
+	if total > cap then
+		data.pass.bonus = (data.pass.bonus or 0) + (total - cap)
+	end
+end
+
+-- Bonus rewards (past tier 50) ready to claim.
+local function passBonusReady(pass): number
+	return math.max(0, math.floor((pass.bonus or 0) / StoreConfig.BonusPoints) - (pass.bonusClaimed or 0))
 end
 
 -- Quest energy feeds the Royal Pass, the Tithe Chest and the weekly challenge.
@@ -2532,7 +2542,9 @@ function actions.PassClaim(player: Player, data, id: string)
 	local pass = data.pass
 	local reached = StoreConfig.getTier(pass.points)
 	local first, last = 1, reached
-	if id ~= "all" then
+	if id == "bonus" then
+		first, last = 1, 0
+	elseif id ~= "all" then
 		local tier = tonumber(id)
 		if not tier or tier < 1 or tier > reached then
 			return
@@ -2551,6 +2563,13 @@ function actions.PassClaim(player: Player, data, id: string)
 		if pass.noble and not pass.claimedNoble[key] then
 			pass.claimedNoble[key] = true
 			table.insert(got, grantReward(player, data, rewards.noble, `Royal Pass tier {tier}`))
+		end
+	end
+	if id == "all" or id == "bonus" then
+		local ready = passBonusReady(pass)
+		for _ = 1, ready do
+			pass.bonusClaimed = (pass.bonusClaimed or 0) + 1
+			table.insert(got, grantReward(player, data, StoreConfig.BonusReward, "Royal Pass bonus"))
 		end
 	end
 	if #got > 0 then

@@ -395,7 +395,7 @@ local function buildTrack(ui, page: Instance)
 	track.ScrollingDirection = Enum.ScrollingDirection.X
 	track.ScrollBarThickness = 8
 	track.ScrollBarImageColor3 = colors.gold
-	track.CanvasSize = UDim2.fromOffset(PAD * 2 + StoreConfig.PassTiers * COL, 0)
+	track.CanvasSize = UDim2.fromOffset(PAD * 2 + (StoreConfig.PassTiers + 1) * COL + 20, 0)
 	track.ElasticBehavior = Enum.ElasticBehavior.Never
 	track.Parent = panel
 	w.track = track
@@ -428,6 +428,77 @@ local function buildTrack(ui, page: Instance)
 			ring = ring,
 			number = number,
 		}
+	end
+
+	-- 50+ bonus: one tall card after the last tier, paid again and again.
+	do
+		local x = PAD + StoreConfig.PassTiers * COL + 10
+		local top = LINE_Y - 30 - CARD_H
+		local card = ui.makeFrame(track, UDim2.fromOffset(CARD_W + 10, CARD_H * 2 + 60), UDim2.fromOffset(x, top), Color3.new(1, 1, 1))
+		ui.addCorner(card, 12)
+		local gradient = Instance.new("UIGradient")
+		gradient.Rotation = 90
+		gradient.Color = ColorSequence.new(Color3.fromRGB(150, 110, 30), Color3.fromRGB(50, 30, 10))
+		gradient.Parent = card
+		local stroke = ui.art.stroke(card, NOBLE, 2, 0.2)
+		ui.art.shine(card, 3)
+		local title = ui.makeText(card, UDim2.new(1, -8, 0, 40), UDim2.fromOffset(4, 10), NOBLE, 22)
+		title.Font = Enum.Font.GothamBlack
+		title.TextXAlignment = Enum.TextXAlignment.Center
+		title.Text = "50+\nBONUS"
+		title.ZIndex = 405
+		local picture = ui.makeText(card, UDim2.new(1, 0, 0, 80), UDim2.fromOffset(0, 70), Color3.new(1, 1, 1), 58)
+		picture.TextXAlignment = Enum.TextXAlignment.Center
+		picture.Text = KIND_GLYPHS[StoreConfig.BonusReward.kind] or "\u{1F381}"
+		picture.ZIndex = 405
+		local note = ui.makeText(card, UDim2.new(1, -10, 0, 56), UDim2.fromOffset(5, 156), Color3.new(1, 1, 1), 13)
+		note.Font = Enum.Font.GothamBold
+		note.TextXAlignment = Enum.TextXAlignment.Center
+		note.Text = `{shortText(StoreConfig.BonusReward)} every {StoreConfig.BonusPoints} points after tier {StoreConfig.PassTiers}`
+		note.ZIndex = 405
+		local back = ui.makeFrame(card, UDim2.new(1, -16, 0, 18), UDim2.fromOffset(8, 222), Color3.fromRGB(20, 12, 6))
+		ui.addCorner(back, 6)
+		back.ZIndex = 405
+		local fill = ui.makeFrame(back, UDim2.fromScale(0, 1), UDim2.fromOffset(0, 0), NOBLE)
+		ui.addCorner(fill, 6)
+		fill.ZIndex = 406
+		local count = ui.makeText(back, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(1, 1, 1), 11)
+		count.Font = Enum.Font.GothamBlack
+		count.TextXAlignment = Enum.TextXAlignment.Center
+		count.TextStrokeTransparency = 0.3
+		count.ZIndex = 407
+		local ribbon = ui.makeText(card, UDim2.new(1, 0, 0, 40), UDim2.new(0, 0, 1, -40), Color3.fromRGB(30, 50, 20), 15)
+		ribbon.BackgroundTransparency = 0
+		ribbon.BackgroundColor3 = GREEN
+		ribbon.Font = Enum.Font.GothamBlack
+		ribbon.TextXAlignment = Enum.TextXAlignment.Center
+		ribbon.ZIndex = 420
+		ui.addCorner(ribbon, 10)
+		local hit = ui.makeButton(card, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0))
+		hit.BackgroundTransparency = 1
+		hit.Text = ""
+		hit.ZIndex = 450
+		hit:SetAttribute("NoGlow", true)
+		local part = {
+			card = card,
+			stroke = stroke,
+			picture = ui.makeFrame(card, UDim2.fromOffset(0, 0), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0)),
+			fill = fill,
+			count = count,
+			ribbon = ribbon,
+			claimable = false,
+		}
+		part.picture.Visible = false
+		hit.Activated:Connect(function()
+			if part.claimable then
+				pop(card, 1.12)
+				float(ui, card, `+{shortText(StoreConfig.BonusReward)}`, NOBLE)
+				ui.send("PassClaim", "bonus")
+			else
+				pop(card, 0.95)
+			end
+		end)
+		w.bonus = part
 	end
 
 	-- Arrows.
@@ -686,6 +757,28 @@ function RoyalPassPage.draw(state, ui)
 		column.badge.BackgroundColor3 = if reached then colors.gold else Color3.fromRGB(60, 50, 70)
 		column.number.TextColor3 = if reached then Color3.fromRGB(50, 30, 6) else Color3.new(1, 1, 1)
 		column.ring.Color = if index == tier + 1 then Color3.new(1, 1, 1) else Color3.fromRGB(20, 14, 26)
+	end
+	-- 50+ bonus card.
+	do
+		local part = w.bonus
+		local bonus = pass.bonus or 0
+		local ready = math.max(0, math.floor(bonus / StoreConfig.BonusPoints) - (pass.bonusClaimed or 0))
+		local into = bonus % StoreConfig.BonusPoints
+		part.fill.Size = UDim2.fromScale(if tier >= maxTier then into / StoreConfig.BonusPoints else 0, 1)
+		part.count.Text = if tier >= maxTier then `{into} / {StoreConfig.BonusPoints}` else `Reach tier {maxTier}`
+		part.claimable = ready > 0
+		part.ribbon.Visible = true
+		part.ribbon.Text = if ready > 0 then `CLAIM x{ready}!` else "KEEP EARNING"
+		part.ribbon.BackgroundColor3 = if ready > 0 then GREEN else Color3.fromRGB(70, 60, 50)
+		part.ribbon.TextColor3 = if ready > 0 then Color3.fromRGB(30, 50, 20) else Color3.fromRGB(200, 190, 170)
+		if ready > 0 then
+			claimable += 1
+			table.insert(pulsing, part)
+		else
+			part.stroke.Thickness = 2
+			part.stroke.Color = NOBLE
+			part.stroke.Transparency = 0.2
+		end
 	end
 	local lineShare = math.clamp((tier - 0.5) / maxTier, 0, 1)
 	if tier < maxTier then
