@@ -63,6 +63,7 @@ Art.Icons = {
 	Rebirth = "\u{1F31F}", -- glowing star
 	Mail = "\u{2709}\u{FE0F}", -- envelope
 	Skills = "\u{1F4AA}", -- flexed arm
+	Pass = "\u{1F39F}\u{FE0F}", -- ticket
 	gold = "\u{1F4B0}", -- money bag
 	crowns = "\u{1F451}", -- crown
 	energy = "\u{26A1}", -- lightning
