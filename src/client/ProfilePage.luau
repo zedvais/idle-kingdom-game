@@ -47,9 +47,9 @@ local TILES = {
 		end,
 	},
 	{
-		"Relic points",
+		"Relic pieces",
 		function(state)
-			return Format.short(state.relics.points)
+			return Format.short(state.relics.count)
 		end,
 	},
 	{

@@ -114,17 +114,18 @@ GameConfig.Holdings = {
 
 ---------------------------------------------------------------------------
 -- Keep: your home. Each upgrade adds to income, attack and defense.
+-- Upgrades cost gold plus Estate resources (`resources`).
 ---------------------------------------------------------------------------
 
 GameConfig.KeepLevels = {
 	{ name = "Timber Hall", level = 1, cost = 0, bonus = 0 },
-	{ name = "Palisade Fort", level = 3, cost = 5000, bonus = 0.05 },
-	{ name = "Stone Tower", level = 6, cost = 40000, bonus = 0.1 },
-	{ name = "Motte Castle", level = 10, cost = 250000, bonus = 0.16 },
-	{ name = "Curtain-Wall Keep", level = 14, cost = 1500000, bonus = 0.23 },
-	{ name = "Fortress of the Vale", level = 18, cost = 8000000, bonus = 0.31 },
-	{ name = "Highcrown Citadel", level = 23, cost = 45000000, bonus = 0.4 },
-	{ name = "Sunspire Palace", level = 28, cost = 250000000, bonus = 0.5 },
+	{ name = "Palisade Fort", level = 3, cost = 5000, resources = { lumber = 300, stone = 150 }, bonus = 0.05 },
+	{ name = "Stone Tower", level = 6, cost = 40000, resources = { lumber = 1500, stone = 1800 }, bonus = 0.1 },
+	{ name = "Motte Castle", level = 10, cost = 250000, resources = { lumber = 8000, stone = 12000, iron = 800 }, bonus = 0.16 },
+	{ name = "Curtain-Wall Keep", level = 14, cost = 1500000, resources = { lumber = 30000, stone = 50000, iron = 4000 }, bonus = 0.23 },
+	{ name = "Fortress of the Vale", level = 18, cost = 8000000, resources = { lumber = 120000, stone = 180000, iron = 18000 }, bonus = 0.31 },
+	{ name = "Highcrown Citadel", level = 23, cost = 45000000, resources = { lumber = 450000, stone = 650000, iron = 70000 }, bonus = 0.4 },
+	{ name = "Sunspire Palace", level = 28, cost = 250000000, resources = { lumber = 1800000, stone = 2500000, iron = 280000 }, bonus = 0.5 },
 }
 
 ---------------------------------------------------------------------------
@@ -210,8 +211,9 @@ GameConfig.RecruitTiers = {
 	{ id = "Royal", level = 25, cost = 5000000, power = 45, chances = { 0, 150, 350, 300, 150, 48, 2 } },
 }
 
--- Most rolls one auto-roll request may make, to keep the server fast.
-GameConfig.MaxRollsPerRequest = 1000
+-- Auto roll (Recruiting Sergeant pass) makes this many rolls each second
+-- until it hits the chosen rarity, runs out of gold or is stopped.
+GameConfig.AutoRollsPerTick = 1
 
 -- Training adds this much to a soldier's stats per rank, and costs this
 -- share of their recruit tier's roll cost, growing each rank.
@@ -221,12 +223,15 @@ GameConfig.TrainCostGrowth = 1.6
 GameConfig.MaxTrainRank = 20
 
 -- Soldier classes. attack and defense are for a Common Village soldier.
+-- Across all classes attack and defense add up to the same total, so a
+-- warband is as good at holding as at hitting (attack rolls against
+-- defense rolls in fights between players).
 GameConfig.SoldierClasses = {
 	{ id = "Militia", attack = 3, defense = 3 },
 	{ id = "Archer", attack = 5, defense = 1 },
-	{ id = "Knight", attack = 2, defense = 5 },
-	{ id = "Battle Mage", attack = 6, defense = 1 },
-	{ id = "Ranger", attack = 4, defense = 3 },
+	{ id = "Knight", attack = 1, defense = 5 },
+	{ id = "Battle Mage", attack = 5, defense = 2 },
+	{ id = "Ranger", attack = 2, defense = 5 },
 }
 
 GameConfig.FirstNames = {
@@ -526,6 +531,49 @@ GameConfig.TrophyBonusNames = {
 -- At most this many quests run each second.
 GameConfig.AutoQuestsPerSecond = 3
 
+-- Auto quest modes: which quest auto quests do next.
+--   last     repeat the last quest you did
+--   mastery  the first open quest still short of gold mastery
+--   xp       the open quest with the most XP per energy
+GameConfig.AutoQuestModes = {
+	{ id = "last", name = "Repeat last quest" },
+	{ id = "mastery", name = "Earn mastery medals" },
+	{ id = "xp", name = "Most XP" },
+}
+
+-- The quest auto quests do next, or nil. `done` is { [quest id] = times done }.
+function GameConfig.pickAutoQuest(mode: string, level: number, done, lastId: string)
+	local function open(quest)
+		return level >= quest.level and level >= GameConfig.getRegion(quest.region).level
+	end
+	if mode == "mastery" then
+		for _, quest in GameConfig.Quests do
+			if open(quest) and GameConfig.getMasteryRank(done[quest.id] or 0) < GameConfig.MaxMasteryRanks then
+				return quest
+			end
+		end
+		mode = "xp" -- every open quest has gold mastery
+	end
+	if mode == "xp" then
+		local best = nil
+		for _, quest in GameConfig.Quests do
+			if open(quest) then
+				local rate = quest.xp / quest.energy
+				if not best or rate > best.xp / best.energy or (rate == best.xp / best.energy and quest.xp > best.xp) then
+					best = quest
+				end
+			end
+		end
+		return best
+	end
+	for _, quest in GameConfig.Quests do
+		if quest.id == lastId and open(quest) then
+			return quest
+		end
+	end
+	return nil
+end
+
 -- Market auto-buy remembers this many recent purchases.
 GameConfig.AutoBuyRecent = 6
 
@@ -540,8 +588,6 @@ function GameConfig.getHit(attack: number, defense: number): number
 end
 GameConfig.HitRollMin = 0.85
 GameConfig.HitRollMax = 1.15
--- How many attacks the Attack x5 button makes at most.
-GameConfig.MultiAttack = 5
 
 -- Fills in each stage's numbers from its level and place in its house.
 -- `power` is roughly the attack a player has at that level.

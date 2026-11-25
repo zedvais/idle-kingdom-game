@@ -4,6 +4,7 @@ local DataStoreService = game:GetService("DataStoreService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
+local EstateConfig = require(ReplicatedStorage.Shared.EstateConfig)
 
 local PlayerData = {}
 
@@ -61,6 +62,18 @@ local function newData()
 		trophies = {}, -- [trophyId] = true once earned
 		autoQuest = "", -- quest id that auto quests repeat
 		autoQuestOn = false,
+		autoQuestMode = "last", -- "last" quest, "mastery" (next medal) or "xp" (most XP per energy)
+		autoRoll = { -- Recruiting Sergeant: one roll per tick until a hit
+			on = false,
+			slot = 1,
+			tier = "Village",
+			rarity = "Rare",
+			scope = "empty", -- "this" slot, "empty" slots, or slots "below" the rarity
+			rolls = 0,
+			spent = 0,
+			whenBroke = "wait", -- out of gold: "wait" for more or "stop"
+			waiting = false,
+		},
 		autoBuy = {
 			on = false,
 			slots = { Weapon = true, Armor = true, Mount = true },
@@ -132,13 +145,23 @@ local function newData()
 		mail = {}, -- newest first: { id, time, title, text, rewards, claimed, read }
 		mailNext = 1,
 		newsSeen = {}, -- [news id] = true once delivered
-		relics = { points = 0, count = 0 },
+		-- Relic Hall: count = pieces held, items[name|rarity] = { name, slot,
+		-- rarity, set, count, levels = { ["L12"] = copies at level 12 } }
+		relics = { count = 0, auto = false, items = {} },
 		rebirth = { count = 0, stars = 0 },
 		-- Barracks, expeditions and the War Chronicle
 		troops = {}, -- [troop key] = count at home
 		training = { kind = "", count = 0, endsAt = 0 }, -- one batch at a time
 		expedition = { target = "", sent = {}, endsAt = 0 }, -- the army while away
 		chronicle = {}, -- battle reports, newest first
+		-- Estate: resources in stock, and each castle you own with its
+		-- building levels and the upgrade its builder is working on.
+		estate = {
+			stock = table.clone(EstateConfig.StartingStock),
+			castles = {
+				home = { levels = {}, build = { key = "", level = 0, endsAt = 0 } },
+			},
+		},
 		chronicleNext = 1,
 		lastSeen = 0,
 	}
@@ -157,7 +180,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition" } do
+	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default
@@ -165,7 +188,54 @@ local function repair(data)
 		end
 	end
 	data.foes = nil -- replaced by stages
+	-- Every castle needs its levels and builder, and the home castle exists.
+	local estate = data.estate
+	for _, resource in EstateConfig.Resources do
+		if type(estate.stock[resource.key]) ~= "number" then
+			estate.stock[resource.key] = EstateConfig.StartingStock[resource.key] or 0
+		end
+	end
+	if type(estate.castles.home) ~= "table" then
+		estate.castles.home = { levels = {}, build = { key = "", level = 0, endsAt = 0 } }
+	end
+	for key, castle in estate.castles do
+		if type(castle) ~= "table" or not EstateConfig.getCastle(key) then
+			estate.castles[key] = nil
+		else
+			if type(castle.levels) ~= "table" then
+				castle.levels = {}
+			end
+			if type(castle.build) ~= "table" or type(castle.build.key) ~= "string" then
+				castle.build = { key = "", level = 0, endsAt = 0 }
+			end
+		end
+	end
+	-- Old Relic Hall saves only kept points; the hall now keeps the items.
+	if data.relics.points ~= nil then
+		data.relics.points = nil
+		data.relics.count = 0
+	end
 	return data
+end
+
+---------------------------------------------------------------------------
+-- Session lock and ordered saves
+---------------------------------------------------------------------------
+-- A save records which server owns it (`lock`). When a player hops to a new
+-- server before the old one has finished saving, the new server waits for
+-- the lock to be released (or to go stale), so it never loads old data and
+-- the old server never overwrites newer progress. Saves for one player
+-- also never overlap: a save waits for the one before it.
+
+local LOCK_STALE_SECONDS = 180 -- a lock older than this is from a dead server
+local LOCK_WAIT_TRIES = 6 -- tries to load while another server holds the lock
+local LOCK_WAIT_SECONDS = 5
+
+local jobId = if game.JobId ~= "" then game.JobId else "studio"
+local saving = {} -- [UserId] = true while a save for that player is running
+
+local function lockIsForeign(lock): boolean
+	return type(lock) == "table" and lock.job ~= jobId and os.time() - (tonumber(lock.time) or 0) < LOCK_STALE_SECONDS
 end
 
 -- Returns the player's data and whether it is safe to save it later.
@@ -175,30 +245,71 @@ function PlayerData.load(player: Player)
 		return newData(), false
 	end
 
-	local ok, result = pcall(function()
-		return store:GetAsync(keyFor(player))
-	end)
-	if not ok then
-		warn("[PlayerData] Could not load data for", player.Name, "-", result)
-		return newData(), false
+	for try = 1, LOCK_WAIT_TRIES do
+		local locked = false
+		local ok, result = pcall(function()
+			return store:UpdateAsync(keyFor(player), function(old)
+				if type(old) == "table" and lockIsForeign(old.lock) and try < LOCK_WAIT_TRIES then
+					locked = true
+					return nil -- leave it alone; another server is still saving
+				end
+				local data = repair(old)
+				data.lock = { job = jobId, time = os.time() }
+				return data
+			end)
+		end)
+		if not ok then
+			warn("[PlayerData] Could not load data for", player.Name, "-", result)
+			return newData(), false
+		end
+		if not locked then
+			return repair(result), true
+		end
+		if not player.Parent then
+			return newData(), false
+		end
+		task.wait(LOCK_WAIT_SECONDS)
 	end
-
-	return repair(result), true
+	return newData(), false
 end
 
-function PlayerData.save(player: Player, data): boolean
+-- Saves the player's data. `release` = true when they are leaving, which
+-- frees the lock for the next server. Returns true when the save landed.
+function PlayerData.save(player: Player, data, release: boolean?): boolean
 	if not store then
 		return false
 	end
+	local userId = player.UserId
+	-- Wait for an earlier save of this player to finish (at most ~30s).
+	local waited = 0
+	while saving[userId] and waited < 30 do
+		task.wait(0.5)
+		waited += 0.5
+	end
+	saving[userId] = true
 
 	data.lastSeen = os.time()
+	local foreign = false
 	local ok, result = pcall(function()
-		store:SetAsync(keyFor(player), data)
+		store:UpdateAsync(keyFor(player), function(old)
+			if type(old) == "table" and lockIsForeign(old.lock) then
+				foreign = true
+				return nil -- another server took over this player; keep its save
+			end
+			data.lock = if release then nil else { job = jobId, time = os.time() }
+			return data
+		end)
 	end)
+	saving[userId] = nil
 	if not ok then
 		warn("[PlayerData] Could not save data for", player.Name, "-", result)
+		return false
 	end
-	return ok
+	if foreign then
+		warn("[PlayerData] Skipped a save for", player.Name, "- another server owns this save now")
+		return false
+	end
+	return true
 end
 
 return PlayerData

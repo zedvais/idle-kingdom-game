@@ -12,6 +12,7 @@ local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
 local BountyConfig = require(Shared:WaitForChild("BountyConfig"))
 local FestivalConfig = require(Shared:WaitForChild("FestivalConfig"))
 local ResearchConfig = require(Shared:WaitForChild("ResearchConfig"))
+local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -46,7 +47,7 @@ local TOP_HEIGHT = 72
 local RAIL_WIDTH = 150
 local LEFT_BLOCK = 270 -- top bar: level, name and XP
 local RIGHT_BLOCK = 240 -- top bar: energy, stamina and health
-local ICON_BLOCK = 190 -- top bar: Mail, Rankings and War Chronicle buttons
+local ICON_BLOCK = 76 -- top bar: the Mail button
 
 -- A plain backdrop that covers the whole screen, including the top strip.
 do
@@ -171,6 +172,7 @@ addStroke(topBar)
 -- Popups (Profile, Mail, Rankings...) open over the menus. Defined with
 -- the popup window further down.
 local openModal
+local ui -- the helpers page modules get; filled in further down
 local railBadges = {} -- red count pills, by page or popup name
 
 -- Your Roblox picture with the level on it, name and experience. Pressing
@@ -240,11 +242,11 @@ do
 	chipLayout.Parent = chipRow
 
 	local function makeChip(key: string, label: string, color: Color3)
-		local chip = makeFrame(chipRow, UDim2.new(0.2, -6, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
+		local chip = makeFrame(chipRow, UDim2.new(0.5, -6, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
 		chip.LayoutOrder = #chipRow:GetChildren()
 		addCorner(chip, 6)
 		local sizeLimit = Instance.new("UISizeConstraint")
-		sizeLimit.MaxSize = Vector2.new(150, 100)
+		sizeLimit.MaxSize = Vector2.new(190, 100)
 		sizeLimit.Parent = chip
 		local name = makeText(chip, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 3), color, 11)
 		name.Font = Enum.Font.GothamBold
@@ -258,10 +260,7 @@ do
 		chips[key] = { value = value, sub = sub }
 	end
 	makeChip("gold", "Gold", COLOR_GOLD)
-	makeChip("bank", "Bank", Color3.fromRGB(150, 190, 140))
 	makeChip("crowns", "Crowns", Color3.fromRGB(200, 150, 230))
-	makeChip("tokens", "Boss tokens", Color3.fromRGB(220, 120, 100))
-	makeChip("power", "Power", Color3.fromRGB(140, 180, 230))
 end
 
 -- Square buttons that open popups, between the chips and the bars.
@@ -274,7 +273,7 @@ do
 	iconLayout.Padding = UDim.new(0, 6)
 	iconLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	iconLayout.Parent = iconRow
-	for index, entry in { { "Mail", "\u{2709}", "Mail" }, { "Rankings", "\u{265B}", "Ranks" }, { "Chronicle", "\u{2694}", "Battles" } } do
+	for index, entry in { { "Mail", "\u{2709}", "Mail" } } do
 		local button = makeButton(iconRow, UDim2.new(0, 56, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
 		button.LayoutOrder = index
 		button.Text = ""
@@ -356,13 +355,26 @@ addStroke(main)
 -- Every page: its group, a one line description, and a tip shown until
 -- the player presses Got it.
 local PAGE_GROUPS = {
-	{ name = "Realm", pages = { "Keep", "Holdings", "Research", "Bank" } },
+	{ name = "Realm", pages = { "Keep", "Estate", "Holdings", "Research", "Bank" } },
 	{ name = "Daily", pages = { "Bounties", "Festival" } },
 	{ name = "Campaign", pages = { "Quests", "Foes", "Expeditions" } },
+	{ name = "Arena", pages = { "Rankings", "War Chronicle" } },
 	{ name = "Court", pages = { "Warband", "Barracks", "Inventory", "Relic Hall", "Market" } },
 	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
 }
 local PAGE_INFO = {
+	Estate = {
+		about = "Lumber, stone, iron and grain, your buildings, defenses and castles.",
+		tip = "Upgrade the Lumber Camp and Quarry first. Resources pay for buildings, Keep upgrades and troops, and stop at your storage cap.",
+	},
+	Rankings = {
+		about = "The mightiest players across every server.",
+		tip = "Scores are sent while you play and the boards refresh every couple of minutes. Fights with other players come here later.",
+	},
+	["War Chronicle"] = {
+		about = "Reports of your foe fights and expeditions, newest first.",
+		tip = "Each expedition report shows the battle round by round, so you can see which troops to train.",
+	},
 	Barracks = {
 		about = "Train troops for expeditions. Each type beats one kind of enemy.",
 		tip = "Spearmen beat riders, archers beat spearmen, cavalry beat archers, and siege rams break forts.",
@@ -372,8 +384,8 @@ local PAGE_INFO = {
 		tip = "Your whole army marches. Check your power against each enemy before you send it.",
 	},
 	["Relic Hall"] = {
-		about = "Give spare gear away for good, for lasting attack and defense.",
-		tip = "Rarer pieces and set pieces are worth more. Worn gear can never be given.",
+		about = "Your collection: gear on display gives flat attack and defense.",
+		tip = "Copies of the same item stack into tiers at 1, 10, 100, 1000, 2500 and 10000. Take pieces back out any time.",
 	},
 	Keep = {
 		about = "Your home, your numbers, daily rewards and skills.",
@@ -401,7 +413,7 @@ local PAGE_INFO = {
 	},
 	Quests = {
 		about = "Spend energy for gold, experience and the odd piece of gear.",
-		tip = "Repeat a quest to earn bronze, silver and gold mastery. The Quest Herald pass adds auto quests that repeat your last one.",
+		tip = "Repeat a quest to earn bronze, silver and gold mastery. The Auto quests button opens the settings: repeat your last quest, earn mastery, or go for the most XP.",
 	},
 	Foes = {
 		about = "Bring down each foe once a day for gold, tokens and set gear.",
@@ -792,11 +804,7 @@ autoQuestInfo.RichText = true
 local autoQuestOn = false
 local ownsAutoQuest = false
 autoQuestButton.Activated:Connect(function()
-	if not ownsAutoQuest then
-		send("Robux", "pass:autoquest")
-		return
-	end
-	send("AutoQuest", if autoQuestOn then "off" else "on")
+	ui.openAutoQuest()
 end)
 local questBoost = makeRow(pages.Quests, nextOrder(), 30, false)
 questBoost.TextColor3 = COLOR_XP
@@ -963,57 +971,7 @@ autoBuyInfo.RichText = true
 local autoBuyRunning = false
 local ownsAutoBuy = false
 autoBuyButton.Activated:Connect(function()
-	if not ownsAutoBuy then
-		send("Robux", "pass:autobuy")
-		return
-	end
-	send("AutoBuy", if autoBuyRunning then "off" else "on")
-end)
-
-local slotButtons = makeButtonRow(pages.Market, nextOrder(), "Buy these", GameConfig.GearSlots)
-for index, slot in GameConfig.GearSlots do
-	slotButtons[index].Activated:Connect(function()
-		send("AutoBuy", "slot:" .. slot)
-	end)
-end
-
-local rarityChoices = {}
-for _, rarity in GameConfig.Rarities do
-	if rarity.chance > 0 then
-		table.insert(rarityChoices, rarity.id)
-	end
-end
-local rarityButtons = makeButtonRow(pages.Market, nextOrder(), "Lowest rarity", rarityChoices)
-for index, rarityId in rarityChoices do
-	rarityButtons[index].Activated:Connect(function()
-		send("AutoBuy", "rarity:" .. rarityId)
-	end)
-end
-
-local minBox, maxBox -- the price boxes; the draw code shows the saved prices in them
-do
-	local priceRow = makeFrame(pages.Market, UDim2.new(1, -10, 0, 44), UDim2.fromOffset(0, 0), COLOR_ROW)
-	priceRow.LayoutOrder = nextOrder()
-	addCorner(priceRow, 6)
-	makeText(priceRow, UDim2.new(0, 120, 1, 0), UDim2.fromOffset(10, 0), COLOR_TEXT, 13).Text = "Price range"
-	minBox = makeAmountBox(priceRow, UDim2.new(0.5, -(65 + BUTTON_WIDTH / 2 + 12), 1, -10), UDim2.new(0, 130, 0, 5), "Min: none")
-	maxBox = makeAmountBox(priceRow, UDim2.new(0.5, -(65 + BUTTON_WIDTH / 2 + 12), 1, -10), UDim2.new(0.5, 65 - BUTTON_WIDTH / 2 + 2, 0, 5), "Max: none")
-	local priceButton = makeButton(priceRow, UDim2.new(0, BUTTON_WIDTH, 1, -10), UDim2.new(1, -6, 0, 5), COLOR_BUY)
-	priceButton.TextColor3 = Color3.fromRGB(40, 28, 12)
-	priceButton.AnchorPoint = Vector2.new(1, 0)
-	priceButton.Text = "Save prices"
-	priceButton.Activated:Connect(function()
-		send("AutoBuy", "min:" .. string.sub(minBox.Text, 1, 40))
-		send("AutoBuy", "max:" .. string.sub(maxBox.Text, 1, 40))
-	end)
-end
-
-local brokeButtons = makeButtonRow(pages.Market, nextOrder(), "Out of gold", { "Wait for more", "Stop auto-buy" })
-brokeButtons[1].Activated:Connect(function()
-	send("AutoBuy", "broke:wait")
-end)
-brokeButtons[2].Activated:Connect(function()
-	send("AutoBuy", "broke:stop")
+	ui.openAutoBuy()
 end)
 
 local recentBuys = makeRow(pages.Market, nextOrder(), 110, false)
@@ -1022,6 +980,21 @@ recentBuys.TextYAlignment = Enum.TextYAlignment.Top
 
 -- Warband: one row for you, one per unlocked slot, and the next locked slot.
 local openRecruitWindow -- defined further down, with the recruit window
+
+-- Single rolls from a slot's Recruit or Reroll button use the best recruit
+-- tier your level allows and your gold covers (Village if none).
+local function oneRollCost(state, tier): number
+	return math.floor(tier.cost * (1 - festivalDiscount(state, "rollCost")))
+end
+local function oneRollTier(state)
+	local best = GameConfig.RecruitTiers[1]
+	for _, tier in GameConfig.RecruitTiers do
+		if state.level >= tier.level and state.gold >= oneRollCost(state, tier) then
+			best = tier
+		end
+	end
+	return best
+end
 
 local warbandSummary, autoRollButton = makeRow(pages.Warband, nextOrder(), 56, true)
 setButton(autoRollButton, "Recruit", true, COLOR_ACTION)
@@ -1137,8 +1110,12 @@ for slot = 1, GameConfig.MaxSoldierSlots do
 	row.train.Activated:Connect(function()
 		send("Train", tostring(slot))
 	end)
+	-- One roll for this slot (set up by the draw code below). Auto roll
+	-- lives in its own window.
 	row.roll.Activated:Connect(function()
-		openRecruitWindow(slot)
+		if row.rollId then
+			send("Roll", row.rollId)
+		end
 	end)
 	row.release.Activated:Connect(function()
 		send("Release", tostring(slot))
@@ -1220,17 +1197,6 @@ fightButton.Activated:Connect(function()
 		send("Fight", selectedStage)
 	end
 end)
--- Attack and Attack x5 share the right side of the panel.
-fightButton.AnchorPoint = Vector2.new(1, 0)
-fightButton.Position = UDim2.new(1, -6, 0, 8)
-local fightManyButton = makeButton(fightInfo.Parent, UDim2.fromOffset(BUTTON_WIDTH, 42), UDim2.new(1, -6, 0, 56), COLOR_DISABLED)
-fightManyButton.AnchorPoint = Vector2.new(1, 0)
-fightManyButton.TextSize = 13
-fightManyButton.Activated:Connect(function()
-	if selectedStage then
-		send("FightMany", selectedStage)
-	end
-end)
 
 local stageRows = {}
 do
@@ -1271,22 +1237,24 @@ local function robuxText(price: number): string
 end
 
 ---------------------------------------------------------------------------
--- Popup window: Profile, Rebirth, Mail, Rankings and the War Chronicle open
--- over the menus instead of having their own place in the left menu. Each
+-- Popup window: Profile, Rebirth, Mail and the settings windows open over
+-- the menus instead of having their own place in the left menu. Each
 -- popup's content is a scrolling list stored in `pages`, so page modules
 -- build into it the same way as into a page.
 ---------------------------------------------------------------------------
 
-local isModalOpen
+local isModalOpen, closeModal
 do
+	-- width and height are optional; the default is 680 x 560.
 	local MODALS = {
 		{ key = "Profile", title = "Profile" },
 		{ key = "Rebirth", title = "Rebirth" },
 		{ key = "Mail", title = "Mail" },
-		{ key = "Rankings", title = "Rankings" },
-		{ key = "Chronicle", title = "War Chronicle" },
+		{ key = "AutoQuest", title = "Auto quests", width = 520, height = 400 },
+		{ key = "AutoBuy", title = "Auto-buy", width = 600, height = 560 },
+		{ key = "Amount", title = "How many?", width = 440, height = 300 },
 	}
-	local WINDOW_WIDTH, WINDOW_HEIGHT = 680, 560
+	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560
 
 	local popupGui = Instance.new("ScreenGui")
 	popupGui.Name = "KingdomPopups"
@@ -1301,7 +1269,7 @@ do
 	shade.AutoButtonColor = false
 	shade.Text = ""
 
-	local window = makeFrame(popupGui, UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT), UDim2.fromScale(0.5, 0.5), COLOR_PANEL)
+	local window = makeFrame(popupGui, UDim2.fromOffset(DEFAULT_WIDTH, DEFAULT_HEIGHT), UDim2.fromScale(0.5, 0.5), COLOR_PANEL)
 	window.AnchorPoint = Vector2.new(0.5, 0.5)
 	window.Active = true
 	addCorner(window, 10)
@@ -1339,7 +1307,7 @@ do
 	end
 
 	local openKey = ""
-	local function closeModal()
+	closeModal = function()
 		openKey = ""
 		popupGui.Enabled = false
 		for _, content in contents do
@@ -1348,7 +1316,7 @@ do
 		redraw()
 	end
 
-	openModal = function(key: string)
+	openModal = function(key: string, title: string?)
 		if not contents[key] then
 			return
 		end
@@ -1357,15 +1325,19 @@ do
 			content.Visible = name == key
 		end
 		contents[key].CanvasPosition = Vector2.zero
+		local width, height = DEFAULT_WIDTH, DEFAULT_HEIGHT
 		for _, modal in MODALS do
 			if modal.key == key then
-				titleLabel.Text = string.upper(modal.title)
+				titleLabel.Text = string.upper(title or modal.title)
+				width = modal.width or DEFAULT_WIDTH
+				height = modal.height or DEFAULT_HEIGHT
 			end
 		end
+		window.Size = UDim2.fromOffset(width, height)
 		-- Shrink the window on small screens so it always fits.
 		local camera = workspace.CurrentCamera
 		local view = if camera then camera.ViewportSize else Vector2.new(1280, 720)
-		windowScale.Scale = math.clamp(math.min((view.X - 20) / WINDOW_WIDTH, (view.Y - 40) / WINDOW_HEIGHT), 0.5, 1)
+		windowScale.Scale = math.clamp(math.min((view.X - 20) / width, (view.Y - 40) / height), 0.5, 1)
 		popupGui.Enabled = true
 		redraw()
 	end
@@ -1380,7 +1352,7 @@ end
 
 -- Pages that live in their own modules. Each gets the shared helpers in
 -- `ui`, builds its widgets once and draws every state.
-local ui = {
+ui = {
 	pages = pages,
 	player = player,
 	colors = {
@@ -1420,15 +1392,18 @@ local ui = {
 	redraw = function()
 		redraw()
 	end,
-	openModal = function(key: string)
-		openModal(key)
+	openModal = function(key: string, title: string?)
+		openModal(key, title)
+	end,
+	closeModal = function()
+		closeModal()
 	end,
 	isOpen = function(key: string): boolean
 		return isModalOpen(key)
 	end,
 }
 local pageModules = {}
-for _, name in { "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -1974,15 +1949,9 @@ local function draw(state)
 	nameLabel.TextColor3 = if state.passes.charter then COLOR_GOLD else COLOR_HEADER
 	setBar(xpBar, state.xp, state.xpNeeded, `XP {state.xp} / {state.xpNeeded}`)
 	chips.gold.value.Text = Format.short(gold)
-	chips.gold.sub.Text = `+{Format.short(stats.incomePerHour)} per hour`
-	chips.bank.value.Text = Format.short(state.banked)
-	chips.bank.sub.Text = "safe from raids"
+	chips.gold.sub.Text = `Banked {Format.short(state.banked)}`
 	chips.crowns.value.Text = Format.short(state.crowns)
 	chips.crowns.sub.Text = if state.tithe > 0 then `{state.tithe} in Tithe Chest` else "premium"
-	chips.tokens.value.Text = Format.short(state.tokens)
-	chips.tokens.sub.Text = `stage {state.highestStage} best`
-	chips.power.value.Text = Format.short(stats.attack + stats.defense)
-	chips.power.sub.Text = `{Format.short(stats.attack)} atk / {Format.short(stats.defense)} def`
 	setBar(energyBar, state.energy, stats.maxEnergy, `Energy {state.energy} / {stats.maxEnergy}`)
 	setBar(staminaBar, state.stamina, stats.maxStamina, `Stamina {state.stamina} / {stats.maxStamina}`)
 	setBar(healthBar, state.health, stats.maxHealth, `Health {state.health} / {stats.maxHealth}`)
@@ -2030,11 +1999,13 @@ local function draw(state)
 	local keepText = `<b>{string.upper(keep.name)}</b>   Keep level {state.keep} of {#GameConfig.KeepLevels}\n`
 		.. `Income, attack and defense +{math.floor(keep.bonus * 100)}%`
 	if nextKeep then
-		keepText ..= `\nNext: {nextKeep.name}, +{math.floor(nextKeep.bonus * 100)}%`
+		local keepCost = table.clone(nextKeep.resources or {})
+		keepCost.gold = nextKeep.cost
+		keepText ..= `\nNext: {nextKeep.name}, +{math.floor(nextKeep.bonus * 100)}%. Costs {EstateConfig.describeCost(keepCost, Format.short)} (resources from the Estate).`
 		if state.level < nextKeep.level then
 			setButton(keepButton, `Level {nextKeep.level}\n{Format.short(nextKeep.cost)}`, false, COLOR_BUY)
 		else
-			setButton(keepButton, `Upgrade\n{Format.short(nextKeep.cost)}`, gold >= nextKeep.cost, COLOR_BUY)
+			setButton(keepButton, `Upgrade\n{Format.short(nextKeep.cost)}`, EstateConfig.canPay(keepCost, gold, state.estate.stock), COLOR_BUY)
 		end
 	else
 		setButton(keepButton, "Max level", false, COLOR_BUY)
@@ -2077,25 +2048,20 @@ local function draw(state)
 	-- Quests
 	ownsAutoQuest = state.passes.autoquest == true
 	autoQuestOn = state.autoQuestOn and ownsAutoQuest
-	local autoTarget = nil
-	for _, quest in GameConfig.Quests do
-		if quest.id == state.autoQuest then
-			autoTarget = quest
+	local autoTarget = GameConfig.pickAutoQuest(state.autoQuestMode, state.level, state.quests, state.autoQuest)
+	local modeName = "Repeat last quest"
+	for _, mode in GameConfig.AutoQuestModes do
+		if mode.id == state.autoQuestMode then
+			modeName = mode.name
 		end
 	end
 	if not ownsAutoQuest then
-		autoQuestInfo.Text = "<b>Auto quests</b>\nThe Quest Herald game pass repeats your last quest whenever you have the energy."
-	elseif autoTarget then
-		autoQuestInfo.Text = `<b>Auto quests: {if autoQuestOn then "ON" else "OFF"}</b>\n`
-			.. `Repeats <b>{autoTarget.name}</b> whenever you have {autoTarget.energy} energy. Do another quest to switch.`
+		autoQuestInfo.Text = "<b>Auto quests</b>\nThe Quest Herald game pass does quests for you whenever you have the energy."
 	else
-		autoQuestInfo.Text = "<b>Auto quests: OFF</b>\nDo a quest once, then turn this on to keep repeating it while you play."
+		autoQuestInfo.Text = `<b>Auto quests: {if autoQuestOn then "ON" else "OFF"}</b>   ({modeName})\n`
+			.. (if autoTarget then `Next: <b>{autoTarget.name}</b>, {autoTarget.energy} energy.` else "Do a quest once first.")
 	end
-	if ownsAutoQuest then
-		setButton(autoQuestButton, if autoQuestOn then "Turn off" else "Turn on", autoTarget ~= nil, if autoQuestOn then COLOR_DISABLED else COLOR_ACTION)
-	else
-		setButton(autoQuestButton, `Get pass\n{robuxText(StoreConfig.getPass("autoquest").price)}`, true, COLOR_BUY)
-	end
+	setButton(autoQuestButton, if autoQuestOn then "Auto: ON\nSettings" else "Auto quests\nSettings", true, if autoQuestOn then COLOR_CLAIM else COLOR_SELECTED)
 	questBoost.Text = if state.xpBoostLeft > 0 then `Double XP active: {formatClock(state.xpBoostLeft)} left` else ""
 	questBoost.Parent.Visible = state.xpBoostLeft > 0
 	local medalColors = { "#C8844E", "#C9D2DE", "#F0C85A" }
@@ -2180,23 +2146,12 @@ local function draw(state)
 	ownsAutoBuy = state.passes.autobuy == true
 	autoBuyRunning = rule.on and ownsAutoBuy
 	if ownsAutoBuy then
-		autoBuyInfo.Text = `<b>{if rule.on then "RUNNING" else "STOPPED"}</b>   Bought {rule.bought}, spent {Format.short(rule.spent)} gold\n`
-			.. "Buys matching Market items as they appear, while you are in the game."
-		setButton(autoBuyButton, if rule.on then "Stop" else "Start", true, if rule.on then COLOR_ACTION else COLOR_BUY)
+		autoBuyInfo.Text = `<b>Auto-buy: {if autoBuyRunning then "RUNNING" else "OFF"}</b>   Bought {rule.bought}, spent {Format.short(rule.spent)} gold\n`
+			.. `{rule.minRarity} or better. Buys matching Market items as they appear, while you are in the game.`
 	else
-		autoBuyInfo.Text = "<b>Auto-buy</b>\nThe Market Steward game pass buys gear that matches the rules below every restock."
-		setButton(autoBuyButton, `Get pass\n{robuxText(StoreConfig.getPass("autobuy").price)}`, true, COLOR_BUY)
+		autoBuyInfo.Text = "<b>Auto-buy</b>\nThe Market Steward game pass buys gear that matches your rules every restock."
 	end
-	for index, slot in GameConfig.GearSlots do
-		setButton(slotButtons[index], slot, rule.slots[slot] == true, COLOR_SELECTED)
-	end
-	for index, rarityId in rarityChoices do
-		setButton(rarityButtons[index], rarityId, rarityId == rule.minRarity, COLOR_SELECTED)
-	end
-	minBox.PlaceholderText = if rule.minPrice > 0 then `Min: {Format.short(rule.minPrice)}` else "Min: none"
-	maxBox.PlaceholderText = if rule.maxPrice > 0 then `Max: {Format.short(rule.maxPrice)}` else "Max: none"
-	setButton(brokeButtons[1], "Wait for more", rule.whenBroke == "wait", COLOR_SELECTED)
-	setButton(brokeButtons[2], "Stop auto-buy", rule.whenBroke == "stop", COLOR_SELECTED)
+	setButton(autoBuyButton, if autoBuyRunning then "Auto: ON\nSettings" else "Auto-buy\nSettings", true, if autoBuyRunning then COLOR_CLAIM else COLOR_SELECTED)
 	local recentLines = { "<b>Recent buys</b>" }
 	for _, buy in rule.recent do
 		table.insert(recentLines, `{rarityName(buy)}   {Format.short(buy.price)} gold`)
@@ -2208,8 +2163,12 @@ local function draw(state)
 
 	-- Warband
 	local crew = state.crew
+	local autoRoll = state.autoRoll
 	warbandSummary.Text = `Soldiers {stats.crewSize} / {#crew}   |   Attack {Format.short(stats.attack)}   |   Defense {Format.short(stats.defense)}\n`
-		.. `Warband size bonus +{math.floor(stats.crewBonus * 100 + 0.5)}% attack and defense`
+		.. (if autoRoll.on
+			then `Auto roll is on: {autoRoll.tier} recruits until {autoRoll.rarity}, {autoRoll.rolls} rolls so far.`
+			else `Warband size bonus +{math.floor(stats.crewBonus * 100 + 0.5)}% attack and defense`)
+	setButton(autoRollButton, if autoRoll.on then "Auto roll: ON\nSettings" else "Auto roll", true, if autoRoll.on then COLOR_CLAIM else COLOR_ACTION)
 
 	equipNewOn = state.autoEquipNew == true
 	setButton(equipButtons[1], "Equip best", true, COLOR_BUY)
@@ -2239,7 +2198,16 @@ local function draw(state)
 			else
 				setButton(row.train, `Train +{soldier.train + 1}\n{Format.short(soldier.trainCost)}`, gold >= soldier.trainCost, COLOR_BUY)
 			end
-			setButton(row.roll, "Reroll", true, COLOR_ACTION)
+			-- A reroll only replaces the soldier with one at least as rare.
+			local tier = oneRollTier(state)
+			local keep = soldier.rarity
+			if GameConfig.getChanceAtLeast(tier, keep) <= 0 then
+				row.rollId = nil
+				setButton(row.roll, `Reroll\n{tier.id} can't beat`, false, COLOR_ACTION)
+			else
+				row.rollId = `{slot}:{tier.id}:{keep}:this:once`
+				setButton(row.roll, `Reroll\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
+			end
 			row.release.Visible = true
 			setButton(row.release, "Release", true, COLOR_DISABLED)
 		else
@@ -2248,7 +2216,9 @@ local function draw(state)
 			row.train.Visible = false
 			row.release.Visible = false
 			row.gear.Visible = false
-			setButton(row.roll, "Recruit", true, COLOR_ACTION)
+			local tier = oneRollTier(state)
+			row.rollId = `{slot}:{tier.id}:Common:this:once`
+			setButton(row.roll, `Recruit\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
 		end
 	end
 
@@ -2413,8 +2383,6 @@ local function draw(state)
 		local ready = state.stamina >= 1 and state.health >= GameConfig.MinHealthToFight
 		local label = if state.stamina < 1 then "No stamina" elseif not ready then "Too wounded" else "Attack\n1 stamina"
 		setButton(fightButton, label, ready, COLOR_ACTION)
-		local many = math.max(1, math.min(GameConfig.MultiAttack, state.stamina))
-		setButton(fightManyButton, `Attack x{many}\n{many} stamina`, ready and many > 1, COLOR_ACTION)
 	else
 		local nextStage = GameConfig.Stages[state.highestStage + 1]
 		fightInfo.Text = if nextStage and state.level < nextStage.level
@@ -2422,7 +2390,6 @@ local function draw(state)
 			else "<b>All open stages are beaten for today.</b>\nFoes return at 00:00 UTC."
 		setBar(foeFightBar, 0, 1, "")
 		setButton(fightButton, "Done", false, COLOR_ACTION)
-		setButton(fightManyButton, "Done", false, COLOR_ACTION)
 	end
 
 	for _, stage in GameConfig.Stages do
@@ -2478,7 +2445,7 @@ do
 	local shade = makeFrame(recruitGui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(0, 0, 0))
 	shade.BackgroundTransparency = 0.45
 
-	local recruitWindow = makeFrame(recruitGui, UDim2.fromOffset(540, 430), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
+	local recruitWindow = makeFrame(recruitGui, UDim2.fromOffset(540, 490), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
 	recruitWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 	addCorner(recruitWindow, 10)
 	local windowStroke = Instance.new("UIStroke")
@@ -2486,14 +2453,14 @@ do
 	windowStroke.Thickness = 1.5
 	windowStroke.Parent = recruitWindow
 	local windowLimit = Instance.new("UISizeConstraint")
-	windowLimit.MaxSize = Vector2.new(540, 430)
+	windowLimit.MaxSize = Vector2.new(540, 490)
 	windowLimit.Parent = recruitWindow
 	local windowScale = Instance.new("UIScale")
 	windowScale.Parent = recruitWindow
 
 	local recruitTitle = makeText(recruitWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
 	recruitTitle.Font = Enum.Font.GothamBold
-	recruitTitle.Text = "RECRUIT"
+	recruitTitle.Text = "AUTO ROLL"
 
 	local closeButton = makeButton(recruitWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
 	closeButton.Text = "X"
@@ -2535,21 +2502,40 @@ do
 	sectionLabel("SLOTS", 272)
 	local scopeButtons = buttonRow(3, 292, 34)
 
-	local chanceBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 36), UDim2.fromOffset(16, 332), COLOR_ROW)
+	sectionLabel("WHEN GOLD RUNS OUT", 332)
+	local brokeButtons = buttonRow(2, 352, 30)
+	brokeButtons[1].Text = "WAIT FOR MORE GOLD"
+	brokeButtons[2].Text = "STOP AUTO ROLL"
+	local chanceBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 38), UDim2.fromOffset(16, 390), COLOR_ROW)
 	addCorner(chanceBox, 6)
 	local chanceText = makeText(chanceBox, UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), COLOR_TEXT, 12)
 
-	local startButton = makeButton(recruitWindow, UDim2.fromOffset(260, 44), UDim2.new(0.5, 0, 1, -14), COLOR_GOLD)
-	startButton.AnchorPoint = Vector2.new(0.5, 1)
+	-- Cancel closes without rolling; the gold button saves and starts.
+	-- Cancel closes; Start auto roll saves the settings and keeps rolling
+	-- (Recruiting Sergeant pass). Single rolls are on each slot's button.
+	local cancelButton = makeButton(recruitWindow, UDim2.new(0.5, -24, 0, 44), UDim2.new(0, 16, 1, -14), COLOR_ROW)
+	cancelButton.AnchorPoint = Vector2.new(0, 1)
+	cancelButton.TextSize = 15
+	cancelButton.Text = "CANCEL"
+	local startButton = makeButton(recruitWindow, UDim2.new(0.5, -24, 0, 44), UDim2.new(1, -16, 1, -14), COLOR_GOLD)
+	startButton.AnchorPoint = Vector2.new(1, 1)
 	startButton.TextColor3 = Color3.fromRGB(35, 28, 10)
-	startButton.TextSize = 18
-	startButton.Text = "START"
+	startButton.TextSize = 15
+	startButton.Text = "START AUTO ROLL"
 
 	local SCOPES = { "this", "empty", "below" }
 	local recruitSlot = 0
 	local chosenTier = 1
 	local chosenRarity = 3
 	local chosenScope = "this"
+	local chosenBroke = "wait" -- "wait" for more gold or "stop"
+	for index, mode in { "wait", "stop" } do
+		brokeButtons[index].TextSize = 12
+		brokeButtons[index].Activated:Connect(function()
+			chosenBroke = mode
+			refreshRecruitWindow()
+		end)
+	end
 
 	-- How many slots each scope would roll for, with the current choices.
 	local function scopeCount(state, scope: string): number
@@ -2574,7 +2560,7 @@ do
 
 		-- Fit the window on small screens.
 		local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
-		windowScale.Scale = math.min(1, (viewport.X - 20) / 540, (viewport.Y - 20) / 430)
+		windowScale.Scale = math.min(1, (viewport.X - 20) / 540, (viewport.Y - 20) / 490)
 
 		local slotSoldier = if recruitSlot > 0 then state.crew[recruitSlot] else nil
 		if recruitSlot > 0 and slotSoldier then
@@ -2630,16 +2616,36 @@ do
 		local expected = if chance > 0 then rollCost / chance else 0
 		chanceText.Text = string.format("Chance per roll: %.2f%%   |   Average cost per hit: %s gold", chance * 100, Format.short(expected))
 
-		if not state.passes.autoroll then
-			chanceText.Text ..= "\nOne roll per press. The Recruiting Sergeant pass (Shop) keeps rolling until a hit."
+		for index, mode in { "wait", "stop" } do
+			brokeButtons[index].BackgroundColor3 = if mode == chosenBroke then COLOR_SELECTED else COLOR_ROW
 		end
-		startButton.Text = if state.passes.autoroll then "START" else "ROLL ONCE"
+		local auto = state.autoRoll
+		if auto.on then
+			local waiting = if auto.waiting then " Waiting for gold." else ""
+			chanceText.Text ..= `\nAuto rolling {auto.tier} for {auto.rarity}: {auto.rolls} rolls, {Format.short(auto.spent)} gold so far.{waiting}`
+		elseif state.passes.autoroll then
+			chanceText.Text ..= `\nAuto roll makes {GameConfig.AutoRollsPerTick} roll a second until it hits, gold runs out or you stop it.`
+		else
+			chanceText.Text ..= "\nAuto roll needs the Recruiting Sergeant pass. Single rolls are on each slot's Recruit button."
+		end
 		local ready = state.level >= tier.level and gold >= rollCost and scopeCount(state, chosenScope) > 0
-		startButton.BackgroundColor3 = if ready then COLOR_GOLD else COLOR_DISABLED
+		if auto.on then
+			startButton.Text = "STOP AUTO ROLL"
+			startButton.BackgroundColor3 = COLOR_ACTION
+			startButton.TextColor3 = Color3.new(1, 1, 1)
+		else
+			startButton.Text = if state.passes.autoroll then "START AUTO ROLL" else `START AUTO ROLL\n<font size="11">pass {robuxText(StoreConfig.getPass("autoroll").price)}</font>`
+			startButton.RichText = true
+			startButton.BackgroundColor3 = if ready or not state.passes.autoroll then COLOR_GOLD else COLOR_DISABLED
+			startButton.TextColor3 = Color3.fromRGB(35, 28, 10)
+		end
 	end
 
 	function openRecruitWindow(slot: number)
 		recruitSlot = slot
+		if lastState then
+			chosenBroke = lastState.autoRoll.whenBroke or "wait"
+		end
 		chosenScope = if slot > 0 then "this" else "empty"
 		recruitGui.Enabled = true
 		refreshRecruitWindow()
@@ -2668,14 +2674,28 @@ do
 		end)
 	end
 
-	closeButton.Activated:Connect(function()
-		recruitGui.Enabled = false
-	end)
+	for _, button in { closeButton, cancelButton } do
+		button.Activated:Connect(function()
+			recruitGui.Enabled = false
+		end)
+	end
 
-	startButton.Activated:Connect(function()
+	local function rollId(): string
 		local tier = GameConfig.RecruitTiers[chosenTier]
 		local rarity = GameConfig.Rarities[chosenRarity]
-		send("Roll", `{math.max(recruitSlot, 1)}:{tier.id}:{rarity.id}:{chosenScope}`)
+		return `{math.max(recruitSlot, 1)}:{tier.id}:{rarity.id}:{chosenScope}`
+	end
+	startButton.Activated:Connect(function()
+		if not lastState then
+			return
+		end
+		if lastState.autoRoll.on then
+			send("AutoRollStop")
+		elseif not lastState.passes.autoroll then
+			send("Robux", "pass:autoroll")
+		else
+			send("Roll", `{rollId()}:{chosenBroke}`)
+		end
 	end)
 end
 

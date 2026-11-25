@@ -23,6 +23,7 @@ ResearchConfig.Branches = {
 			{ key = "smithing", name = "Smithing", bonus = "attack", amount = 0.03, maxLevel = 10, cost = 3000, minutes = 2 },
 			{ key = "masonry", name = "Masonry", bonus = "defense", amount = 0.03, maxLevel = 10, cost = 3000, minutes = 2 },
 			{ key = "tactics", name = "Battle Tactics", bonus = "attack", amount = 0.05, maxLevel = 5, cost = 60000, minutes = 15, needs = { "smithing", 5 } },
+			{ key = "bulwarks", name = "Bulwarks", bonus = "defense", amount = 0.05, maxLevel = 5, cost = 60000, minutes = 15, needs = { "masonry", 5 } },
 		},
 	},
 	{
