@@ -37,6 +37,21 @@ local latest = nil -- the last state drawn
 local shownLevels = {} -- [castle:building] = level last drawn, for the level up flash
 local timer = nil -- { left, total, at } for the builder bar
 
+-- A time like "2d 4h", "3h 12m", "4m 05s" or "38s".
+local function clock(seconds: number): string
+	seconds = math.max(0, math.ceil(seconds))
+	local days, hours = seconds // 86400, seconds % 86400 // 3600
+	local minutes, secs = seconds % 3600 // 60, seconds % 60
+	if days > 0 then
+		return `{days}d {hours}h`
+	elseif hours > 0 then
+		return `{hours}h {minutes}m`
+	elseif minutes > 0 then
+		return `{minutes}m {string.format("%02d", secs)}s`
+	end
+	return `{secs}s`
+end
+
 local function percent(value: number): string
 	return `{math.floor(value * 1000 + 0.5) / 10}%`
 end
@@ -300,7 +315,7 @@ function EstatePage.build(ui)
 		end
 		local left = math.max(0, timer.left - (os.clock() - timer.at))
 		w.bannerFill.Size = UDim2.fromScale(if timer.total > 0 then 1 - left / timer.total else 1, 1)
-		w.bannerTime.Text = ui.formatLong(math.ceil(left))
+		w.bannerTime.Text = clock(math.ceil(left))
 	end)
 end
 
@@ -448,7 +463,7 @@ local function drawCards(state, ui)
 		card.gain.Text = `{effect(building, level)}  <font color="#B2A690">{ARROW}</font>  {effect(building, level + 1)}`
 		local cost = EstateConfig.getCost(building, level)
 		local seconds = EstateConfig.getSeconds(building, level)
-		card.price.Text = `{priceText(cost, state.gold, stock)}\n<font color="#7FB4F0">{CLOCK} {ui.formatLong(seconds)}</font>`
+		card.price.Text = `{priceText(cost, state.gold, stock)}\n<font color="#7FB4F0">{CLOCK} {clock(seconds)}</font>`
 		local canPay = EstateConfig.canPay(cost, state.gold, stock)
 		if not castle then
 			card.status.Text = "CLAIM THIS CASTLE FIRST"
