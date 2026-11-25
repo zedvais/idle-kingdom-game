@@ -70,6 +70,8 @@ local function newData()
 			scope = "empty", -- "this" slot, "empty" slots, or slots "below" the rarity
 			rolls = 0,
 			spent = 0,
+			whenBroke = "wait", -- out of gold: "wait" for more or "stop"
+			waiting = false,
 		},
 		autoBuy = {
 			on = false,

@@ -979,7 +979,8 @@ end
 --   scope "empty" = every empty slot
 --   scope "below" = every slot that is empty or below that rarity
 function actions.Roll(player: Player, data, id: string)
-	-- A 5th part ":once" makes one roll even with the pass.
+	-- A 5th part: "once" makes one roll even with the pass; "wait" or "stop"
+	-- says what auto roll does when gold runs out.
 	local slotText, tierId, rarityId, scope, once = string.match(id, "^(%d+):(%a+):(%a+):(%a+):?(%a*)$")
 	local tier = tierId and GameConfig.getRecruitTier(tierId)
 	if not tier then
@@ -1046,6 +1047,8 @@ function actions.Roll(player: Player, data, id: string)
 	auto.scope = scope
 	auto.rolls = 0
 	auto.spent = 0
+	auto.whenBroke = if once == "stop" then "stop" else "wait"
+	auto.waiting = false
 	sendToast(player, `Auto roll started: {tier.id} recruits until {rarityId} or better.`)
 end
 
@@ -2422,10 +2425,16 @@ local function runAutoRoll(player: Player, data)
 			return
 		end
 		if data.gold < rollCost then
-			auto.on = false
-			sendToast(player, `Auto roll stopped: not enough gold. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
+			if auto.whenBroke == "stop" then
+				auto.on = false
+				sendToast(player, `Auto roll stopped: not enough gold. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
+			elseif not auto.waiting then
+				auto.waiting = true
+				sendToast(player, "Auto roll is waiting for more gold.")
+			end
 			return
 		end
+		auto.waiting = false
 		data.gold -= rollCost
 		auto.rolls += 1
 		auto.spent += rollCost

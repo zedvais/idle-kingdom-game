@@ -2438,7 +2438,7 @@ do
 	local shade = makeFrame(recruitGui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(0, 0, 0))
 	shade.BackgroundTransparency = 0.45
 
-	local recruitWindow = makeFrame(recruitGui, UDim2.fromOffset(540, 430), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
+	local recruitWindow = makeFrame(recruitGui, UDim2.fromOffset(540, 490), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
 	recruitWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 	addCorner(recruitWindow, 10)
 	local windowStroke = Instance.new("UIStroke")
@@ -2446,7 +2446,7 @@ do
 	windowStroke.Thickness = 1.5
 	windowStroke.Parent = recruitWindow
 	local windowLimit = Instance.new("UISizeConstraint")
-	windowLimit.MaxSize = Vector2.new(540, 430)
+	windowLimit.MaxSize = Vector2.new(540, 490)
 	windowLimit.Parent = recruitWindow
 	local windowScale = Instance.new("UIScale")
 	windowScale.Parent = recruitWindow
@@ -2495,7 +2495,11 @@ do
 	sectionLabel("SLOTS", 272)
 	local scopeButtons = buttonRow(3, 292, 34)
 
-	local chanceBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 36), UDim2.fromOffset(16, 332), COLOR_ROW)
+	sectionLabel("WHEN GOLD RUNS OUT", 332)
+	local brokeButtons = buttonRow(2, 352, 30)
+	brokeButtons[1].Text = "WAIT FOR MORE GOLD"
+	brokeButtons[2].Text = "STOP AUTO ROLL"
+	local chanceBox = makeFrame(recruitWindow, UDim2.new(1, -32, 0, 38), UDim2.fromOffset(16, 390), COLOR_ROW)
 	addCorner(chanceBox, 6)
 	local chanceText = makeText(chanceBox, UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), COLOR_TEXT, 12)
 
@@ -2517,6 +2521,14 @@ do
 	local chosenTier = 1
 	local chosenRarity = 3
 	local chosenScope = "this"
+	local chosenBroke = "wait" -- "wait" for more gold or "stop"
+	for index, mode in { "wait", "stop" } do
+		brokeButtons[index].TextSize = 12
+		brokeButtons[index].Activated:Connect(function()
+			chosenBroke = mode
+			refreshRecruitWindow()
+		end)
+	end
 
 	-- How many slots each scope would roll for, with the current choices.
 	local function scopeCount(state, scope: string): number
@@ -2541,7 +2553,7 @@ do
 
 		-- Fit the window on small screens.
 		local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
-		windowScale.Scale = math.min(1, (viewport.X - 20) / 540, (viewport.Y - 20) / 430)
+		windowScale.Scale = math.min(1, (viewport.X - 20) / 540, (viewport.Y - 20) / 490)
 
 		local slotSoldier = if recruitSlot > 0 then state.crew[recruitSlot] else nil
 		if recruitSlot > 0 and slotSoldier then
@@ -2597,9 +2609,13 @@ do
 		local expected = if chance > 0 then rollCost / chance else 0
 		chanceText.Text = string.format("Chance per roll: %.2f%%   |   Average cost per hit: %s gold", chance * 100, Format.short(expected))
 
+		for index, mode in { "wait", "stop" } do
+			brokeButtons[index].BackgroundColor3 = if mode == chosenBroke then COLOR_SELECTED else COLOR_ROW
+		end
 		local auto = state.autoRoll
 		if auto.on then
-			chanceText.Text ..= `\nAuto rolling {auto.tier} for {auto.rarity}: {auto.rolls} rolls, {Format.short(auto.spent)} gold so far.`
+			local waiting = if auto.waiting then " Waiting for gold." else ""
+			chanceText.Text ..= `\nAuto rolling {auto.tier} for {auto.rarity}: {auto.rolls} rolls, {Format.short(auto.spent)} gold so far.{waiting}`
 		elseif state.passes.autoroll then
 			chanceText.Text ..= `\nAuto roll makes {GameConfig.AutoRollsPerTick} roll a second until it hits, gold runs out or you stop it.`
 		else
@@ -2620,6 +2636,9 @@ do
 
 	function openRecruitWindow(slot: number)
 		recruitSlot = slot
+		if lastState then
+			chosenBroke = lastState.autoRoll.whenBroke or "wait"
+		end
 		chosenScope = if slot > 0 then "this" else "empty"
 		recruitGui.Enabled = true
 		refreshRecruitWindow()
@@ -2668,7 +2687,7 @@ do
 		elseif not lastState.passes.autoroll then
 			send("Robux", "pass:autoroll")
 		else
-			send("Roll", rollId())
+			send("Roll", `{rollId()}:{chosenBroke}`)
 		end
 	end)
 end
