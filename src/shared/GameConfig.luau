@@ -289,8 +289,8 @@ function GameConfig.getSoldierStats(soldier): (number, number)
 end
 
 -- Training takes time: short at first, longer each rank, at most 8 hours.
-GameConfig.TrainBaseSeconds = 30
-GameConfig.TrainTimeGrowth = 1.6
+GameConfig.TrainBaseSeconds = 5 * 60 -- +0 to +1 takes 5 minutes
+GameConfig.TrainTimeGrowth = 1.92 -- so +7 to +8 takes 8 hours
 GameConfig.TrainMaxSeconds = 8 * 3600
 
 function GameConfig.getTrainSeconds(soldier): number
