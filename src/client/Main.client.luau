@@ -1566,7 +1566,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -1581,176 +1581,7 @@ showPage("Quests")
 local lastState = nil
 local refreshRecruitWindow -- defined further down, with the recruit window
 
--- Shop and Royal Pass pages, built and drawn inside one block so their
--- widgets do not count toward the main chunk's limit of 200 locals.
-local drawStore
-do
-	local shopSummary = makeRow(pages.Shop, nextOrder(), 50, false)
-	shopSummary.RichText = true
-
-	local productRows = {}
-	local function makeProductRow(product, grid: Instance?)
-		local info, button
-		if grid then
-			info, button = makeCard(grid)
-		else
-			info, button = makeRow(pages.Shop, nextOrder(), 60, true)
-		end
-		info.RichText = true
-		productRows[product.key] = { info = info, button = button, frame = info.Parent }
-		button.Activated:Connect(function()
-			send("Robux", "product:" .. product.key)
-		end)
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Crowns")
-	local crownGrid = makeGrid(pages.Shop, nextOrder(), 96, 4)
-	for _, product in StoreConfig.Products do
-		if product.group == "crowns" then
-			makeProductRow(product, crownGrid)
-		end
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Special offers")
-	local packGrid = makeGrid(pages.Shop, nextOrder(), 136, 3)
-	for _, product in StoreConfig.Products do
-		if product.group == "pack" then
-			makeProductRow(product, packGrid)
-		end
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Tithe Chest")
-	for _, product in StoreConfig.Products do
-		if product.group == "tithe" then
-			makeProductRow(product, nil)
-		end
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Game passes (yours forever)")
-	local passRows = {}
-	local passGrid = makeGrid(pages.Shop, nextOrder(), 124, 3)
-	for _, pass in StoreConfig.Passes do
-		local info, button = makeCard(passGrid)
-		info.RichText = true
-		info.Text = `<b>{pass.name}</b>\n{pass.note}`
-		passRows[pass.key] = button
-		button.Activated:Connect(function()
-			send("Robux", "pass:" .. pass.key)
-		end)
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Crown shop")
-	local crownRows = {}
-	local crownShopGrid = makeGrid(pages.Shop, nextOrder(), 96, 3)
-	for _, item in StoreConfig.CrownShop do
-		local info, button = makeCard(crownShopGrid)
-		info.RichText = true
-		info.Text = `<b>{item.name}</b>\n{item.note}`
-		crownRows[item.key] = button
-		button.Activated:Connect(function()
-			send("CrownBuy", item.key)
-		end)
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Royal Coffers (best gear, odds shown, open them in your Inventory)")
-	local cofferRows = {}
-	local cofferGrid = makeGrid(pages.Shop, nextOrder(), 132, 2)
-	for _, coffer in StoreConfig.Coffers do
-		local info, first = makeCard(cofferGrid)
-		info.RichText = true
-		-- Buy 1, a bundle of 5 or a bundle of 10 (bundles cost less each).
-		local buttons = {}
-		for index, bundle in StoreConfig.CofferBundles do
-			local button = first
-			if index > 1 then
-				button = makeButton(info.Parent, UDim2.new(1, -16, 0, 36), UDim2.new(0, 8, 1, -42), COLOR_DISABLED)
-				button.TextSize = 12
-			end
-			local count = #StoreConfig.CofferBundles
-			button.Size = UDim2.new(1 / count, -(8 + 8 / count), 0, 40)
-			button.Position = UDim2.new((index - 1) / count, 8 - (index - 1) * 4, 1, -46)
-			button.TextSize = 12
-			buttons[index] = button
-			button.Activated:Connect(function()
-				send("Coffer", `{coffer.key}:{bundle.count}`)
-			end)
-		end
-		cofferRows[coffer.key] = { info = info, buttons = buttons }
-	end
-
-	drawStore = function(state)
-		local crowns = state.crowns
-		local ownedPasses = 0
-		for _ in state.passes do
-			ownedPasses += 1
-		end
-		shopSummary.Text = `<b>{crowns} Crowns</b>   |   {ownedPasses} of {#StoreConfig.Passes} game passes owned\n`
-			.. "Crowns buy refills, boosts, coffers and Royal Pass tiers. Robux buttons open the Roblox purchase window."
-
-		for _, product in StoreConfig.Products do
-			local row = productRows[product.key]
-			if not row then
-				continue
-			end
-			if product.group == "crowns" then
-				local tag = if product.tag then `   <font color="#F0C85A">{product.tag}</font>` else ""
-				row.info.Text = `<b>{product.name}</b>{tag}\n{product.crowns} Crowns`
-				setButton(row.button, robuxText(product.price), true, COLOR_BUY)
-			elseif product.group == "pack" then
-				local bought = state.packsBought[product.key] == true
-				local secondsLeft = if product.hours then product.hours * 3600 - state.secondsSinceFirstVisit else 0
-				local expired = product.hours ~= nil and secondsLeft <= 0
-				row.frame.Visible = bought or not expired
-				local when = product.note
-				if product.hours and not bought then
-					when = `Ends in {formatLong(secondsLeft)}`
-				end
-				row.info.Text = `<b>{product.name}</b>   {when}\n{StoreConfig.describeList(product.rewards)}`
-				if bought then
-					setButton(row.button, "Owned", false, COLOR_BUY)
-				elseif product.level and state.level < product.level then
-					setButton(row.button, `Level {product.level}`, false, COLOR_BUY)
-				else
-					setButton(row.button, robuxText(product.price), true, COLOR_BUY)
-				end
-			elseif product.group == "tithe" then
-				Art.progress(row.info, state.tithe, StoreConfig.TitheMax, Color3.fromRGB(200, 150, 230))
-				row.info.Text = `<b>Tithe Chest: {state.tithe} / {StoreConfig.TitheMax} Crowns</b>\n`
-					.. `Fills as you play: 1 Crown per {StoreConfig.TitheEnergyPerCrown} quest energy and {StoreConfig.TitheCrownsPerFoe} per foe beaten. `
-					.. `Break it once it holds {StoreConfig.TitheMinToBreak}.`
-				setButton(row.button, `Break\n{robuxText(product.price)}`, state.tithe >= StoreConfig.TitheMinToBreak, COLOR_BUY)
-			end
-		end
-
-		for _, pass in StoreConfig.Passes do
-			local owned = state.passes[pass.key] == true
-			setButton(passRows[pass.key], if owned then "Owned" else robuxText(pass.price), not owned, COLOR_BUY)
-		end
-
-		for _, item in StoreConfig.CrownShop do
-			setButton(crownRows[item.key], `Buy\n{item.cost} Crowns`, crowns >= item.cost, COLOR_BUY)
-		end
-
-		for _, coffer in StoreConfig.Coffers do
-			local row = cofferRows[coffer.key]
-			local odds = {}
-			for _, pair in coffer.odds do
-				local label = rarityName({ rarity = pair[1], name = "" })
-				table.insert(odds, `{label}{pair[2]}%`)
-			end
-			local left = coffer.pityEvery - (state.pity[coffer.key] or 0)
-			Art.progress(row.info, coffer.pityEvery - left, coffer.pityEvery, Color3.fromRGB(180, 100, 230))
-			row.info.Text = `<b>{coffer.name}</b>: Royal gear, the strongest stats\n{table.concat(odds, "   ")}\n`
-				.. `{coffer.pityRarity} or better guaranteed within {left} opens`
-			for index, bundle in StoreConfig.CofferBundles do
-				local cost = StoreConfig.bundleCost(coffer, bundle.count) or 0
-				local off = if bundle.discount > 0 then `  -{math.floor(bundle.discount * 100 + 0.5)}%` else ""
-				setButton(row.buttons[index], `x{bundle.count}{off}\n{cost} Crowns`, crowns >= cost, if bundle.discount > 0 then COLOR_CLAIM else COLOR_BUY)
-			end
-		end
-
-	end
-end
+-- Shop: the page is built in ShopPage.luau.
 
 -- Bounties, Festival and Research pages, built and drawn in one block.
 -- drawLoop returns how many things are ready to claim on Bounties and
@@ -2019,7 +1850,6 @@ local function draw(state)
 	lastState = state
 	local stats = state.stats
 	local gold = state.gold
-	drawStore(state)
 	local bountyReady, festivalReady = drawLoop(state)
 	setBadge("Bounties", bountyReady)
 	setBadge("Festival", festivalReady)
