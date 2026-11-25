@@ -9,6 +9,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
 local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
+local BountyConfig = require(Shared:WaitForChild("BountyConfig"))
+local FestivalConfig = require(Shared:WaitForChild("FestivalConfig"))
+local ResearchConfig = require(Shared:WaitForChild("ResearchConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -263,7 +266,8 @@ addStroke(main)
 -- Every page: its group, a one line description, and a tip shown until
 -- the player presses Got it.
 local PAGE_GROUPS = {
-	{ name = "Realm", pages = { "Keep", "Holdings", "Bank" } },
+	{ name = "Realm", pages = { "Keep", "Holdings", "Research", "Bank" } },
+	{ name = "Daily", pages = { "Bounties", "Festival" } },
 	{ name = "Campaign", pages = { "Quests", "Foes" } },
 	{ name = "Court", pages = { "Warband", "Inventory", "Market" } },
 	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
@@ -280,6 +284,18 @@ local PAGE_INFO = {
 	Bank = {
 		about = "Gold in the bank is safe. Gold on hand is what you spend.",
 		tip = "Deposits cost a small fee. Withdraw before buying, since purchases use gold on hand.",
+	},
+	Research = {
+		about = "Scholars' Hall: permanent bonuses that take real time to research.",
+		tip = "One research runs at a time and keeps going while you are away. Some need another research first.",
+	},
+	Bounties = {
+		about = "Daily and weekly tasks that pay Seals, plus your login streak.",
+		tip = "Claim your streak reward every day; missing a day starts it over. Spend Seals in the Seal shop.",
+	},
+	Festival = {
+		about = "A new festival every week, with a bonus for everyone and a leaderboard.",
+		tip = "Earn points from normal play. Claim milestones as you go; rank rewards arrive the week after.",
 	},
 	Quests = {
 		about = "Spend energy for gold, experience and the odd piece of gear.",
@@ -763,6 +779,12 @@ bankNote.TextColor3 = COLOR_DIM
 bankNote.Text = `Depositing costs a {math.floor(GameConfig.BankFee * 100)}% fee. You spend gold on hand, so withdraw before buying. `
 	.. "Once raids arrive, only gold on hand can be stolen."
 
+-- This week's festival bonus of one kind ("marketPrice", "rollCost"), or 0.
+local function festivalDiscount(state, kind: string): number
+	local festival = FestivalConfig.getFestival(state.festival.week)
+	return if festival.bonus.kind == kind then festival.bonus.amount else 0
+end
+
 local function formatClock(seconds: number): string
 	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
@@ -1221,6 +1243,114 @@ for tier = 1, StoreConfig.PassTiers do
 	end)
 end
 
+-- Bounties: login streak, daily and weekly tasks, and the Seal shop.
+makeHeading(pages.Bounties, nextOrder(), "Login streak")
+local streakCards = {}
+local streakGrid = makeGrid(pages.Bounties, nextOrder(), 88, 4)
+for day, reward in BountyConfig.Streak do
+	local info, button = makeCard(streakGrid)
+	info.RichText = true
+	info.Text = `<b>Day {day}</b>\n{StoreConfig.describe(reward)}`
+	streakCards[day] = button
+	button.Activated:Connect(function()
+		send("StreakClaim")
+	end)
+end
+
+local bountySummary = makeRow(pages.Bounties, nextOrder(), 44, false)
+bountySummary.RichText = true
+
+local dailyHeading = makeText(pages.Bounties, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 14)
+dailyHeading.LayoutOrder = nextOrder()
+dailyHeading.Font = Enum.Font.GothamBold
+local bountyRows = {}
+for _, task in BountyConfig.Daily do
+	local info, button = makeRow(pages.Bounties, nextOrder(), 46, true)
+	info.RichText = true
+	bountyRows[task.key] = { info = info, button = button }
+	button.Activated:Connect(function()
+		send("BountyClaim", task.key)
+	end)
+end
+local weeklyHeading = makeText(pages.Bounties, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 14)
+weeklyHeading.LayoutOrder = nextOrder()
+weeklyHeading.Font = Enum.Font.GothamBold
+for _, task in BountyConfig.Weekly do
+	local info, button = makeRow(pages.Bounties, nextOrder(), 46, true)
+	info.RichText = true
+	bountyRows[task.key] = { info = info, button = button }
+	button.Activated:Connect(function()
+		send("BountyClaim", task.key)
+	end)
+end
+
+makeHeading(pages.Bounties, nextOrder(), "Seal shop (stock refills every Monday)")
+local sealRows = {}
+local sealGrid = makeGrid(pages.Bounties, nextOrder(), 96, 3)
+for _, item in BountyConfig.Shop do
+	local info, button = makeCard(sealGrid)
+	info.RichText = true
+	sealRows[item.key] = { info = info, button = button }
+	button.Activated:Connect(function()
+		send("SealBuy", item.key)
+	end)
+end
+
+-- Festival: this week's festival, milestones and the leaderboard.
+local festivalInfo = makeRow(pages.Festival, nextOrder(), 92, false)
+festivalInfo.RichText = true
+
+makeHeading(pages.Festival, nextOrder(), "Milestones")
+local milestoneRows = {}
+local milestoneGrid = makeGrid(pages.Festival, nextOrder(), 88, 4)
+for index, milestone in FestivalConfig.Milestones do
+	local info, button = makeCard(milestoneGrid)
+	info.RichText = true
+	info.Text = `<b>{milestone.points} points</b>\n{StoreConfig.describe(milestone.reward)}`
+	milestoneRows[index] = button
+	button.Activated:Connect(function()
+		send("FestivalMilestone", tostring(index))
+	end)
+end
+
+makeHeading(pages.Festival, nextOrder(), "Leaderboard (all servers, updates every minute)")
+local leaderText = makeRow(pages.Festival, nextOrder(), 20 * FestivalConfig.LeaderboardSize + 16, false)
+leaderText.RichText = true
+leaderText.TextYAlignment = Enum.TextYAlignment.Top
+
+makeHeading(pages.Festival, nextOrder(), "Rank rewards (paid next week)")
+local rankText = makeRow(pages.Festival, nextOrder(), 20 * #FestivalConfig.RankRewards + 16, false)
+rankText.TextYAlignment = Enum.TextYAlignment.Top
+do
+	local lines = {}
+	for _, entry in FestivalConfig.RankRewards do
+		table.insert(lines, `{entry.label}: {StoreConfig.describeList(entry.rewards)}`)
+	end
+	lines[#lines] ..= ` (with at least {FestivalConfig.MinPointsForReward} points)`
+	rankText.Text = table.concat(lines, "\n")
+end
+
+-- Research: what is running, then every tech by branch.
+local researchInfo, researchFinish = makeRow(pages.Research, nextOrder(), 56, true)
+researchInfo.RichText = true
+researchFinish.Activated:Connect(function()
+	send("ResearchFinish")
+end)
+local techRows = {}
+for _, branch in ResearchConfig.Branches do
+	makeHeading(pages.Research, nextOrder(), branch.name)
+	local grid = makeGrid(pages.Research, nextOrder(), 128, 3)
+	for _, tech in branch.techs do
+		local info, button = makeCard(grid)
+		info.RichText = true
+		info.TextSize = 12
+		techRows[tech.key] = { info = info, button = button }
+		button.Activated:Connect(function()
+			send("Research", tech.key)
+		end)
+	end
+end
+
 showPage("Quests")
 
 ---------------------------------------------------------------------------
@@ -1383,11 +1513,146 @@ local function drawStore(state)
 	setBadge("Royal Pass", claimable + weeklyReady)
 end
 
+-- Bounties, Festival and Research pages. Returns how many things are
+-- ready to claim on Bounties and Festival, for the menu badges.
+local function drawLoop(state): (number, number)
+	local bounty = state.bounty
+	local bountyReady = 0
+
+	-- Login streak
+	for day, button in streakCards do
+		if state.streakReady and day == state.streakDay then
+			bountyReady += 1
+			setButton(button, "Claim", true, COLOR_CLAIM)
+		elseif day < state.streakDay or (not state.streakReady and day == state.streakDay) then
+			setButton(button, "Claimed", false, COLOR_CLAIM)
+		else
+			setButton(button, `Day {day}`, false, COLOR_CLAIM)
+		end
+	end
+
+	local dayLeft = 86400 - os.time() % 86400
+	bountySummary.Text = `<b>{state.seals} Seals</b>   |   Finish bounties for Seals, then spend them in the Seal shop below.`
+	dailyHeading.Text = `DAILY BOUNTIES   (new ones in {formatLong(dayLeft)})`
+	weeklyHeading.Text = `WEEKLY BOUNTIES   (new ones in {formatLong(state.weekSecondsLeft)})`
+	local function drawTask(task, counts)
+		local row = bountyRows[task.key]
+		local value = math.min(task.goal, counts[task.stat] or 0)
+		row.info.Text = `<b>{task.name}</b>   +{task.seals} Seals\n{value} / {task.goal}`
+		if bounty.claimed[task.key] then
+			setButton(row.button, "Done", false, COLOR_CLAIM)
+		elseif value >= task.goal then
+			bountyReady += 1
+			setButton(row.button, "Claim", true, COLOR_CLAIM)
+		else
+			setButton(row.button, "Claim", false, COLOR_CLAIM)
+		end
+	end
+	for _, task in BountyConfig.Daily do
+		drawTask(task, bounty.daily)
+	end
+	for _, task in BountyConfig.Weekly do
+		drawTask(task, bounty.weekly)
+	end
+	for _, item in BountyConfig.Shop do
+		local row = sealRows[item.key]
+		local left = item.limit - (bounty.bought[item.key] or 0)
+		row.info.Text = `<b>{item.name}</b>\n{StoreConfig.describe(item.reward)}\n{left} of {item.limit} left this week`
+		if left <= 0 then
+			setButton(row.button, "Sold out", false, COLOR_BUY)
+		else
+			setButton(row.button, `Buy\n{item.cost} Seals`, state.seals >= item.cost, COLOR_BUY)
+		end
+	end
+
+	-- Festival
+	local festivalState = state.festival
+	local festival = FestivalConfig.getFestival(festivalState.week)
+	local festivalReady = 0
+	local pointParts = {}
+	for stat, points in festival.points do
+		table.insert(pointParts, `{stat} +{points}`)
+	end
+	table.sort(pointParts)
+	festivalInfo.Text = `<b>{string.upper(festival.name)}</b>   Ends in {formatLong(state.weekSecondsLeft)}\n`
+		.. `<font color="#F0C450">This week: {festival.bonusText}</font>\n`
+		.. `Your points: <b>{math.floor(festivalState.points)}</b>\n`
+		.. `Points for: {table.concat(pointParts, ", ")}`
+	for index, milestone in FestivalConfig.Milestones do
+		local button = milestoneRows[index]
+		if festivalState.milestones[tostring(index)] then
+			setButton(button, "Claimed", false, COLOR_CLAIM)
+		elseif festivalState.points >= milestone.points then
+			festivalReady += 1
+			setButton(button, "Claim", true, COLOR_CLAIM)
+		else
+			setButton(button, `{math.floor(festivalState.points)} / {milestone.points}`, false, COLOR_CLAIM)
+		end
+	end
+	local lines = {}
+	for index, entry in state.festivalTop do
+		local name = entry[1]
+		if name == player.Name then
+			name = `<b>{name} (you)</b>`
+		end
+		table.insert(lines, `#{index}   {name}   {Format.short(entry[2])}`)
+	end
+	if #lines == 0 then
+		table.insert(lines, "No scores yet this week. The board fills in once games save (about every minute).")
+	end
+	leaderText.Text = table.concat(lines, "\n")
+
+	-- Research
+	local research = state.research
+	local busy = research.active ~= ""
+	if busy then
+		local tech = ResearchConfig.Techs[research.active]
+		local level = (research.levels[research.active] or 0) + 1
+		researchInfo.Text = `<b>Researching {tech and tech.name or research.active} level {level}</b>\n`
+			.. `Done in {formatLong(state.researchLeft)}. Research keeps going while you are away.`
+		local cost = ResearchConfig.getFinishCost(state.researchLeft)
+		setButton(researchFinish, `Finish now\n{cost} Crowns`, state.crowns >= cost, COLOR_SELECTED)
+	else
+		researchInfo.Text = "<b>The scholars are idle.</b>\nPick a research below. Only one runs at a time."
+		setButton(researchFinish, "Idle", false, COLOR_SELECTED)
+	end
+	for key, row in techRows do
+		local tech = ResearchConfig.Techs[key]
+		local level = research.levels[key] or 0
+		local nowText = if level > 0 then ResearchConfig.describe(tech, level) else "nothing yet"
+		local text = `<b>{tech.name}</b>   Lv {level} / {tech.maxLevel}\nNow: {nowText}`
+		local locked = false
+		if tech.needs and (research.levels[tech.needs[1]] or 0) < tech.needs[2] then
+			local need = ResearchConfig.Techs[tech.needs[1]]
+			text ..= `\n<font color="#C8846E">Needs {need and need.name or tech.needs[1]} level {tech.needs[2]}</font>`
+			locked = true
+		elseif level < tech.maxLevel then
+			text ..= `\nNext: {ResearchConfig.describe(tech, level + 1)}, {formatLong(ResearchConfig.getSeconds(tech, level))}`
+		end
+		row.info.Text = text
+		if level >= tech.maxLevel then
+			setButton(row.button, "Fully researched", false, COLOR_BUY)
+		elseif research.active == key then
+			setButton(row.button, `In progress\n{formatLong(state.researchLeft)}`, false, COLOR_BUY)
+		elseif locked then
+			setButton(row.button, "Locked", false, COLOR_BUY)
+		else
+			local cost = ResearchConfig.getCost(tech, level)
+			setButton(row.button, `Research\n{Format.short(cost)}`, not busy and state.gold >= cost, COLOR_BUY)
+		end
+	end
+
+	return bountyReady, festivalReady
+end
+
 local function draw(state)
 	lastState = state
 	local stats = state.stats
 	local gold = state.gold
 	drawStore(state)
+	local bountyReady, festivalReady = drawLoop(state)
+	setBadge("Bounties", bountyReady)
+	setBadge("Festival", festivalReady)
 
 	-- Top bar
 	local title = if state.title ~= "" then state.title .. " " else ""
@@ -1585,7 +1850,8 @@ local function draw(state)
 		elseif state.level < item.level then
 			setButton(row.button, `Level {item.level}`, false, COLOR_BUY)
 		else
-			setButton(row.button, `Buy\n{Format.short(item.price)}`, gold >= item.price, COLOR_BUY)
+			local price = math.floor(item.price * (1 - festivalDiscount(state, "marketPrice")))
+			setButton(row.button, `Buy\n{Format.short(price)}`, gold >= price, COLOR_BUY)
 		end
 	end
 
@@ -1988,10 +2254,11 @@ function refreshRecruitWindow()
 		targetText.Text = "<b>Your warband</b>\nRoll for every empty slot, or for every slot below a rarity."
 	end
 
+	local rollFactor = 1 - festivalDiscount(state, "rollCost")
 	for index, tier in GameConfig.RecruitTiers do
 		local b = tierButtons[index]
 		local unlocked = state.level >= tier.level
-		local costText = if unlocked then Format.short(tier.cost) else `Level {tier.level}`
+		local costText = if unlocked then Format.short(math.floor(tier.cost * rollFactor)) else `Level {tier.level}`
 		b.Text = `{string.upper(tier.id)}\n{costText}`
 		b.BackgroundColor3 = if index == chosenTier then COLOR_SELECTED else COLOR_ROW
 		b.TextColor3 = if unlocked then Color3.new(1, 1, 1) else COLOR_DIM
@@ -2027,10 +2294,11 @@ function refreshRecruitWindow()
 	end
 
 	local chance = GameConfig.getChanceAtLeast(tier, GameConfig.Rarities[chosenRarity].id)
-	local expected = if chance > 0 then tier.cost / chance else 0
+	local rollCost = math.floor(tier.cost * rollFactor)
+	local expected = if chance > 0 then rollCost / chance else 0
 	chanceText.Text = string.format("Chance per roll: %.2f%%   |   Average cost per hit: %s gold", chance * 100, Format.short(expected))
 
-	local ready = state.level >= tier.level and gold >= tier.cost and scopeCount(state, chosenScope) > 0
+	local ready = state.level >= tier.level and gold >= rollCost and scopeCount(state, chosenScope) > 0
 	startButton.BackgroundColor3 = if ready then COLOR_GOLD else COLOR_DISABLED
 end
 

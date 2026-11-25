@@ -99,6 +99,31 @@ local function newData()
 			claimed = {}, -- [challenge key] = true
 		},
 		tipsSeen = {}, -- [page name] = true once its tip is dismissed
+		-- Bounty Board, login streak, Festival Week and research
+		seals = 0,
+		bounty = {
+			day = -1, -- UTC day the daily counts belong to
+			week = -1, -- week the weekly counts belong to
+			daily = {}, -- [stat] = count today
+			weekly = {}, -- [stat] = count this week
+			claimed = {}, -- [task key] = true (daily keys reset daily, weekly keys weekly)
+			shopWeek = -1,
+			bought = {}, -- [Seal shop key] = bought this week
+		},
+		streak = { count = 0, lastDay = -1 },
+		festival = {
+			week = -1,
+			points = 0,
+			milestones = {}, -- [milestone index as text] = true
+			lastWeek = -1, -- the finished week waiting for its rank reward
+			lastPoints = 0,
+			lastPaid = true,
+		},
+		research = {
+			levels = {}, -- [tech key] = level
+			active = "", -- tech being researched, "" for none
+			endsAt = 0,
+		},
 		lastSeen = 0,
 	}
 end
@@ -116,7 +141,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "pass", "weekly" } do
+	for _, name in { "autoBuy", "pass", "weekly", "bounty", "streak", "festival", "research" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default

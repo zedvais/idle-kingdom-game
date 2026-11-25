@@ -4,12 +4,16 @@
 -- it and changes the player's data, then sends the new state back.
 -- Never trust numbers from the client: everything is worked out here.
 
+local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local StoreConfig = require(ReplicatedStorage.Shared.StoreConfig)
+local BountyConfig = require(ReplicatedStorage.Shared.BountyConfig)
+local FestivalConfig = require(ReplicatedStorage.Shared.FestivalConfig)
+local ResearchConfig = require(ReplicatedStorage.Shared.ResearchConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
 local Recruit = require(script.Parent.Recruit)
@@ -35,6 +39,8 @@ stateRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
 local sessions = {} -- [Player] = { data, canSave, actionCount, regen }
+local festivalTop = {} -- { { name, points } } for this week, refreshed each minute
+local festivalTopWeek = -1
 local random = Random.new()
 
 -- Quick lookups from an id to its settings.
@@ -71,6 +77,32 @@ local function maxGear(data): number
 	return GameConfig.MaxGearOwned + (if hasPass(data, "armory") then StoreConfig.ArmoryExtra else 0)
 end
 
+-- Research bonus of one kind ("income", "attack", "energy", ...), added up.
+local function researchTotal(data, kind: string): number
+	local total = 0
+	for key, level in data.research.levels do
+		local tech = ResearchConfig.Techs[key]
+		if tech and tech.bonus == kind then
+			total += tech.amount * level
+		end
+	end
+	return total
+end
+
+-- This week's festival bonus of one kind, or 0.
+local function festivalBonus(kind: string): number
+	local festival = FestivalConfig.getFestival(FestivalConfig.getWeek(os.time()))
+	if festival.bonus.kind == kind then
+		return festival.bonus.amount
+	end
+	return 0
+end
+
+-- Market price after this week's festival discount.
+local function marketPrice(item): number
+	return math.floor(item.price * (1 - festivalBonus("marketPrice")))
+end
+
 local function skillTotal(data, skillId: string): number
 	return (data.skills[skillId] or 0) * skillById[skillId].amount
 end
@@ -105,6 +137,11 @@ local function getPerkBonus(data, gear)
 		total.questGold += StoreConfig.CharterQuestGold
 		total.xp += StoreConfig.CharterXp
 	end
+	for key in total do
+		total[key] += researchTotal(data, key)
+	end
+	total.income += festivalBonus("income")
+	total.attack += festivalBonus("attack")
 	return total
 end
 
@@ -146,9 +183,9 @@ local function getStats(data)
 	incomePerHour = math.floor(incomePerHour * (1 + keepBonus + perkBonus.income))
 
 	return {
-		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy"),
+		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy") + researchTotal(data, "energy"),
 		maxStamina = GameConfig.BaseMaxStamina + skillTotal(data, "stamina"),
-		maxHealth = GameConfig.BaseMaxHealth + skillTotal(data, "health"),
+		maxHealth = GameConfig.BaseMaxHealth + skillTotal(data, "health") + researchTotal(data, "health"),
 		attack = attack,
 		defense = defense,
 		crewSize = crewSize,
@@ -156,7 +193,7 @@ local function getStats(data)
 		keepBonus = keepBonus,
 		trophyBonus = trophyBonus,
 		setBonus = gear.perks,
-		lots = GameConfig.BaseLots + skillTotal(data, "lots"),
+		lots = GameConfig.BaseLots + skillTotal(data, "lots") + researchTotal(data, "lots"),
 		lotsUsed = lotsUsed,
 		incomePerHour = incomePerHour,
 		-- Where attack and defense come from, for the Keep page.
@@ -245,6 +282,76 @@ local function onFoeBeaten(data)
 	data.weekly.foes += 1
 	addPassPoints(data, StoreConfig.PointsPerFoe)
 	data.tithe = math.min(StoreConfig.TitheMax, data.tithe + StoreConfig.TitheCrownsPerFoe)
+end
+
+-- Bounty counts start over each UTC day (daily) and each week (weekly).
+local function checkBounty(data)
+	local bounty = data.bounty
+	local today = GameConfig.getDay()
+	local week = StoreConfig.getWeek(os.time())
+	if bounty.day ~= today then
+		bounty.day = today
+		bounty.daily = {}
+		for _, task in BountyConfig.Daily do
+			bounty.claimed[task.key] = nil
+		end
+	end
+	if bounty.week ~= week then
+		bounty.week = week
+		bounty.weekly = {}
+		for _, task in BountyConfig.Weekly do
+			bounty.claimed[task.key] = nil
+		end
+	end
+	if bounty.shopWeek ~= week then
+		bounty.shopWeek = week
+		bounty.bought = {}
+	end
+end
+
+-- A new festival starts each week. The finished week's points are kept so
+-- its rank reward can be paid.
+local function checkFestival(data)
+	local festival = data.festival
+	local week = FestivalConfig.getWeek(os.time())
+	if festival.week ~= week then
+		if festival.points > 0 and festival.week >= 0 then
+			festival.lastWeek = festival.week
+			festival.lastPoints = festival.points
+			festival.lastPaid = false
+		end
+		festival.week = week
+		festival.points = 0
+		festival.milestones = {}
+	end
+end
+
+-- Counts one kind of action for the Bounty Board and Festival Week.
+-- stat is one of BountyConfig.Stats.
+local function track(data, stat: string, amount: number)
+	checkBounty(data)
+	data.bounty.daily[stat] = (data.bounty.daily[stat] or 0) + amount
+	data.bounty.weekly[stat] = (data.bounty.weekly[stat] or 0) + amount
+
+	checkFestival(data)
+	local festival = FestivalConfig.getFestival(data.festival.week)
+	local points = festival.points[stat]
+	if points then
+		data.festival.points += points * amount
+	end
+end
+
+-- Which streak day the player would claim today, and whether they can.
+local function streakToday(data): (number, boolean)
+	local today = GameConfig.getDay()
+	local streak = data.streak
+	if streak.lastDay == today then
+		return streak.count, false
+	end
+	if streak.lastDay == today - 1 then
+		return streak.count % #BountyConfig.Streak + 1, true
+	end
+	return 1, true
 end
 
 -- How far the player is toward a trophy.
@@ -338,6 +445,9 @@ local function refresh(player: Player)
 	checkStageDay(data)
 	checkPassSeason(data)
 	checkWeek(data)
+	checkBounty(data)
+	checkFestival(data)
+	local streakDay, streakReady = streakToday(data)
 	checkTrophies(player, data)
 	local trophyProgressList = {}
 	for _, trophy in GameConfig.Trophies do
@@ -396,6 +506,14 @@ local function refresh(player: Player)
 		weekly = data.weekly,
 		weekSecondsLeft = StoreConfig.getWeekSecondsLeft(now),
 		tipsSeen = data.tipsSeen,
+		seals = data.seals,
+		bounty = data.bounty,
+		streakDay = streakDay,
+		streakReady = streakReady,
+		festival = data.festival,
+		festivalTop = if festivalTopWeek == data.festival.week then festivalTop else {},
+		research = data.research,
+		researchLeft = math.max(0, data.research.endsAt - now),
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -506,6 +624,7 @@ function actions.Quest(player: Player, data, id: string)
 	onQuestEnergy(data, quest.energy)
 	data.gold += math.floor(GameConfig.getQuestGold(quest, completions) * (1 + trophyBonus.questGold))
 	data.quests[id] = completions + 1
+	track(data, "quests", 1)
 	data.autoQuest = id
 
 	local rankAfter = GameConfig.getMasteryRank(completions + 1)
@@ -532,6 +651,7 @@ function actions.Holding(player: Player, data, id: string)
 	local count = data.holdings[id] or 0
 	if spendGold(player, data, GameConfig.getHoldingCost(holding, count)) then
 		data.holdings[id] = count + 1
+		track(data, "holdings", 1)
 	end
 end
 
@@ -574,6 +694,7 @@ function actions.Claim(player: Player, data, id: string)
 	end
 	data.claimed[id] = true
 	addPassPoints(data, StoreConfig.PointsPerPlaytimeReward)
+	track(data, "claims", 1)
 
 	local stats = getStats(data)
 	if reward.kind == "gold" then
@@ -706,15 +827,17 @@ function actions.Roll(player: Player, data, id: string)
 		sendToast(player, "No slots match. Pick another option.")
 		return
 	end
-	if data.gold < tier.cost then
-		sendToast(player, `Not enough gold. One {tier.id} roll costs {Format.short(tier.cost)}.`)
+	-- The Muster Fair festival makes rolls cheaper.
+	local rollCost = math.floor(tier.cost * (1 - festivalBonus("rollCost")))
+	if data.gold < rollCost then
+		sendToast(player, `Not enough gold. One {tier.id} roll costs {Format.short(rollCost)}.`)
 		return
 	end
 
 	local rolls, filled, best = 0, 0, nil
 	for _, slot in targets do
-		while rolls < GameConfig.MaxRollsPerRequest and data.gold >= tier.cost do
-			data.gold -= tier.cost
+		while rolls < GameConfig.MaxRollsPerRequest and data.gold >= rollCost do
+			data.gold -= rollCost
 			rolls += 1
 			local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
 			data.nextItemId += 1
@@ -729,7 +852,10 @@ function actions.Roll(player: Player, data, id: string)
 		end
 	end
 
-	local spent = Format.short(rolls * tier.cost)
+	if rolls > 0 then
+		track(data, "rolls", rolls)
+	end
+	local spent = Format.short(rolls * rollCost)
 	if filled == 0 then
 		sendToast(player, `{rolls} rolls ({spent} gold) and no {rarityId} or better. Try again.`)
 	elseif filled == 1 and best then
@@ -751,6 +877,7 @@ function actions.Train(player: Player, data, id: string)
 	end
 	if spendGold(player, data, GameConfig.getTrainCost(soldier)) then
 		soldier.train += 1
+		track(data, "train", 1)
 	end
 end
 
@@ -778,13 +905,14 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return false
 	end
-	if data.gold < item.price then
+	local price = marketPrice(item)
+	if data.gold < price then
 		if not auto then
-			sendToast(player, `Not enough gold. You need {Format.short(item.price)}.`)
+			sendToast(player, `Not enough gold. You need {Format.short(price)}.`)
 		end
 		return false
 	end
-	data.gold -= item.price
+	data.gold -= price
 
 	item.sold = true
 	local owned = table.clone(item)
@@ -792,6 +920,7 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 	local note = addGear(data, owned)
 	checkWeek(data)
 	data.weekly.market += 1
+	track(data, "market", 1)
 	sendToast(player, `{if auto then "Auto-buy got" else "You bought"} a {owned.rarity} {owned.name}.{note}`)
 	return true
 end
@@ -875,6 +1004,7 @@ function actions.Fight(player: Player, data, id: string)
 		data.tokens += stage.tokens
 		data.renown += stage.renown
 		onFoeBeaten(data)
+		track(data, "foes", 1)
 		sendToast(
 			player,
 			`Stage {stage.index} cleared! {stage.name} is beaten. +{Format.short(stage.gold)} gold, +{stage.xp} XP, +{stage.tokens} boss tokens.`
@@ -1065,6 +1195,8 @@ local function grantReward(player: Player, data, reward, source: string): string
 		data.health = math.max(data.health, stats.maxHealth)
 	elseif kind == "title" then
 		data.title = reward.text
+	elseif kind == "seals" then
+		data.seals += reward.amount
 	end
 	return StoreConfig.describe(reward)
 end
@@ -1277,6 +1409,238 @@ function actions.WeeklyClaim(player: Player, data, id: string)
 	end
 end
 
+---------------------------------------------------------------------------
+-- Bounty Board, login streak, Festival Week and research
+---------------------------------------------------------------------------
+
+-- Claims a finished bounty task. id is its key.
+function actions.BountyClaim(player: Player, data, id: string)
+	checkBounty(data)
+	local task, period = BountyConfig.getTask(id)
+	if not task or data.bounty.claimed[id] then
+		return
+	end
+	local counts = if period == "daily" then data.bounty.daily else data.bounty.weekly
+	if (counts[task.stat] or 0) < task.goal then
+		return
+	end
+	data.bounty.claimed[id] = true
+	data.seals += task.seals
+	sendToast(player, `Bounty done: +{task.seals} Seals.`)
+end
+
+-- Buys from the Seal shop. id is the item key.
+function actions.SealBuy(player: Player, data, id: string)
+	checkBounty(data)
+	local item = BountyConfig.getShopItem(id)
+	if not item then
+		return
+	end
+	local bought = data.bounty.bought[id] or 0
+	if bought >= item.limit then
+		sendToast(player, `{item.name} is sold out until Monday.`)
+		return
+	end
+	if data.seals < item.cost then
+		sendToast(player, `Not enough Seals. You need {item.cost}. Finish bounties to earn more.`)
+		return
+	end
+	if item.reward.kind == "chest" and #data.gear >= maxGear(data) then
+		sendToast(player, "Your armory is full. Sell some gear first.")
+		return
+	end
+	data.seals -= item.cost
+	data.bounty.bought[id] = bought + 1
+	local got = grantReward(player, data, item.reward, item.name)
+	sendToast(player, `{item.name}: {got}.`)
+end
+
+function actions.StreakClaim(player: Player, data)
+	local day, canClaim = streakToday(data)
+	if not canClaim then
+		return
+	end
+	local reward = BountyConfig.Streak[day]
+	if reward.kind == "chest" and #data.gear >= maxGear(data) then
+		sendToast(player, "Your armory is full. Sell some gear, then claim your streak reward.")
+		return
+	end
+	data.streak.count = day
+	data.streak.lastDay = GameConfig.getDay()
+	local got = grantReward(player, data, reward, `Day {day} reward`)
+	sendToast(player, `Login streak day {day}: {got}. Come back tomorrow for day {day % #BountyConfig.Streak + 1}.`)
+end
+
+-- Claims a festival milestone. id is its number in the list, as text.
+function actions.FestivalMilestone(player: Player, data, id: string)
+	checkFestival(data)
+	local index = tonumber(id)
+	local milestone = index and FestivalConfig.Milestones[index]
+	if not milestone or data.festival.milestones[id] or data.festival.points < milestone.points then
+		return
+	end
+	if milestone.reward.kind == "chest" and #data.gear >= maxGear(data) then
+		sendToast(player, "Your armory is full. Sell some gear first.")
+		return
+	end
+	data.festival.milestones[id] = true
+	local got = grantReward(player, data, milestone.reward, "Festival milestone")
+	sendToast(player, `Festival milestone: {got}.`)
+end
+
+-- Starts researching the next level of a tech. id is its key.
+function actions.Research(player: Player, data, id: string)
+	local tech = ResearchConfig.Techs[id]
+	if not tech then
+		return
+	end
+	local research = data.research
+	if research.active ~= "" then
+		sendToast(player, "The scholars are busy. Wait for the current research, or finish it with Crowns.")
+		return
+	end
+	local level = research.levels[id] or 0
+	if level >= tech.maxLevel then
+		return
+	end
+	if tech.needs and (research.levels[tech.needs[1]] or 0) < tech.needs[2] then
+		local need = ResearchConfig.Techs[tech.needs[1]]
+		sendToast(player, `Research {need and need.name or tech.needs[1]} to level {tech.needs[2]} first.`)
+		return
+	end
+	if spendGold(player, data, ResearchConfig.getCost(tech, level)) then
+		research.active = id
+		research.endsAt = os.time() + ResearchConfig.getSeconds(tech, level)
+		sendToast(player, `The scholars began {tech.name} level {level + 1}.`)
+	end
+end
+
+-- Finishes research when its time is up. Runs every second and on join.
+local function checkResearch(player: Player, data)
+	local research = data.research
+	if research.active == "" or os.time() < research.endsAt then
+		return
+	end
+	local tech = ResearchConfig.Techs[research.active]
+	research.active = ""
+	research.endsAt = 0
+	if tech then
+		local level = (research.levels[tech.key] or 0) + 1
+		research.levels[tech.key] = level
+		sendToast(player, `Research done: {tech.name} level {level} ({ResearchConfig.describe(tech, level)} in total).`)
+	end
+end
+
+-- Finishes the current research now for Crowns.
+function actions.ResearchFinish(player: Player, data)
+	local research = data.research
+	if research.active == "" then
+		return
+	end
+	local cost = ResearchConfig.getFinishCost(math.max(0, research.endsAt - os.time()))
+	if spendCrowns(player, data, cost) then
+		research.endsAt = os.time()
+		checkResearch(player, data)
+	end
+end
+
+---------------------------------------------------------------------------
+-- Festival leaderboard, shared by every server through an OrderedDataStore
+---------------------------------------------------------------------------
+
+local nameCache = {}
+
+local function festivalStore(week: number)
+	local ok, store = pcall(function()
+		return DataStoreService:GetOrderedDataStore("Festival_" .. week)
+	end)
+	return if ok then store else nil
+end
+
+local function nameFor(userId: number): string
+	if nameCache[userId] then
+		return nameCache[userId]
+	end
+	local ok, name = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	nameCache[userId] = if ok then name else "Someone"
+	return nameCache[userId]
+end
+
+-- Writes a player's festival points for this week.
+local function saveFestivalScore(player: Player, data)
+	if data.festival.points <= 0 then
+		return
+	end
+	local store = festivalStore(data.festival.week)
+	if store then
+		pcall(function()
+			store:SetAsync(tostring(player.UserId), math.floor(data.festival.points))
+		end)
+	end
+end
+
+local function refreshFestivalTop()
+	local week = FestivalConfig.getWeek(os.time())
+	local store = festivalStore(week)
+	if not store then
+		return
+	end
+	local ok, pages = pcall(function()
+		return store:GetSortedAsync(false, FestivalConfig.LeaderboardSize)
+	end)
+	if not ok then
+		return
+	end
+	local list = {}
+	for _, entry in pages:GetCurrentPage() do
+		table.insert(list, { nameFor(tonumber(entry.key) or 0), entry.value })
+	end
+	festivalTop = list
+	festivalTopWeek = week
+end
+
+-- Pays last week's rank reward once. Finds the rank in the top 100.
+local function payFestivalRank(player: Player, data)
+	local festival = data.festival
+	if festival.lastPaid or festival.lastPoints <= 0 then
+		return
+	end
+	local store = festivalStore(festival.lastWeek)
+	if not store then
+		return
+	end
+	local ok, pages = pcall(function()
+		return store:GetSortedAsync(false, 100)
+	end)
+	if not ok then
+		return -- try again on the next visit
+	end
+	local rank = nil
+	for index, entry in pages:GetCurrentPage() do
+		if entry.key == tostring(player.UserId) then
+			rank = index
+			break
+		end
+	end
+	if not player.Parent or festival.lastPaid then
+		return
+	end
+	festival.lastPaid = true
+	if not rank and festival.lastPoints < FestivalConfig.MinPointsForReward then
+		return
+	end
+	local entry = FestivalConfig.getRankReward(rank or math.huge)
+	local name = FestivalConfig.getFestival(festival.lastWeek).name
+	local got = {}
+	for _, reward in entry.rewards do
+		table.insert(got, grantReward(player, data, reward, name))
+	end
+	local place = if rank then `#{rank}` else entry.label
+	sendToast(player, `Last week's {name}: you placed {place}. Reward: {table.concat(got, ", ")}.`)
+end
+
 -- Hides a page's tip for good. id is the page name.
 function actions.Tip(player: Player, data, id: string)
 	-- The client names the page, so keep the list small and the names short.
@@ -1313,8 +1677,8 @@ local function runAutoBuy(player: Player, data)
 		local wanted = not item.sold
 			and rule.slots[item.slot]
 			and GameConfig.getRarityRank(item.rarity) >= minRank
-			and item.price >= rule.minPrice
-			and (rule.maxPrice <= 0 or item.price <= rule.maxPrice)
+			and marketPrice(item) >= rule.minPrice
+			and (rule.maxPrice <= 0 or marketPrice(item) <= rule.maxPrice)
 			and data.level >= item.level
 		if not wanted then
 			continue
@@ -1324,7 +1688,7 @@ local function runAutoBuy(player: Player, data)
 			sendToast(player, "Auto-buy stopped: your armory is full.")
 			return
 		end
-		if data.gold < item.price then
+		if data.gold < marketPrice(item) then
 			if rule.whenBroke == "stop" then
 				rule.on = false
 				sendToast(player, "Auto-buy stopped: not enough gold.")
@@ -1334,8 +1698,8 @@ local function runAutoBuy(player: Player, data)
 		end
 		if buyItem(player, data, item, true) then
 			rule.bought += 1
-			rule.spent += item.price
-			table.insert(rule.recent, 1, { name = item.name, rarity = item.rarity, price = item.price })
+			rule.spent += marketPrice(item)
+			table.insert(rule.recent, 1, { name = item.name, rarity = item.rarity, price = marketPrice(item) })
 			while #rule.recent > GameConfig.AutoBuyRecent do
 				table.remove(rule.recent)
 			end
@@ -1431,6 +1795,7 @@ local function onPlayerAdded(player: Player)
 	end
 
 	applyTimeAway(player, data)
+	checkResearch(player, data)
 
 	sessions[player] = {
 		data = data,
@@ -1439,6 +1804,15 @@ local function onPlayerAdded(player: Player)
 		regen = { energy = 0, stamina = 0, health = 0 },
 	}
 	refresh(player)
+
+	-- Last week's festival rank reward, if it has not been paid yet.
+	checkFestival(data)
+	task.spawn(function()
+		payFestivalRank(player, data)
+		if sessions[player] then
+			refresh(player)
+		end
+	end)
 end
 
 local function onPlayerRemoving(player: Player)
@@ -1449,6 +1823,7 @@ local function onPlayerRemoving(player: Player)
 	sessions[player] = nil
 	if session.canSave then
 		PlayerData.save(player, session.data)
+		saveFestivalScore(player, session.data)
 	end
 end
 
@@ -1514,6 +1889,7 @@ task.spawn(function()
 			regenerate(session, "health", GameConfig.HealthRegenSeconds, stats.maxHealth)
 			runAutoQuests(player, data)
 			runAutoBuy(player, data)
+			checkResearch(player, data)
 
 			refresh(player)
 		end
@@ -1526,9 +1902,13 @@ task.spawn(function()
 		for player, session in sessions do
 			if session.canSave then
 				task.spawn(PlayerData.save, player, session.data)
+				task.spawn(saveFestivalScore, player, session.data)
 			end
 		end
+		refreshFestivalTop()
 	end
 end)
+
+task.spawn(refreshFestivalTop)
 
 print(`[{GameConfig.GameName}] server started`)
