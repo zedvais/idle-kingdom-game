@@ -327,12 +327,15 @@ do
 	iconLayout.Padding = UDim.new(0, 6)
 	iconLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	iconLayout.Parent = iconRow
-	for index, entry in { { "Mail", Art.Icons.Mail, "Mail" } } do
+	-- One MENU button: a drop-down with Mail, Settings, Stats, Rankings
+	-- and Updates. The Mail count shows on it.
+	for index, entry in { { "Mail", "\u{2630}", "Menu" } } do
 		local button = makeButton(iconRow, UDim2.new(0, 56, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
 		button.LayoutOrder = index
 		button.Text = ""
-		addStroke(button)
-		local icon = makeText(button, UDim2.new(1, 0, 0, 28), UDim2.fromOffset(0, 4), COLOR_HEADER, 22)
+		addStroke(button).Color = COLOR_GOLD
+		local icon = makeText(button, UDim2.new(1, 0, 0, 30), UDim2.fromOffset(0, 3), COLOR_GOLD, 28)
+		icon.Font = Enum.Font.GothamBlack
 		icon.TextXAlignment = Enum.TextXAlignment.Center
 		icon.Text = entry[2]
 		local label = makeText(button, UDim2.new(1, 0, 0, 14), UDim2.new(0, 0, 1, -18), COLOR_TEXT, 11)
@@ -349,8 +352,85 @@ do
 		badge.ZIndex = 2
 		addCorner(badge, 8)
 		railBadges[entry[1]] = badge
+
+		local menu = makeFrame(gui, UDim2.fromOffset(300, 0), UDim2.new(1, -(RIGHT_BLOCK + 14), 0, TOP_HEIGHT + 6), COLOR_PANEL)
+		menu.AnchorPoint = Vector2.new(1, 0)
+		menu.AutomaticSize = Enum.AutomaticSize.Y
+		menu.Visible = false
+		menu.ZIndex = 800
+		addCorner(menu, 8)
+		Art.stroke(menu, COLOR_GOLD, 2, 0)
+		local menuList = Instance.new("UIListLayout")
+		menuList.Padding = UDim.new(0, 6)
+		menuList.SortOrder = Enum.SortOrder.LayoutOrder
+		menuList.Parent = menu
+		local menuPad = Instance.new("UIPadding")
+		for _, side in { "PaddingTop", "PaddingBottom", "PaddingLeft", "PaddingRight" } do
+			menuPad[side] = UDim.new(0, 8)
+		end
+		menuPad.Parent = menu
+		local mailCount = nil
+		local items = {
+			{ Art.Icons.Mail, "MAIL", function() openModal("Mail") end },
+			{ "\u{2699}\u{FE0F}", "SETTINGS", function() openModal("Settings") end },
+			{ Art.Icons.Rankings, "STATS", function() openModal("Stats") end },
+			{ "\u{1F3C5}", "RANKINGS", function() if ui then ui.showPage("Rankings") end end },
+			{ "\u{1F4F0}", "UPDATES", function() openModal("Updates") end },
+		}
+		for order, item in items do
+			local row = makeButton(menu, UDim2.new(1, 0, 0, 58), UDim2.fromOffset(0, 0), COLOR_ROW)
+			row.LayoutOrder = order
+			row.Text = ""
+			row.ZIndex = 801
+			local glyph = makeText(row, UDim2.fromOffset(60, 58), UDim2.fromOffset(14, 0), COLOR_GOLD, 30)
+			glyph.TextXAlignment = Enum.TextXAlignment.Center
+			glyph.Text = item[1]
+			glyph.ZIndex = 802
+			local label = makeText(row, UDim2.new(1, -90, 1, 0), UDim2.fromOffset(86, 0), COLOR_HEADER, 24)
+			label.Font = Enum.Font.GothamBlack
+			label.Text = item[2]
+			label.ZIndex = 802
+			if order == 1 then
+				mailCount = makeText(row, UDim2.fromOffset(34, 24), UDim2.new(1, -44, 0.5, -12), Color3.new(1, 1, 1), 13)
+				mailCount.BackgroundTransparency = 0
+				mailCount.BackgroundColor3 = COLOR_ACTION
+				mailCount.Font = Enum.Font.GothamBlack
+				mailCount.TextXAlignment = Enum.TextXAlignment.Center
+				mailCount.ZIndex = 803
+				addCorner(mailCount, 12)
+			end
+			row.Activated:Connect(function()
+				menu.Visible = false
+				item[3]()
+			end)
+		end
 		button.Activated:Connect(function()
-			openModal(entry[1])
+			menu.Visible = not menu.Visible
+			if mailCount then
+				mailCount.Visible = badge.Visible
+				mailCount.Text = badge.Text
+			end
+			if menu.Visible then
+				local scale = menu:FindFirstChild("Pop") or Instance.new("UIScale")
+				scale.Name = "Pop"
+				scale.Parent = menu
+				scale.Scale = 0.85
+				Art.tween(scale, 0.18, { Scale = 1 }, Enum.EasingStyle.Back)
+			end
+		end)
+		-- Pressing anywhere else closes it (a clear layer behind the menu).
+		local catcher = makeButton(gui, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0))
+		catcher.BackgroundTransparency = 1
+		catcher.Text = ""
+		catcher.AutoButtonColor = false
+		catcher:SetAttribute("NoGlow", true)
+		catcher.ZIndex = 790
+		catcher.Visible = false
+		catcher.Activated:Connect(function()
+			menu.Visible = false
+		end)
+		menu:GetPropertyChangedSignal("Visible"):Connect(function()
+			catcher.Visible = menu.Visible
 		end)
 	end
 end
@@ -1353,94 +1433,13 @@ unlockButton.Activated:Connect(function()
 	send("Slot")
 end)
 
--- Inventory: tabs for gear by slot and for trophies, and a rarity filter.
-local INVENTORY_TABS = { "All", "Weapon", "Armor", "Mount", "Sets", "Trophies" }
-local inventoryTab = "All"
-local inventoryRarity = 0 -- 0 shows every rarity, otherwise the lowest rank shown
 local redraw -- draws the last state again; defined after draw()
-local tabButtons = makeButtonRow(pages.Inventory, nextOrder(), "", INVENTORY_TABS)
-local filterInfo, filterButton = makeRow(pages.Inventory, nextOrder(), 44, true)
-filterInfo.TextColor3 = COLOR_DIM
-filterButton.Activated:Connect(function()
-	inventoryRarity = (inventoryRarity + 1) % (#GameConfig.Rarities + 1)
-	redraw()
-end)
-for index, tab in INVENTORY_TABS do
-	tabButtons[index].Activated:Connect(function()
-		inventoryTab = tab
-		redraw()
-	end)
-end
 -- Warband header: GEAR SETS opens the Inventory on its Sets tab.
 warbandButtons[1].Activated:Connect(function()
-	inventoryTab = "Sets"
-	showPage("Inventory")
-	redraw()
-end)
-local armorySummary = makeRow(pages.Inventory, nextOrder(), 50, false)
-armorySummary.TextColor3 = COLOR_DIM
-
-local trophyRows = {}
-for _, trophy in GameConfig.Trophies do
-	local info, button = makeRow(pages.Inventory, nextOrder(), 52, true)
-	info.RichText = true
-	button.AutoButtonColor = false
-	trophyRows[trophy.id] = { info = info, button = button }
-end
-local setRows = {}
-for _, set in GameConfig.GearSets do
-	local info, button = makeRow(pages.Inventory, nextOrder(), 70, true)
-	info.RichText = true
-	info.TextSize = 13
-	button.AutoButtonColor = false
-	setRows[set.id] = { info = info, button = button }
-end
--- Inventory rows: one per stack of identical spare pieces or worn piece.
--- Rows are made as needed (the armory has no limit).
-local gearRows = {}
-local gearHolder = makeFrame(pages.Inventory, UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 0), COLOR_PANEL)
-gearHolder.BackgroundTransparency = 1
-gearHolder.AutomaticSize = Enum.AutomaticSize.Y
-gearHolder.LayoutOrder = nextOrder()
-do
-	local list = Instance.new("UIListLayout")
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Padding = UDim.new(0, 5)
-	list.Parent = gearHolder
-end
-local function gearRow(index: number)
-	local row = gearRows[index]
-	if row then
-		return row
+	if ui and ui.openInventory then
+		ui.openInventory("Sets")
 	end
-	row = makeItemRow(gearHolder, index)
-	row.uid = nil
-	row.count = 1
-	gearRows[index] = row
-	row.button.Activated:Connect(function()
-		if not row.uid then
-			return
-		end
-		if row.count > 1 and ui and ui.askAmount then
-			local uid, price, name = row.uid, row.price or 0, row.name or "pieces"
-			ui.askAmount({
-				title = "Sell how many?",
-				note = `<b>{name}</b>: {row.count} spare.`,
-				max = row.count,
-				confirm = "Sell",
-				preview = function(amount: number)
-					return `+{Format.short(math.floor(price * GameConfig.SellShare) * amount)} gold`
-				end,
-				onConfirm = function(amount: number)
-					send("Sell", `{uid}:{amount}`)
-				end,
-			})
-		else
-			send("Sell", row.uid)
-		end
-	end)
-	return row
-end
+end)
 
 -- Shop: Robux items at the top, then things bought with Crowns.
 local function robuxText(price: number): string
@@ -1458,7 +1457,11 @@ local isModalOpen, closeModal
 do
 	-- width and height are optional; the default is 680 x 560.
 	local MODALS = {
-		{ key = "Profile", title = "Profile" },
+		{ key = "Profile", title = "Profile", width = 900, height = 560 },
+		{ key = "Settings", title = "Settings", width = 620, height = 560 },
+		{ key = "Stats", title = "Stats", width = 720, height = 560 },
+		{ key = "Updates", title = "Updates", width = 640, height = 560 },
+		{ key = "Item", title = "Item", width = 560, height = 520 },
 		{ key = "Rebirth", title = "Rebirth" },
 		{ key = "Mail", title = "Mail" },
 		{ key = "AutoQuest", title = "Auto quests", width = 760, height = 560 },
@@ -1640,7 +1643,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -2394,134 +2397,6 @@ local function draw(state)
 		end
 	end
 
-	-- Inventory
-	for index, tab in INVENTORY_TABS do
-		setButton(tabButtons[index], if tab == "Trophies" or tab == "Sets" then tab else (if tab == "All" then "All gear" else tab .. "s"), tab == inventoryTab, COLOR_SELECTED)
-	end
-	local showTrophies = inventoryTab == "Trophies"
-	local showSets = inventoryTab == "Sets"
-	filterInfo.Parent.Visible = not showTrophies and not showSets
-	local filterRarity = GameConfig.Rarities[inventoryRarity]
-	filterInfo.Text = if filterRarity then `Showing {filterRarity.id} and rarer` else "Showing every rarity"
-	setButton(filterButton, "Change rarity", true, COLOR_SELECTED)
-
-	local earnedCount = 0
-	for _, trophy in GameConfig.Trophies do
-		local row = trophyRows[trophy.id]
-		local earned = state.trophies[trophy.id] == true
-		if earned then
-			earnedCount += 1
-		end
-		row.info.Parent.Visible = showTrophies
-		local bonuses = {}
-		for _, pair in GameConfig.TrophyBonusNames do
-			local amount = trophy[pair[1]]
-			if amount then
-				table.insert(bonuses, `+{math.floor(amount * 100 + 0.5)}% {pair[2]}`)
-			end
-		end
-		local progress = state.trophyProgress[trophy.id] or 0
-		Art.progress(row.info, if earned then 1 else progress, if earned then 1 else trophy.value)
-		row.info.Text = `<b>{trophy.name}</b>   <font color="#9FD49A">{table.concat(bonuses, ", ")}</font>\n`
-			.. (if earned then trophy.note else `{trophy.note}   ({progress} / {trophy.value})`)
-		setButton(row.button, if earned then "Earned" else "Locked", earned, COLOR_GOLD)
-		row.button.TextColor3 = if earned then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
-	end
-
-	-- Sets: which pieces you own, and whether anyone wears the full set.
-	local ownedNames = {}
-	for _, item in state.gear do
-		if item.set then
-			ownedNames[item.name] = true
-		end
-	end
-	for _, set in GameConfig.GearSets do
-		local row = setRows[set.id]
-		row.info.Parent.Visible = showSets
-		local house = "a foe house"
-		for _, candidate in GameConfig.Houses do
-			if candidate.id == set.house then
-				house = candidate.name
-			end
-		end
-		local have, missing = {}, {}
-		for _, slot in GameConfig.GearSlots do
-			local name = set.pieces[slot]
-			table.insert(if ownedNames[name] then have else missing, name)
-		end
-		local two = math.floor(GameConfig.SetPieceBonus[2] * 100 + 0.5)
-		local three = math.floor(GameConfig.SetPieceBonus[3] * 100 + 0.5)
-		row.info.Text = `<b>{set.name}</b>   <font color="#9FD49A">Full set: {perkText(set.perk)}</font>\n`
-			.. `Drops from {house}. One person wearing 2 pieces: +{two}% on them, all 3: +{three}%.\n`
-			.. `Owned: {if #have > 0 then table.concat(have, ", ") else "none"}`
-			.. (if #missing > 0 and #have > 0 then `   <font color="#7F847E">Missing: {table.concat(missing, ", ")}</font>` else "")
-		local full = state.fullSets and state.fullSets[set.id] == true
-		Art.progress(row.info, #have, GameConfig.SetPieceCount)
-		setButton(row.button, if full then "Worn in full" else (if #missing == 0 then "Owned" else `{#have} / {GameConfig.SetPieceCount}`), full, COLOR_GOLD)
-		row.button.TextColor3 = if full then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
-	end
-
-	if showSets then
-		local bonus = stats.setBonus or {}
-		local active = perkText(bonus)
-		armorySummary.Text = `Gear sets. Wear all {GameConfig.SetPieceCount} pieces of a set on one person to switch on its bonus for your whole realm. `
-			.. `Equip set pieces by hand with the Gear button on the Warband page. Now: {if active ~= "" then active else "no full sets worn"}`
-	elseif showTrophies then
-		local bonus = stats.trophyBonus
-		armorySummary.Text = `Trophies {earnedCount} / {#GameConfig.Trophies}. Their bonuses never go away.   Now: `
-			.. `+{math.floor(bonus.attack * 100 + 0.5)}% attack, +{math.floor(bonus.defense * 100 + 0.5)}% defense, `
-			.. `+{math.floor(bonus.income * 100 + 0.5)}% income, +{math.floor(bonus.xp * 100 + 0.5)}% quest XP, +{math.floor(bonus.questGold * 100 + 0.5)}% quest gold`
-	else
-		local wornCount = 0
-		for _ in state.gearInUse do
-			wornCount += 1
-		end
-		local pieces = 0
-		for _, item in state.gear do
-			pieces += item.count or 1
-		end
-		armorySummary.Text = `Gear: {Format.short(pieces)} pieces, {wornCount} worn. No limit: identical spares stack. Gear only counts while someone wears it. `
-			.. `Use the Gear buttons on the Warband page, or Equip best there. Take gear off before selling it.`
-	end
-	local gear = {}
-	for _, item in state.gear do
-		local slotMatches = inventoryTab == "All" or item.slot == inventoryTab
-		if not showTrophies and not showSets and slotMatches and GameConfig.getRarityRank(item.rarity) >= math.max(1, inventoryRarity) then
-			table.insert(gear, item)
-		end
-	end
-	local slotOrder = { Weapon = 1, Armor = 2, Mount = 3 }
-	table.sort(gear, function(a, b)
-		if a.slot ~= b.slot then
-			return (slotOrder[a.slot] or 9) < (slotOrder[b.slot] or 9)
-		end
-		return a.attack + a.defense > b.attack + b.defense
-	end)
-	for index = 1, math.max(#gear, #gearRows) do
-		local item = gear[index]
-		local row = if item then gearRow(index) else gearRows[index]
-		row.uid = if item then item.uid else nil
-		row.count = if item then (item.count or 1) else 1
-		row.price = if item then item.price else 0
-		row.name = if item then `{item.rarity} {item.name}` else nil
-		row.info.Parent.Visible = item ~= nil
-		if item then
-			ItemArt.set(row.picture, item)
-			local worn = item.wornBy ~= nil
-			local status = if worn then `Worn by {memberLabel(state, item.wornBy)}` else "Spare"
-			local counts = if worn then memberSetCounts(state, item.wornBy) else nil
-			local stackText = if (item.count or 1) > 1 then `  <b>x{Format.short(item.count)}</b>` else ""
-			row.info.Text = `{rarityName(item)}{stackText}  ({string.lower(item.slot)}){setTag(item, counts)}\n{statText(item.attack, item.defense)}   |   {status}`
-			if worn then
-				setButton(row.button, "Worn", false, COLOR_ACTION)
-			elseif (item.count or 1) > 1 then
-				setButton(row.button, `Sell...\n+{Format.short(item.price * GameConfig.SellShare)} each`, true, COLOR_ACTION)
-			else
-				setButton(row.button, `Sell\n+{Format.short(item.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
-			end
-		end
-	end
-
 end
 
 redraw = function()
@@ -3070,6 +2945,9 @@ do
 	local function showToast()
 		local text = player:GetAttribute("ToastText")
 		if typeof(text) ~= "string" or text == "" then
+			return
+		end
+		if lastState and lastState.settings and lastState.settings.toasts == false then
 			return
 		end
 		toastCount += 1

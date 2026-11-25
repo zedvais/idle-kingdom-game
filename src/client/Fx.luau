@@ -665,6 +665,18 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt, send)
 		if type(info) ~= "table" then
 			return
 		end
+		-- Settings > Effects off: skip the extra flourishes (chest and
+		-- recruit reveals still show, they are how you see what you got).
+		if Fx.quiet then
+			if kind == "hit" then
+				if Fx.onHit then
+					Fx.onHit(info)
+				end
+				return
+			elseif kind == "levelup" or kind == "income" or kind == "quest" or (kind == "gear" and not info.crate) then
+				return
+			end
+		end
 		if kind == "gear" then
 			if info.crate then
 				info.what = "gear"

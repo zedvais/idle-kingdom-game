@@ -149,6 +149,7 @@ function ChestShelf.build(ui)
 
 	local grid
 	section, grid = makeSection(ui, ui.pages.Inventory, -5, "Chests")
+	ChestShelf.section = section
 	section.Visible = false
 	for order, chest in ChestConfig.all() do
 		local card = ui.makeFrame(grid, UDim2.fromOffset(100, 100), UDim2.fromOffset(0, 0), colors.row)
@@ -200,6 +201,7 @@ function ChestShelf.draw(state, ui)
 		end
 	end
 	section.Visible = total > 0
+	ChestShelf.total = total
 	ui.setBadge("Inventory", total)
 end
 

@@ -727,6 +727,7 @@ local function refresh(player: Player)
 		firstSeen = data.firstSeen,
 		lifetime = data.lifetime,
 		titles = data.titles,
+		settings = data.settings,
 		firstClears = data.firstClears,
 		mail = data.mail,
 		relics = relicState(data),
@@ -1966,6 +1967,15 @@ function actions.Title(player: Player, data, id: string)
 	elseif data.titles[id] then
 		data.title = id
 		sendToast(player, `You are now known as {id} {player.DisplayName}.`)
+	end
+end
+
+-- Menu Settings toggles. id is "<key>:on" or "<key>:off".
+local SETTING_KEYS = { effects = true, toasts = true }
+function actions.Setting(player: Player, data, id: string)
+	local key, value = string.match(id or "", "^(%a+):(%a+)$")
+	if key and SETTING_KEYS[key] and (value == "on" or value == "off") then
+		data.settings[key] = value == "on"
 	end
 end
 

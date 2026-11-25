@@ -141,6 +141,7 @@ local function newData()
 			endsAt = 0,
 		},
 		-- Profile, mail, Relic Hall and rebirth
+		settings = { effects = true, toasts = true }, -- menu Settings toggles
 		titles = {}, -- [title text] = true for every title earned
 		codes = {}, -- [CODE] = true once redeemed
 		lifetime = {}, -- [stat] = all-time count (quests, foes, attacks, goldEarned, ...)
@@ -184,7 +185,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate" } do
+	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate", "settings" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default
