@@ -26,6 +26,7 @@ local WOOD_DARK = Color3.fromRGB(80, 52, 30)
 local LEATHER = Color3.fromRGB(140, 96, 58)
 local GOLD = Color3.fromRGB(240, 196, 80)
 local INK = Color3.fromRGB(24, 18, 14)
+local SILHOUETTE = Color3.fromRGB(92, 80, 70) -- undiscovered items
 
 -- Accent colors for set pieces, by set id.
 local SET_COLORS = {
@@ -103,7 +104,7 @@ function Pen:box(x: number, y: number, w: number, h: number, color: Color3, radi
 	f.AnchorPoint = Vector2.new(0.5, 0.5)
 	f.Position = UDim2.fromOffset(x, y)
 	f.Size = UDim2.fromOffset(w, h)
-	f.BackgroundColor3 = if self.dark then INK else color
+	f.BackgroundColor3 = if self.dark then SILHOUETTE else color
 	f.BorderSizePixel = 0
 	self.z += 1
 	f.ZIndex = self.z
@@ -294,52 +295,55 @@ end
 ---------------------------------------------------------------------------
 
 local function horseHead(p, color: Color3, mane: Color3, small: boolean?)
-	local scale = if small then 0.85 else 1
-	local neck = p:box(38, 40, 16 * scale, 28 * scale, color, 4)
-	neck.Rotation = 20
-	shade(neck, 0.75)
-	local head = p:box(26, 24, 26 * scale, 14 * scale, color, 6)
-	head.Rotation = -30
+	-- Profile facing left: neck rising from the bottom right, head angled
+	-- down to the muzzle at the left.
+	local k = if small then 0.88 else 1
+	local neck = p:box(40, 44, 17 * k, 32 * k, color, 5)
+	neck.Rotation = -25
+	shade(neck, 0.7)
+	p:box(46, 38, 5, 28 * k, mane, 2).Rotation = -25
+	p:box(33, 25, 16 * k, 16 * k, color, 0.5) -- cheek
+	local head = p:box(25, 27, 30 * k, 14 * k, color, 6)
+	head.Rotation = -35
 	shade(head, 0.75)
-	p:diamond(36, 10, 6 * scale, color)
-	p:box(42, 30, 5, 22 * scale, mane, 2).Rotation = 20
-	p:box(26, 21, 3, 3, INK, 0.5)
-	p:box(16, 31, 3, 2, INK, 1)
+	p:diamond(38, 13, 6 * k, color) -- ear
+	p:box(30, 22, 3, 3, INK, 0.5) -- eye
+	p:box(15, 34, 3, 2, INK, 1) -- nostril
 	return head
 end
 
 local function horse(p, accent)
 	horseHead(p, Color3.fromRGB(140, 92, 56), Color3.fromRGB(60, 40, 26))
-	p:box(30, 28, 18, 3, accent, 1).Rotation = -30
+	p:box(21, 30, 3, 15, accent, 1).Rotation = 55
 end
 
 local function pony(p, accent)
 	horseHead(p, Color3.fromRGB(196, 170, 130), Color3.fromRGB(240, 230, 210), true)
-	p:box(30, 28, 15, 3, accent, 1).Rotation = -30
+	p:box(21, 30, 3, 13, accent, 1).Rotation = 55
 end
 
 local function mule(p, accent)
 	horseHead(p, Color3.fromRGB(130, 120, 110), Color3.fromRGB(70, 64, 58), true)
-	p:box(32, 8, 4, 12, Color3.fromRGB(130, 120, 110), 2).Rotation = -15
-	p:box(29, 28, 15, 3, accent, 1).Rotation = -30
+	p:box(42, 9, 4, 13, Color3.fromRGB(130, 120, 110), 2).Rotation = 15
+	p:box(21, 30, 3, 13, accent, 1).Rotation = 55
 end
 
 local function warhorse(p, accent)
 	horseHead(p, Color3.fromRGB(70, 60, 56), Color3.fromRGB(30, 26, 24))
-	local barding = p:box(26, 22, 16, 8, STEEL, 2)
-	barding.Rotation = -30
+	local barding = p:box(27, 24, 16, 9, STEEL, 2)
+	barding.Rotation = -35
 	shade(barding, 0.6)
-	p:box(42, 42, 14, 10, accent, 2).Rotation = 20
+	p:box(42, 48, 16, 10, accent, 2).Rotation = -25
 end
 
 local function elk(p, accent)
 	horseHead(p, Color3.fromRGB(150, 110, 70), Color3.fromRGB(110, 76, 46))
+	local bone = Color3.fromRGB(230, 214, 180)
+	p:box(44, 8, 20, 3, bone, 1).Rotation = -20 -- main beam
 	for index = 0, 2 do
-		local tine = p:box(30 + index * 6, 6 - index * 2, 2.5, 12, Color3.fromRGB(230, 214, 180), 1)
-		tine.Rotation = -20 + index * 20
+		p:box(38 + index * 6, 6 - index * 1, 2.5, 9, bone, 1).Rotation = 10
 	end
-	p:box(34, 10, 20, 2.5, Color3.fromRGB(230, 214, 180), 1).Rotation = -15
-	p:box(30, 28, 16, 3, accent, 1).Rotation = -30
+	p:box(21, 30, 3, 15, accent, 1).Rotation = 55
 end
 
 local function griffin(p, accent)

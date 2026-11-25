@@ -192,6 +192,7 @@ local function makeCard(ui, grid, entry, order: number)
 	unknown.Font = Enum.Font.GothamBlack
 	unknown.TextXAlignment = Enum.TextXAlignment.Center
 	unknown.Text = "?"
+	unknown.ZIndex = picture.ZIndex + 100 -- above the item's silhouette
 	unknown.TextStrokeTransparency = 0.4
 	local count = ui.makeText(picture, UDim2.fromOffset(0, 20), UDim2.new(1, 4, 1, 4), Color3.new(1, 1, 1), 14)
 	count.AnchorPoint = Vector2.new(1, 1)
@@ -199,6 +200,7 @@ local function makeCard(ui, grid, entry, order: number)
 	count.Font = Enum.Font.GothamBlack
 	count.TextStrokeTransparency = 0.2
 	count.TextWrapped = false
+	count.ZIndex = picture.ZIndex + 100
 
 	local name = ui.makeText(card, UDim2.new(1, -108, 0, 20), UDim2.fromOffset(100, 8), colors.text, 15)
 	name.Font = Enum.Font.GothamBold
