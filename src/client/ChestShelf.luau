@@ -1,19 +1,17 @@
--- Chest shelf at the top of the Inventory, and the chests for sale at the
--- top of the Market. Chests won or bought wait on the shelf until the player
--- opens them, one at a time (Open 1) or ten at once (Open 10). Every chest
--- has an Odds button listing what it can give.
+-- Chest shelf at the top of the Inventory. Chests won, found in the Market
+-- or bought in the Shop wait here until the player opens them, one at a
+-- time (Open 1) or ten at once (Open 10). Every chest has an Odds button
+-- listing what it can give.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
 local ChestConfig = require(Shared:WaitForChild("ChestConfig"))
-local Format = require(Shared:WaitForChild("Format"))
 
 local ChestShelf = {}
 
 local section = nil
 local cards = {} -- [chest id] = shelf widgets
-local shopCards = {} -- [chest id] = Market widgets
 local odds = {} -- the odds popup's widgets
 local oddsShown = nil -- the chest rarity the odds popup was built for
 
@@ -107,7 +105,7 @@ end
 local function chestPicture(ui, parent: Instance, chest, size: number)
 	local picture = ui.makeFrame(parent, UDim2.fromOffset(size, size), UDim2.fromOffset(8, 8), ui.colors.panel)
 	picture.BackgroundTransparency = 1
-	ui.itemArt.chest(picture, ChestConfig.rarityOf(chest), if chest.market then chest.color else nil, chest.pool == "premium")
+	ui.itemArt.chest(picture, ChestConfig.rarityOf(chest), if chest.rarity then nil else chest.color, chest.pool == "premium")
 	return picture
 end
 
@@ -144,37 +142,10 @@ local function makeSection(ui, page: Instance, order: number, title: string)
 	return holder, grid
 end
 
--- Chests for sale at the top of the Market.
-local function buildShop(ui)
-	local colors = ui.colors
-	local art = ui.art
-	local _, grid = makeSection(ui, ui.pages.Market, -5, "Chests for sale")
-	for order, chest in ChestConfig.MarketChests do
-		local card = ui.makeFrame(grid, UDim2.fromOffset(100, 100), UDim2.fromOffset(0, 0), colors.row)
-		card.LayoutOrder = order
-		ui.addCorner(card, 8)
-		art.card(card)
-		art.stroke(card, chest.color, 1.5, 0.2)
-		chestPicture(ui, card, chest, 64)
-		oddsButton(ui, card, chest.id)
-		local name = ui.makeText(card, UDim2.new(1, -84, 0, 34), UDim2.fromOffset(78, 32), chest.color, 14)
-		name.Font = Enum.Font.GothamBold
-		name.Text = chest.name
-		local note = ui.makeText(card, UDim2.new(1, -16, 0, 28), UDim2.fromOffset(8, 74), colors.dim, 11)
-		note.Text = chest.note
-		local buy = ui.makeButton(card, UDim2.new(1, -16, 0, 38), UDim2.new(0, 8, 1, -46), if chest.crowns then colors.gold else colors.buy)
-		buy.TextSize = 14
-		buy.Activated:Connect(function()
-			ui.send("ChestBuy", chest.id)
-		end)
-		shopCards[chest.id] = { buy = buy }
-	end
-end
 function ChestShelf.build(ui)
 	local colors = ui.colors
 	local art = ui.art
 	buildOdds(ui)
-	buildShop(ui)
 
 	local grid
 	section, grid = makeSection(ui, ui.pages.Inventory, -5, "Chests")
@@ -230,17 +201,6 @@ function ChestShelf.draw(state, ui)
 	end
 	section.Visible = total > 0
 	ui.setBadge("Inventory", total)
-
-	for _, chest in ChestConfig.MarketChests do
-		local widgets = shopCards[chest.id]
-		if chest.crowns then
-			local crowns = tonumber(state.crowns) or 0
-			ui.setButton(widgets.buy, `Buy  {chest.crowns} Crowns`, crowns >= chest.crowns, colors.gold)
-		else
-			local price = ChestConfig.goldPrice(chest, state.level)
-			ui.setButton(widgets.buy, `Buy  {Format.short(price)} gold`, (tonumber(state.gold) or 0) >= price, colors.buy)
-		end
-	end
 end
 
 return ChestShelf

@@ -5,6 +5,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
+local ChestConfig = require(ReplicatedStorage.Shared.ChestConfig)
 
 local Market = {}
 
@@ -96,7 +97,21 @@ function Market.roll(userId: number, window: number, playerLevel: number)
 	local random = Random.new(userId * 7919 + window * 104729 + playerLevel)
 	local items = {}
 	for _ = 1, GameConfig.MarketSize do
-		local item = Market.rollGear(random, playerLevel)
+		local item
+		if random:NextNumber() < ChestConfig.MarketChestChance then
+			-- Now and then a row is a chest instead (it goes to the Inventory).
+			local chest = ChestConfig.rollMarketChest(random)
+			item = {
+				kind = "Chest",
+				chest = chest.id,
+				name = chest.name,
+				rarity = ChestConfig.rarityOf(chest),
+				level = 1,
+				price = ChestConfig.goldPrice(chest, playerLevel),
+			}
+		else
+			item = Market.rollGear(random, playerLevel)
+		end
 		item.sold = false
 		table.insert(items, item)
 	end

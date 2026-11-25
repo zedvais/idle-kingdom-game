@@ -5,17 +5,21 @@
 --   * Rarity chests (id = a rarity, e.g. "Epic"): won from quests, foes, the
 --     token shop and rewards. Chest pool items, that rarity or better, at
 --     the Market's odds.
---   * Market chests: bought in the Market, with gold (cheap, plain items) or
---     with Crowns (Royal Coffer items, which have the best stats).
+--   * Market chests: turn up at random in the rolling Market stock, for gold.
+--   * Royal Coffers: bought in the Shop with Crowns (1, 5 or 10 at a time),
+--     with Royal Coffer items, which have the best stats.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GameConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GameConfig"))
 
 local ChestConfig = {}
 
--- Sold in the Market, in this order. `gold` prices are a number of Common
--- Market items at the player's level (so they keep up as you level);
--- `crowns` prices are flat. odds = { { rarity, weight }, ... }.
+-- Gold chests that can turn up in the rolling Market stock, in place of a
+-- piece of gear. `weight` is how often each one appears among chest rows;
+-- MarketChestChance is the chance that a Market row is a chest at all.
+-- Prices are a number of Common Market items at the stock's level, so they
+-- keep up as you level. odds = { { rarity, weight }, ... }.
+ChestConfig.MarketChestChance = 0.12
 ChestConfig.MarketChests = {
 	{
 		id = "sack",
@@ -23,6 +27,7 @@ ChestConfig.MarketChests = {
 		note = "Cheap and cheerful. Mostly plain Market gear.",
 		pool = "market",
 		goldItems = 2,
+		weight = 60,
 		odds = { { "Common", 60 }, { "Uncommon", 30 }, { "Rare", 9 }, { "Epic", 1 } },
 		color = Color3.fromRGB(150, 120, 80),
 	},
@@ -32,33 +37,60 @@ ChestConfig.MarketChests = {
 		note = "Chest gear, never Common.",
 		pool = "chest",
 		goldItems = 14,
+		weight = 30,
 		odds = { { "Uncommon", 45 }, { "Rare", 38 }, { "Epic", 14 }, { "Legendary", 3 } },
 		color = Color3.fromRGB(90, 140, 200),
 	},
 	{
-		id = "crowncask",
-		name = "Crown Cask",
-		note = "Royal gear with the strongest stats. Rare or better.",
-		pool = "premium",
-		crowns = 40,
-		odds = { { "Rare", 58 }, { "Epic", 32 }, { "Legendary", 9 }, { "Mythic", 1 } },
-		color = Color3.fromRGB(230, 180, 60),
-	},
-	{
-		id = "dragonhoard",
-		name = "Dragon Hoard",
-		note = "Royal gear, Epic or better, with a real shot at Mythic.",
-		pool = "premium",
-		crowns = 160,
-		odds = { { "Epic", 62 }, { "Legendary", 31 }, { "Mythic", 7 } },
-		color = Color3.fromRGB(220, 70, 60),
+		id = "warchest",
+		name = "Quartermaster's War Chest",
+		note = "Chest gear, Rare or better.",
+		pool = "chest",
+		goldItems = 45,
+		weight = 10,
+		odds = { { "Rare", 60 }, { "Epic", 30 }, { "Legendary", 9 }, { "Mythic", 1 } },
+		color = Color3.fromRGB(170, 90, 200),
 	},
 }
+
+-- Picks which gold chest a Market chest row holds.
+function ChestConfig.rollMarketChest(random: Random)
+	local total = 0
+	for _, chest in ChestConfig.MarketChests do
+		total += chest.weight
+	end
+	local roll = random:NextNumber(0, total)
+	for _, chest in ChestConfig.MarketChests do
+		roll -= chest.weight
+		if roll <= 0 then
+			return chest
+		end
+	end
+	return ChestConfig.MarketChests[1]
+end
 
 local byId = {}
 for _, chest in ChestConfig.MarketChests do
 	chest.market = true
 	byId[chest.id] = chest
+end
+
+-- Premium chests: the Royal Coffers from the Shop (Crowns). They go to
+-- the Inventory too, and keep their pity counter when opened.
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+ChestConfig.PremiumChests = {}
+for _, coffer in StoreConfig.Coffers do
+	local chest = {
+		id = coffer.key,
+		name = coffer.name,
+		note = `Royal gear, the strongest stats. {coffer.pityRarity} guaranteed within {coffer.pityEvery} opens.`,
+		pool = "premium",
+		odds = coffer.odds,
+		color = Color3.fromRGB(230, 180, 60),
+		coffer = coffer,
+	}
+	byId[chest.id] = chest
+	table.insert(ChestConfig.PremiumChests, chest)
 end
 
 -- Rarity chests, built from the rarities (Divine is recruits only).
@@ -87,7 +119,7 @@ function ChestConfig.get(id: string)
 	return byId[id]
 end
 
--- Every chest, rarest rarity chests first, then the Market chests.
+-- Every chest: rarity chests (rarest first), Royal Coffers, Market chests.
 function ChestConfig.all()
 	local list = {}
 	for index = #GameConfig.Rarities, 1, -1 do
@@ -95,6 +127,9 @@ function ChestConfig.all()
 		if chest then
 			table.insert(list, chest)
 		end
+	end
+	for _, chest in ChestConfig.PremiumChests do
+		table.insert(list, chest)
 	end
 	for _, chest in ChestConfig.MarketChests do
 		table.insert(list, chest)

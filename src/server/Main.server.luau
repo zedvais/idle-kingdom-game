@@ -1270,7 +1270,11 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 		end
 		return false
 	end
-	if armoryFull(data) then
+	local isChest = item.kind == "Chest"
+	if isChest and (auto or not ChestConfig.get(item.chest or "")) then
+		return false -- auto-buy never buys chests
+	end
+	if not isChest and armoryFull(data) then
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return false
 	end
@@ -1284,6 +1288,15 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 	data.gold -= price
 
 	item.sold = true
+	if isChest then
+		data.chests[item.chest] = (data.chests[item.chest] or 0) + 1
+		checkWeek(data)
+		data.weekly.market += 1
+		track(data, "market", 1)
+		sendToast(player, `You bought a {item.name}. Open it in your Inventory.`)
+		sendFx(player, "chestGot", { rarity = item.rarity, name = item.name })
+		return true
+	end
 	local owned = table.clone(item)
 	owned.sold = nil
 	local note = addGear(data, owned)
@@ -1890,7 +1903,18 @@ function actions.ChestOpen(player: Player, data, id: string)
 	local count = math.min(want, have, room)
 	local items = {}
 	for _ = 1, count do
-		local item = Market.rollGearOfRarity(random, data.level, ChestConfig.rollRarity(chest, random), chest.pool)
+		local rarityId = ChestConfig.rollRarity(chest, random)
+		local coffer = chest.coffer
+		if coffer then
+			-- Royal Coffers keep their pity counter.
+			local opens = (data.pity[coffer.key] or 0) + 1
+			if opens >= coffer.pityEvery then
+				rarityId = coffer.pityRarity
+			end
+			local pityRank = GameConfig.getRarityRank(coffer.pityRarity)
+			data.pity[coffer.key] = if GameConfig.getRarityRank(rarityId) >= pityRank then 0 else opens
+		end
+		local item = Market.rollGearOfRarity(random, data.level, rarityId, chest.pool)
 		addGear(data, item)
 		table.insert(items, { rarity = item.rarity, name = item.name, slot = item.slot })
 	end
@@ -1906,26 +1930,6 @@ function actions.ChestOpen(player: Player, data, id: string)
 	end
 	sendToast(player, if count == 1 then `{chest.name}: {best.rarity} {best.name}!` else `Opened {count} {chest.name}s. Best: {best.rarity} {best.name}!`)
 	sendFx(player, "chestOpen", { rarity = ChestConfig.rarityOf(chest), name = chest.name, items = items })
-end
-
--- Buys a Market chest (gold or Crowns). It goes to the Inventory.
-function actions.ChestBuy(player: Player, data, id: string)
-	local chest = ChestConfig.get(id or "")
-	if not chest or not chest.market then
-		return
-	end
-	if chest.crowns then
-		if not spendCrowns(player, data, chest.crowns) then
-			return
-		end
-	else
-		if not spendGold(player, data, ChestConfig.goldPrice(chest, data.level)) then
-			return
-		end
-	end
-	data.chests[chest.id] = (data.chests[chest.id] or 0) + 1
-	sendToast(player, `Bought a {chest.name}. Open it in your Inventory.`)
-	sendFx(player, "chestGot", { rarity = ChestConfig.rarityOf(chest), name = chest.name })
 end
 
 -- Auto deposit was removed; any old setting is switched off.
@@ -2264,42 +2268,22 @@ function actions.CrownBuy(player: Player, data, id: string)
 	end
 end
 
--- Opens a Royal Coffer. id is its key.
+-- Buys Royal Coffers for Crowns. id is "<key>:<count>", count 1, 5 or 10
+-- (bundles cost less each). They go to the Inventory to open later.
 function actions.Coffer(player: Player, data, id: string)
-	local coffer = StoreConfig.getCoffer(id)
-	if not coffer then
+	local key, countText = string.match(id or "", "^(%a+):(%d+)$")
+	local coffer = key and StoreConfig.getCoffer(key)
+	local count = tonumber(countText)
+	if not coffer or not count then
 		return
 	end
-	if armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
+	local cost = StoreConfig.bundleCost(coffer, count)
+	if not cost or not spendCrowns(player, data, cost) then
 		return
 	end
-	if not spendCrowns(player, data, coffer.cost) then
-		return
-	end
-
-	local pityRank = GameConfig.getRarityRank(coffer.pityRarity)
-	local opens = (data.pity[id] or 0) + 1
-	local rarityId
-	if opens >= coffer.pityEvery then
-		rarityId = coffer.pityRarity
-	else
-		local roll = random:NextNumber(0, 100)
-		rarityId = coffer.odds[#coffer.odds][1]
-		for _, pair in coffer.odds do
-			roll -= pair[2]
-			if roll <= 0 then
-				rarityId = pair[1]
-				break
-			end
-		end
-	end
-	data.pity[id] = if GameConfig.getRarityRank(rarityId) >= pityRank then 0 else opens
-
-	local item = Market.rollGearOfRarity(random, data.level, rarityId)
-	local note = addGear(data, item)
-	sendToast(player, `{coffer.name}: {item.rarity} {item.name}!{note}`)
-	sendFx(player, "gear", { rarity = item.rarity, name = item.name, slot = item.slot, source = coffer.name, crate = true, royal = true })
+	data.chests[coffer.key] = (data.chests[coffer.key] or 0) + count
+	sendToast(player, `{count} x {coffer.name} added to your Inventory.`)
+	sendFx(player, "chestGot", { rarity = coffer.odds[1][1], name = if count > 1 then `{count} x {coffer.name}` else coffer.name })
 end
 
 -- Claims Royal Pass rewards. id is a tier number, or "all".

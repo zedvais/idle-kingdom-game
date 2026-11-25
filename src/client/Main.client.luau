@@ -16,6 +16,7 @@ local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 local Art = require(script.Parent:WaitForChild("Art")) -- colors, icons and styling, all drawn in code
 local ItemArt = require(script.Parent:WaitForChild("ItemArt")) -- item pictures with rarity glows
+local ChestConfig = require(Shared:WaitForChild("ChestConfig")) -- chests (Market chest rows)
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local actionRemote = remotes:WaitForChild("Action")
@@ -1631,16 +1632,30 @@ do
 		end)
 	end
 
-	makeHeading(pages.Shop, nextOrder(), "Royal Coffers (random gear, odds shown)")
+	makeHeading(pages.Shop, nextOrder(), "Royal Coffers (best gear, odds shown, open them in your Inventory)")
 	local cofferRows = {}
-	local cofferGrid = makeGrid(pages.Shop, nextOrder(), 124, 2)
+	local cofferGrid = makeGrid(pages.Shop, nextOrder(), 132, 2)
 	for _, coffer in StoreConfig.Coffers do
-		local info, button = makeCard(cofferGrid)
+		local info, first = makeCard(cofferGrid)
 		info.RichText = true
-		cofferRows[coffer.key] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("Coffer", coffer.key)
-		end)
+		-- Buy 1, a bundle of 5 or a bundle of 10 (bundles cost less each).
+		local buttons = {}
+		for index, bundle in StoreConfig.CofferBundles do
+			local button = first
+			if index > 1 then
+				button = makeButton(info.Parent, UDim2.new(1, -16, 0, 36), UDim2.new(0, 8, 1, -42), COLOR_DISABLED)
+				button.TextSize = 12
+			end
+			local count = #StoreConfig.CofferBundles
+			button.Size = UDim2.new(1 / count, -(8 + 8 / count), 0, 40)
+			button.Position = UDim2.new((index - 1) / count, 8 - (index - 1) * 4, 1, -46)
+			button.TextSize = 12
+			buttons[index] = button
+			button.Activated:Connect(function()
+				send("Coffer", `{coffer.key}:{bundle.count}`)
+			end)
+		end
+		cofferRows[coffer.key] = { info = info, buttons = buttons }
 	end
 
 	-- Royal Pass: progress, weekly challenges, then every tier.
@@ -1747,9 +1762,13 @@ do
 			end
 			local left = coffer.pityEvery - (state.pity[coffer.key] or 0)
 			Art.progress(row.info, coffer.pityEvery - left, coffer.pityEvery, Color3.fromRGB(180, 100, 230))
-			row.info.Text = `<b>{coffer.name}</b>: one piece of gear at your level\n{table.concat(odds, "   ")}\n`
+			row.info.Text = `<b>{coffer.name}</b>: Royal gear, the strongest stats\n{table.concat(odds, "   ")}\n`
 				.. `{coffer.pityRarity} or better guaranteed within {left} opens`
-			setButton(row.button, `Open\n{coffer.cost} Crowns`, crowns >= coffer.cost, COLOR_BUY)
+			for index, bundle in StoreConfig.CofferBundles do
+				local cost = StoreConfig.bundleCost(coffer, bundle.count) or 0
+				local off = if bundle.discount > 0 then `  -{math.floor(bundle.discount * 100 + 0.5)}%` else ""
+				setButton(row.buttons[index], `x{bundle.count}{off}\n{cost} Crowns`, crowns >= cost, if bundle.discount > 0 then COLOR_CLAIM else COLOR_BUY)
+			end
 		end
 
 		-- Royal Pass
@@ -2277,8 +2296,15 @@ local function draw(state)
 		end
 		row.info.Parent.Visible = true
 		ItemArt.set(row.picture, item)
-		local needs = if state.level < item.level then `<font color="#F07060">Needs Lv {item.level}</font>` else `Lv {item.level}`
-		row.info.Text = `{rarityName(item)}  ({string.lower(item.slot)})  {needs}\n{statText(item.attack, item.defense)}`
+		local chest = if item.kind == "Chest" then ChestConfig.get(item.chest or "") else nil
+		if chest then
+			local c = chest.color
+			local hex = string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+			row.info.Text = `<font color="{hex}"><b>{chest.name}</b></font>  (chest, opens in your Inventory)\n{chest.note}`
+		else
+			local needs = if state.level < item.level then `<font color="#F07060">Needs Lv {item.level}</font>` else `Lv {item.level}`
+			row.info.Text = `{rarityName(item)}  ({string.lower(item.slot or "")})  {needs}\n{statText(item.attack or 0, item.defense or 0)}`
+		end
 		if item.sold then
 			setButton(row.button, "Sold", false, COLOR_BUY)
 		elseif state.level < item.level then

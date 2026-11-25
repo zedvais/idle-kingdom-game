@@ -14,6 +14,7 @@
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GameConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GameConfig"))
+local ChestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ChestConfig"))
 
 local ItemArt = {}
 
@@ -553,12 +554,18 @@ function ItemArt.draw(holder: GuiObject, item, hidden: boolean?)
 end
 
 -- Like draw, but does nothing when the holder already shows this item.
+-- A Market chest row ({ kind = "Chest", chest = id }) draws its chest.
 function ItemArt.set(holder: GuiObject, item, hidden: boolean?)
-	local key = `{item.slot}|{item.name}|{item.rarity}|{item.set or ""}|{hidden == true}`
+	local key = `{item.kind or ""}|{item.chest or ""}|{item.slot}|{item.name}|{item.rarity}|{item.set or ""}|{hidden == true}`
 	if holder:GetAttribute("ItemArtKey") == key then
 		return
 	end
 	holder:SetAttribute("ItemArtKey", key)
+	if item.kind == "Chest" then
+		local chest = ChestConfig.get(item.chest or "")
+		ItemArt.chest(holder, item.rarity or "Common", chest and chest.color, chest ~= nil and chest.pool == "premium")
+		return
+	end
 	ItemArt.draw(holder, item, hidden)
 end
 

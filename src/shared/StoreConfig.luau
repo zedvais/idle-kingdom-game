@@ -217,6 +217,23 @@ StoreConfig.CrownShop = {
 -- pity: every `pityEvery` opens without a `pityRarity` (or better) piece,
 -- the next one is guaranteed to be that rarity.
 
+-- Coffers are sold one at a time or in bundles; bigger bundles cost less
+-- per coffer. They go to the Inventory to open later.
+StoreConfig.CofferBundles = {
+	{ count = 1, discount = 0 },
+	{ count = 5, discount = 0.1 },
+	{ count = 10, discount = 0.2 },
+}
+
+function StoreConfig.bundleCost(coffer, count: number): number?
+	for _, bundle in StoreConfig.CofferBundles do
+		if bundle.count == count then
+			return math.floor(coffer.cost * count * (1 - bundle.discount) + 0.5)
+		end
+	end
+	return nil
+end
+
 StoreConfig.Coffers = {
 	{
 		key = "coffer",
