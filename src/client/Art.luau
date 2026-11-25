@@ -4,6 +4,8 @@
 
 local TweenService = game:GetService("TweenService")
 
+local Assets = require(script.Parent:WaitForChild("Assets"))
+
 local Art = {}
 
 ---------------------------------------------------------------------------
@@ -262,6 +264,12 @@ function Art.icon(parent: Instance, glyph: string, size: number, position: UDim2
 	label.TextColor3 = Color3.new(1, 1, 1)
 	label.Parent = parent
 	return label
+end
+
+-- Shows icon `key` on an emoji label: the uploaded art from Assets.luau
+-- when that slot is set, otherwise the emoji from Art.Icons.
+function Art.setIcon(label: TextLabel, key: string)
+	Assets.icon(label, key, Art.Icons[key] or "")
 end
 
 -- A round badge with an emoji in it, ringed in gold: page emblems and

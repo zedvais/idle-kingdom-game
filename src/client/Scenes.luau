@@ -9,6 +9,7 @@
 -- scaled to fit with a UIScale.
 
 local RunService = game:GetService("RunService")
+local Assets = require(script.Parent:WaitForChild("Assets"))
 
 local Scenes = {}
 
@@ -777,6 +778,27 @@ end
 -- Making a picture
 ---------------------------------------------------------------------------
 
+-- Uploaded art from Assets.luau, cropped to fill the holder. Nil when the
+-- slot is empty (then the picture is drawn in code).
+local function uploaded(holder: GuiObject, subgroup: string, key: any): Frame?
+	local entry = Assets.get("Pictures", key, subgroup)
+	if not entry then
+		return nil
+	end
+	local canvas = Instance.new("Frame")
+	canvas.Name = "Picture"
+	canvas.Size = UDim2.fromScale(1, 1)
+	canvas.BackgroundTransparency = 1
+	canvas.ClipsDescendants = true
+	canvas.ZIndex = holder.ZIndex
+	canvas.Parent = holder
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = canvas
+	Assets.show(canvas, entry, true)
+	return canvas
+end
+
 -- Draws a picture inside `holder`, scaled to fit its height. gate() says
 -- whether it should move right now (its page is open).
 -- `width` above 120 widens the sky and ground; the picture stays centered
@@ -866,12 +888,21 @@ end
 -- A Keep level picture (1 = Timber Hall ... 8 = Sunspire Palace).
 -- width is the canvas width (default 120, the height is always 80).
 function Scenes.keep(holder: GuiObject, level: number, gate: () -> boolean, width: (number | string)?): Frame
-	local draw = KEEPS[math.clamp(level, 1, #KEEPS)]
+	level = math.clamp(level, 1, #KEEPS)
+	local art = uploaded(holder, "keep", level)
+	if art then
+		return art
+	end
+	local draw = KEEPS[level]
 	return make(holder, draw, true, gate, width)
 end
 
 -- An Estate building picture, by building key. Nil for unknown keys.
 function Scenes.building(holder: GuiObject, key: string, gate: () -> boolean, width: (number | string)?): Frame?
+	local art = uploaded(holder, "building", key)
+	if art then
+		return art
+	end
 	local draw = BUILDINGS[key]
 	if not draw then
 		return nil
@@ -881,6 +912,10 @@ end
 
 -- A Holdings picture, by holding id. Nil for unknown ids.
 function Scenes.holding(holder: GuiObject, id: string, gate: () -> boolean, width: (number | string)?): Frame?
+	local art = uploaded(holder, "holding", id)
+	if art then
+		return art
+	end
 	local draw = HOLDINGS[id]
 	if not draw then
 		return nil

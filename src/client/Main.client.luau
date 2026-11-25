@@ -300,6 +300,7 @@ do
 		sizeLimit.MaxSize = Vector2.new(200, 100)
 		sizeLimit.Parent = chip
 		local icon = Art.icon(chip, Art.Icons[key] or "", 30, UDim2.new(0, 6, 0.5, 0))
+		Art.setIcon(icon, key)
 		icon.AnchorPoint = Vector2.new(0, 0.5)
 		local name = makeText(chip, UDim2.new(1, -46, 0, 14), UDim2.fromOffset(42, 3), color, 11)
 		name.Font = Enum.Font.GothamBold
@@ -700,7 +701,7 @@ showPage = function(name: string)
 	local groupColor = Art.GroupColors[pageGroup[name] or ""] or COLOR_SELECTED
 	headerArt.banner.BackgroundColor3 = groupColor
 	headerArt.emblem.BackgroundColor3 = groupColor
-	headerArt.glyph.Text = Art.Icons[name] or ""
+	Art.setIcon(headerArt.glyph, name)
 	for _, pageName in PAGE_NAMES do
 		pages[pageName].Visible = pageName == name
 		local selected = pageName == name
@@ -772,6 +773,7 @@ for _, group in PAGE_GROUPS do
 		railButtons[name] = button
 		do
 			local icon = Art.icon(button, Art.Icons[name] or "", 20, UDim2.new(0, -27, 0.5, 0))
+			Art.setIcon(icon, name)
 			icon.AnchorPoint = Vector2.new(0, 0.5)
 			-- A gold edge on the left of the open page's button.
 			local accent = makeFrame(button, UDim2.new(0, 4, 1, -8), UDim2.new(0, -32, 0.5, 0), COLOR_GOLD)
@@ -1465,7 +1467,7 @@ do
 		for _, modal in MODALS do
 			if modal.key == key then
 				titleLabel.Text = title or modal.title
-				titleIcon.Text = Art.Icons[key] or Art.Icons.scroll
+				Art.setIcon(titleIcon, if Art.Icons[key] then key else "scroll")
 				width = modal.width or DEFAULT_WIDTH
 				height = modal.height or DEFAULT_HEIGHT
 			end

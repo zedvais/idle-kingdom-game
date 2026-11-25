@@ -16,6 +16,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GameConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GameConfig"))
 local ChestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ChestConfig"))
 
+local Assets = require(script.Parent:WaitForChild("Assets"))
+
 local ItemArt = {}
 
 local S = 60 -- every picture is drawn on a 60 x 60 canvas
@@ -533,6 +535,17 @@ function ItemArt.draw(holder: GuiObject, item, hidden: boolean?)
 	if not hidden then
 		glow(pen, rank, rarity.color)
 	end
+	-- uploaded art (Assets.luau) replaces the drawing; the glow stays
+	local entry = Assets.get("Items", item.name or "")
+	if entry then
+		local art = Assets.show(canvas, entry, false)
+		art.ZIndex = pen.z + 1
+		if hidden then
+			art.ImageColor3 = Color3.new(0, 0, 0)
+			art.ImageTransparency = 0.3
+		end
+		return canvas
+	end
 	pen.dark = hidden == true
 	local accent = SET_COLORS[item.set or ""] or rarity.color
 	local draw = pick(item.slot or "Weapon", item.name or "")
@@ -563,6 +576,12 @@ function ItemArt.set(holder: GuiObject, item, hidden: boolean?)
 	holder:SetAttribute("ItemArtKey", key)
 	if item.kind == "Chest" then
 		local chest = ChestConfig.get(item.chest or "")
+		local entry = Assets.get("Chests", item.chest or "")
+		if entry then
+			local canvas = canvasIn(holder)
+			Assets.show(canvas, entry, false).ZIndex = holder.ZIndex + 2
+			return
+		end
 		ItemArt.chest(holder, item.rarity or "Common", chest and chest.color, chest ~= nil and chest.pool == "premium")
 		return
 	end
@@ -576,6 +595,12 @@ function ItemArt.chest(holder: GuiObject, rarityId: string, band: Color3?, crown
 	local rarity = GameConfig.getRarity(rarityId)
 	local rank = GameConfig.getRarityRank(rarity.id)
 	glow(pen, rank, rarity.color)
+	local entry = Assets.get("Chests", rarity.id)
+	if entry then
+		local art = Assets.show(canvas, entry, false)
+		art.ZIndex = pen.z + 1
+		return canvas
+	end
 	local bandColor = band or rarity.color
 	local body = pen:box(30, 38, 44, 26, WOOD, 4)
 	shade(body, 0.7)
