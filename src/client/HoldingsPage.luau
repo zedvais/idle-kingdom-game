@@ -190,7 +190,7 @@ local function landCard(ui, index: number)
 	name.TextXAlignment = Enum.TextXAlignment.Center
 	name.BackgroundTransparency = 0.15
 	name.BackgroundColor3 = Color3.fromRGB(26, 20, 16)
-	name.ZIndex = 50
+	name.ZIndex = 450
 	ui.addCorner(name, 4)
 	local namePad = Instance.new("UIPadding")
 	namePad.PaddingLeft = UDim.new(0, 10)
@@ -204,7 +204,7 @@ local function landCard(ui, index: number)
 	income.TextXAlignment = Enum.TextXAlignment.Center
 	income.BackgroundTransparency = 0.15
 	income.BackgroundColor3 = Color3.fromRGB(26, 20, 16)
-	income.ZIndex = 50
+	income.ZIndex = 450
 	ui.addCorner(income, 4)
 	local incomePad = Instance.new("UIPadding")
 	incomePad.PaddingLeft = UDim.new(0, 12)
@@ -212,11 +212,11 @@ local function landCard(ui, index: number)
 	incomePad.Parent = income
 	-- The pay cycle: fills up, then the holding pays.
 	local bar = ui.makeFrame(frame, UDim2.new(0.5, 0, 0, 8), UDim2.new(0.25, 0, 1, -16), Color3.fromRGB(20, 16, 12))
-	bar.ZIndex = 50
+	bar.ZIndex = 450
 	ui.addCorner(bar, 4)
 	ui.art.stroke(bar, Color3.fromRGB(20, 16, 12), 1.5, 0)
 	local fill = ui.makeFrame(bar, UDim2.fromScale(0, 1), UDim2.fromOffset(0, 0), GREEN)
-	fill.ZIndex = 51
+	fill.ZIndex = 451
 	ui.addCorner(fill, 4)
 	card = { frame = frame, picture = picture, name = name, income = income, bar = bar, fill = fill, stroke = stroke, id = nil }
 	frame.Activated:Connect(function()
@@ -244,36 +244,36 @@ function HoldingsPage.makeBuildingCard(ui)
 	picture.BackgroundTransparency = 1
 	local dim = ui.makeFrame(frame, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0))
 	dim.BackgroundTransparency = 0.45
-	dim.ZIndex = 60
+	dim.ZIndex = 460
 	-- Hazard tape across the top and bottom.
 	for _, y in { 0, 1 } do
 		local tape = ui.makeFrame(frame, UDim2.new(1, 0, 0, 14), UDim2.new(0, 0, y, if y == 0 then 0 else -14), Color3.fromRGB(240, 196, 60))
-		tape.ZIndex = 61
+		tape.ZIndex = 461
 		tape.ClipsDescendants = true
 		for index = 0, 40 do
 			local stripe = ui.makeFrame(tape, UDim2.fromOffset(8, 30), UDim2.fromOffset(index * 18, -8), Color3.fromRGB(30, 26, 20))
 			stripe.Rotation = 35
-			stripe.ZIndex = 62
+			stripe.ZIndex = 462
 		end
 	end
 	local name = ui.makeText(frame, UDim2.new(1, 0, 0, 24), UDim2.fromOffset(0, 24), colors.text, 17)
 	name.Font = Enum.Font.GothamBold
 	name.TextXAlignment = Enum.TextXAlignment.Center
-	name.ZIndex = 63
+	name.ZIndex = 463
 	local title = ui.makeText(frame, UDim2.new(1, 0, 0, 28), UDim2.new(0, 0, 0.5, -34), Color3.fromRGB(240, 196, 80), 22)
 	title.Font = Enum.Font.GothamBlack
 	title.TextXAlignment = Enum.TextXAlignment.Center
 	title.Text = "\u{1F6A7} UNDER CONSTRUCTION"
-	title.ZIndex = 63
+	title.ZIndex = 463
 	local time = ui.makeText(frame, UDim2.new(1, 0, 0, 30), UDim2.new(0, 0, 0.5, -4), colors.text, 26)
 	time.Font = Enum.Font.GothamBlack
 	time.TextXAlignment = Enum.TextXAlignment.Center
-	time.ZIndex = 63
+	time.ZIndex = 463
 	local bar = ui.makeFrame(frame, UDim2.new(0.7, 0, 0, 12), UDim2.new(0.15, 0, 1, -42), Color3.fromRGB(20, 16, 12))
-	bar.ZIndex = 63
+	bar.ZIndex = 463
 	ui.addCorner(bar, 5)
 	local fill = ui.makeFrame(bar, UDim2.fromScale(0, 1), UDim2.fromOffset(0, 0), Color3.fromRGB(240, 196, 80))
-	fill.ZIndex = 64
+	fill.ZIndex = 464
 	ui.addCorner(fill, 5)
 	return { frame = frame, picture = picture, name = name, time = time, fill = fill, id = nil }
 end
@@ -404,7 +404,7 @@ local function buildBuildTab(ui, page: Instance)
 				-- Darkens the card while it is locked.
 				local shade = ui.makeFrame(card, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0))
 				shade.BackgroundTransparency = 0.5
-				shade.ZIndex = 60
+				shade.ZIndex = 460
 				ui.addCorner(shade, 8)
 				buildCards[holding.id] = { card = card, stroke = stroke, income = incomeText, status = status, cost = cost, shade = shade }
 				card.Activated:Connect(function()
@@ -565,14 +565,14 @@ function HoldingsPage.demolish(ui, id: string)
 	-- Darken and sink the picture.
 	local cover = ui.makeFrame(frame, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.fromRGB(30, 24, 18))
 	cover.BackgroundTransparency = 1
-	cover.ZIndex = 70
+	cover.ZIndex = 470
 	TweenService:Create(cover, TweenInfo.new(0.9), { BackgroundTransparency = 0.25 }):Play()
 	TweenService:Create(card.picture, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.fromScale(0, 0.7) }):Play()
 	-- Dust clouds rolling out from the bottom.
 	for index = 1, 9 do
 		local puff = ui.makeFrame(frame, UDim2.fromOffset(20, 20), UDim2.new(index / 10, 0, 0.85, 0), dust)
 		puff.AnchorPoint = Vector2.new(0.5, 0.5)
-		puff.ZIndex = 72
+		puff.ZIndex = 472
 		puff.BackgroundTransparency = 0.2
 		ui.addCorner(puff, 40)
 		task.delay(0.15 + index * 0.03, function()
@@ -594,7 +594,7 @@ function HoldingsPage.demolish(ui, id: string)
 	label.TextXAlignment = Enum.TextXAlignment.Center
 	label.RichText = true
 	label.TextStrokeTransparency = 0.3
-	label.ZIndex = 75
+	label.ZIndex = 475
 	label.Text = `DEMOLISHED\n<font color="#F0C450">+{Format.short(refund)} {ui.art.Icons.gold}</font>`
 	label.TextTransparency = 1
 	TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
@@ -619,7 +619,7 @@ function HoldingsPage.pop(ui, card, amount: number)
 	label.TextXAlignment = Enum.TextXAlignment.Center
 	label.TextStrokeTransparency = 0.2
 	label.TextStrokeColor3 = Color3.fromRGB(40, 28, 12)
-	label.ZIndex = 80
+	label.ZIndex = 480
 	local shown = Format.short(math.floor(amount + 0.5))
 	label.Text = `+{shown} {ui.art.Icons.gold}`
 	local scale = Instance.new("UIScale")
