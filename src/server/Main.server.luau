@@ -12,6 +12,7 @@ local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
 local Recruit = require(script.Parent.Recruit)
+local Loadout = require(script.Parent.Loadout)
 local PlayerData = require(script.Parent.PlayerData)
 
 local AUTOSAVE_SECONDS = 60
@@ -62,68 +63,6 @@ local function skillTotal(data, skillId: string): number
 	return (data.skills[skillId] or 0) * skillById[skillId].amount
 end
 
-local function itemPower(item): number
-	return item.attack + item.defense
-end
-
--- Soldiers currently in the warband, with the slot each is in.
-local function filledSlots(data)
-	local list = {}
-	for slot, soldier in data.crew do
-		if soldier then
-			table.insert(list, { slot = slot, soldier = soldier })
-		end
-	end
-	return list
-end
-
--- Hands out gear automatically: in each gear slot, the best piece goes to
--- you, the next best to your strongest soldier, and so on.
--- Returns attack and defense from gear, the set of item ids in use, and
--- what each member wears: wearing[0] is you, wearing[slot] is a soldier.
-local function assignGear(data): (number, number, { [string]: boolean }, { [number]: { [string]: any } })
-	local members = { 0 }
-	local filled = filledSlots(data)
-	table.sort(filled, function(a, b)
-		local aAttack, aDefense = GameConfig.getSoldierStats(a.soldier)
-		local bAttack, bDefense = GameConfig.getSoldierStats(b.soldier)
-		return aAttack + aDefense > bAttack + bDefense
-	end)
-	for _, entry in filled do
-		table.insert(members, entry.slot)
-	end
-
-	local attack, defense = 0, 0
-	local used = {}
-	local wearing = {}
-	for _, member in members do
-		wearing[member] = {}
-	end
-
-	for _, gearSlot in GameConfig.GearSlots do
-		local pieces = {}
-		for _, item in data.gear do
-			if item.slot == gearSlot then
-				table.insert(pieces, item)
-			end
-		end
-		table.sort(pieces, function(a, b)
-			return itemPower(a) > itemPower(b)
-		end)
-		for index, member in members do
-			local piece = pieces[index]
-			if piece then
-				attack += piece.attack
-				defense += piece.defense
-				used[piece.uid] = true
-				wearing[member][gearSlot] = piece
-			end
-		end
-	end
-
-	return attack, defense, used, wearing
-end
-
 local function getKeepBonus(data): number
 	local keep = GameConfig.KeepLevels[data.keep] or GameConfig.KeepLevels[1]
 	return keep.bonus
@@ -138,6 +77,16 @@ local function getTrophyBonus(data)
 				total[key] += trophy[key] or 0
 			end
 		end
+	end
+	return total
+end
+
+-- Trophy bonuses plus the realm bonuses from full gear sets.
+local function getPerkBonus(data, gear)
+	local total = getTrophyBonus(data)
+	local perks = (gear or Loadout.compute(data)).perks
+	for key in total do
+		total[key] += perks[key] or 0
 	end
 	return total
 end
@@ -158,15 +107,17 @@ local function getStats(data)
 		end
 	end
 
-	local gearAttack, gearDefense = assignGear(data)
+	local gear = Loadout.compute(data)
+	local gearAttack, gearDefense = gear.attack, gear.defense
 	local crewBonus = crewSize * GameConfig.CrewSizeBonus
 	local keepBonus = getKeepBonus(data)
 	local trophyBonus = getTrophyBonus(data)
+	local perkBonus = getPerkBonus(data, gear)
 
 	local rawAttack = baseAttack + crewAttack + gearAttack
 	local rawDefense = baseDefense + crewDefense + gearDefense
-	local attack = math.floor(rawAttack * (1 + crewBonus + keepBonus + trophyBonus.attack))
-	local defense = math.floor(rawDefense * (1 + crewBonus + keepBonus + trophyBonus.defense))
+	local attack = math.floor(rawAttack * (1 + crewBonus + keepBonus + perkBonus.attack))
+	local defense = math.floor(rawDefense * (1 + crewBonus + keepBonus + perkBonus.defense))
 
 	local incomePerHour = 0
 	local lotsUsed = 0
@@ -175,7 +126,7 @@ local function getStats(data)
 		lotsUsed += count
 		incomePerHour += holding.income * count
 	end
-	incomePerHour = math.floor(incomePerHour * (1 + keepBonus + trophyBonus.income))
+	incomePerHour = math.floor(incomePerHour * (1 + keepBonus + perkBonus.income))
 
 	return {
 		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy"),
@@ -187,6 +138,7 @@ local function getStats(data)
 		crewBonus = crewBonus,
 		keepBonus = keepBonus,
 		trophyBonus = trophyBonus,
+		setBonus = gear.perks,
 		lots = GameConfig.BaseLots + skillTotal(data, "lots"),
 		lotsUsed = lotsUsed,
 		incomePerHour = incomePerHour,
@@ -263,6 +215,14 @@ local function checkTrophies(player: Player, data)
 	end
 end
 
+-- Restocks the Market when a new window starts.
+local function restockIfDue(player: Player, data)
+	local window = Market.currentWindow()
+	if data.market.window ~= window then
+		data.market = Market.roll(player.UserId, window, data.level)
+	end
+end
+
 -- Sends the player everything their menus need to draw.
 local function refresh(player: Player)
 	local session = sessions[player]
@@ -273,12 +233,15 @@ local function refresh(player: Player)
 	local stats = getStats(data)
 	local now = os.time()
 
-	-- Restock the Market when a new window starts.
-	local window = Market.currentWindow()
-	if data.market.window ~= window then
-		data.market = Market.roll(player.UserId, window, data.level)
+	restockIfDue(player, data)
+	local gearState = Loadout.compute(data)
+	local wearing = gearState.wearing
+	local gearInUse = {}
+	for _, item in data.gear do
+		if item.wornBy ~= nil then
+			gearInUse[item.uid] = true
+		end
 	end
-	local _, _, gearInUse, wearing = assignGear(data)
 
 	-- The warband as the client draws it: each slot with its soldier's
 	-- stats and gear worked out.
@@ -327,8 +290,12 @@ local function refresh(player: Player)
 		yourGear = wearing[0] or {},
 		gear = data.gear,
 		gearInUse = gearInUse,
+		gearSets = gearState.sets,
+		fullSets = gearState.fullSets,
+		autoEquipNew = data.autoEquipNew,
 		market = data.market.items,
 		marketRestock = Market.secondsUntilRestock(),
+		marketWindow = data.market.window,
 		tokens = data.tokens,
 		highestStage = data.highestStage,
 		stageHealth = data.stageHealth,
@@ -385,17 +352,43 @@ local function spendGold(player: Player, data, cost: number): boolean
 	return true
 end
 
+-- Who a member is, for messages.
+local function memberName(data, member: number?): string
+	if member == 0 then
+		return "you"
+	end
+	local soldier = member and data.crew[member]
+	return if soldier then soldier.name else "nobody"
+end
+
+-- Adds a new item to the armory. If "New gear fills empty slots" is on, it
+-- goes straight onto the first person with that slot empty.
+-- Returns a short note about who wears it, for the toast.
+local function addGear(data, item): string
+	item.uid = "i" .. data.nextItemId
+	data.nextItemId += 1
+	table.insert(data.gear, item)
+	if data.autoEquipNew then
+		local member = Loadout.fillEmpty(data, item)
+		if member ~= nil then
+			return if member == 0 then " You put it on." else ` {memberName(data, member)} put it on.`
+		end
+	end
+	return ""
+end
+
 -- Gives the player a rolled piece of gear (quest drops and chests).
-local function giveGear(player: Player, data, minRank: number?, source: string)
+-- Pass `set` for a piece of a gear set.
+local function giveGear(player: Player, data, minRank: number?, source: string, set: any?)
 	if #data.gear >= GameConfig.MaxGearOwned then
 		sendToast(player, `{source}, but your armory is full. Sell some gear to make room.`)
 		return
 	end
-	local item = Market.rollGear(random, data.level, minRank)
-	item.uid = "i" .. data.nextItemId
-	data.nextItemId += 1
-	table.insert(data.gear, item)
-	sendToast(player, `{source}: {item.rarity} {item.name}!`)
+	local item = if set
+		then Market.rollSetPiece(random, data.level, set, minRank or 1)
+		else Market.rollGear(random, data.level, minRank)
+	local note = addGear(data, item)
+	sendToast(player, `{source}: {item.rarity} {item.name}!{note}`)
 end
 
 ---------------------------------------------------------------------------
@@ -417,7 +410,7 @@ function actions.Quest(player: Player, data, id: string)
 	local completions = data.quests[id] or 0
 	local rankBefore = GameConfig.getMasteryRank(completions)
 
-	local trophyBonus = getTrophyBonus(data)
+	local trophyBonus = getPerkBonus(data)
 	data.energy -= quest.energy
 	data.gold += math.floor(GameConfig.getQuestGold(quest, completions) * (1 + trophyBonus.questGold))
 	data.quests[id] = completions + 1
@@ -669,12 +662,12 @@ function actions.Release(player: Player, data, id: string)
 	local slot = tonumber(id)
 	local soldier = slot and data.crew[slot]
 	if soldier then
+		Loadout.clearMember(data, slot)
 		data.crew[slot] = false
-		sendToast(player, `{soldier.name} left the warband.`)
+		sendToast(player, `{soldier.name} left the warband. Their gear is back in your armory.`)
 	end
 end
 
--- Buys item number `id` ("1" to "8") from the Market.
 -- Buys a Market item. `auto` is true when auto-buy does it, which keeps
 -- its messages short.
 local function buyItem(player: Player, data, item, auto: boolean): boolean
@@ -699,17 +692,29 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 	item.sold = true
 	local owned = table.clone(item)
 	owned.sold = nil
-	owned.uid = "i" .. data.nextItemId
-	data.nextItemId += 1
-
-	table.insert(data.gear, owned)
-	sendToast(player, `{if auto then "Auto-buy got" else "You bought"} a {owned.rarity} {owned.name}.`)
+	local note = addGear(data, owned)
+	sendToast(player, `{if auto then "Auto-buy got" else "You bought"} a {owned.rarity} {owned.name}.{note}`)
 	return true
 end
 
+-- Buys one Market offer. id is "<window>:<row>", for example "5902211:4":
+-- the restock window the player was looking at, then the row they clicked.
+-- If the stock has restocked since then, the row now holds a different item
+-- at a different price, so the request is turned down before any gold is
+-- taken, and the refresh that follows shows the player the new stock.
 function actions.Buy(player: Player, data, id: string)
-	local index = tonumber(id)
-	local item = index and data.market.items[index]
+	local windowText, rowText = string.match(id, "^(%d+):(%d+)$")
+	local window = tonumber(windowText)
+	local index = tonumber(rowText)
+	if not window or not index then
+		return
+	end
+	restockIfDue(player, data)
+	if window ~= data.market.window then
+		sendToast(player, "The Market just restocked, so nothing was bought. Check the new stock.")
+		return
+	end
+	local item = data.market.items[index]
 	if item and not item.sold then
 		buyItem(player, data, item, false)
 	end
@@ -719,6 +724,10 @@ end
 function actions.Sell(player: Player, data, id: string)
 	for index, item in data.gear do
 		if item.uid == id then
+			if item.wornBy ~= nil then
+				sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} before selling it.`)
+				return
+			end
 			table.remove(data.gear, index)
 			local refund = math.floor(item.price * GameConfig.SellShare)
 			data.gold += refund
@@ -774,6 +783,18 @@ function actions.Fight(player: Player, data, id: string)
 		if stage.chest then
 			giveGear(player, data, GameConfig.getRarityRank(stage.chest), `{stage.chest} chest from {stage.name}`)
 		end
+		local set = GameConfig.getHouseSet(stage.house)
+		if set and random:NextNumber() < GameConfig.SetDropChance then
+			-- Each house's set starts one rarity below its chest.
+			local house = nil
+			for _, candidate in GameConfig.Houses do
+				if candidate.id == stage.house then
+					house = candidate
+				end
+			end
+			local minRank = math.max(1, GameConfig.getRarityRank(house and house.chest or "Common") - 1)
+			giveGear(player, data, minRank, `{set.name} set piece from {stage.name}`, set)
+		end
 		return
 	end
 	data.stageHealth[id] = health
@@ -825,6 +846,50 @@ function actions.TokenBuy(player: Player, data, id: string)
 	elseif item.kind == "chest" then
 		giveGear(player, data, GameConfig.getRarityRank(item.rarity), `{item.name} opened`)
 	end
+end
+
+-- Puts a piece of gear on someone. id is "<item uid>:<member>", where
+-- member 0 is you and 1 and up is a warband slot, for example "i42:0".
+function actions.Equip(player: Player, data, id: string)
+	local uid, memberText = string.match(id, "^(i%d+):(%d+)$")
+	local member = tonumber(memberText)
+	if not uid or not member then
+		return
+	end
+	local item = Loadout.findItem(data, uid)
+	local before = item and item.wornBy
+	local ok, result = Loadout.equip(data, uid, member)
+	if not ok then
+		sendToast(player, result)
+		return
+	end
+	local who = if member == 0 then "You now wear" else `{memberName(data, member)} now wears`
+	local extra = ""
+	if before ~= nil and before ~= member then
+		extra = ` (taken from {memberName(data, before)})`
+	elseif result then
+		extra = `. The {result.name} is spare now`
+	end
+	sendToast(player, `{who} the {item.rarity} {item.name}{extra}.`)
+end
+
+-- Takes a piece of gear off. id is the item uid.
+function actions.Unequip(player: Player, data, id: string)
+	local item = Loadout.findItem(data, id)
+	if item and Loadout.unequip(data, id) then
+		sendToast(player, `The {item.name} is spare now.`)
+	end
+end
+
+-- Equip best: hands out every piece by strength. Sets are not considered.
+function actions.EquipBest(player: Player, data)
+	Loadout.autoEquip(data)
+	sendToast(player, "Everyone now wears the strongest gear you own. Set bonuses were not considered.")
+end
+
+-- Turns "new gear fills empty slots" on or off.
+function actions.EquipNew(player: Player, data, id: string)
+	data.autoEquipNew = id == "on"
 end
 
 -- Auto quests: "on" or "off". They repeat the last quest you did.
@@ -888,6 +953,7 @@ local function runAutoBuy(player: Player, data)
 	if not rule.on then
 		return
 	end
+	restockIfDue(player, data)
 	local minRank = GameConfig.getRarityRank(rule.minRarity)
 	for _, item in data.market.items do
 		local wanted = not item.sold
@@ -988,6 +1054,14 @@ local function onPlayerAdded(player: Player)
 	if not canSave and not RunService:IsStudio() then
 		sendToast(player, "Could not load your save. Progress in this visit will not be kept.")
 	end
+
+	-- Saves from before manual equipping: dress everyone in their best gear
+	-- once, so nobody's stats drop.
+	if not data.equipReady then
+		Loadout.autoEquip(data)
+		data.equipReady = true
+	end
+	Loadout.tidy(data)
 
 	applyTimeAway(player, data)
 

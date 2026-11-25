@@ -502,11 +502,17 @@ end
 -- Market: a fixed number of rows that are refilled each restock.
 local marketSummary = makeRow(pages.Market, nextOrder(), 50, false)
 local marketRows = {}
+-- The restock window of the stock on screen, set each time the Market is drawn.
+local marketWindowShown: number? = nil
 for index = 1, GameConfig.MarketSize do
 	local row = makeItemRow(pages.Market, nextOrder())
 	marketRows[index] = row
 	row.button.Activated:Connect(function()
-		send("Buy", tostring(index))
+		-- Send which stock the player is looking at with the row, so a click
+		-- that reaches the server after a restock can't buy the new item.
+		if marketWindowShown then
+			send("Buy", `{marketWindowShown}:{index}`)
+		end
 	end)
 end
 
@@ -573,21 +579,80 @@ autoRollButton.Activated:Connect(function()
 	openRecruitWindow(0)
 end)
 
-local function gearLine(item): string
+-- How many pieces of each set one member wears: { [setId] = count }.
+-- member 0 is you, 1 and up is a warband slot.
+local function memberSetCounts(state, member: number)
+	local counts = {}
+	local list = state.gearSets and state.gearSets[tostring(member)]
+	if list then
+		for _, entry in list do
+			counts[entry.set] = entry.count
+		end
+	end
+	return counts
+end
+
+-- A green tag naming an item's set, with the bonus it gets on its wearer.
+local function setTag(item, counts): string
+	local set = item and GameConfig.getGearSet(item.set)
+	if not set then
+		return ""
+	end
+	local count = counts and counts[item.set] or 0
+	local bonus = GameConfig.SetPieceBonus[count]
+	local bonusText = if bonus then ` {count}/{GameConfig.SetPieceCount} +{math.floor(bonus * 100 + 0.5)}%` else ""
+	return ` <font color="#9FD49A">[{set.name}{bonusText}]</font>`
+end
+
+-- The realm bonus of a full set, as text: "+5% quest gold".
+local function perkText(perk): string
+	local parts = {}
+	for _, pair in GameConfig.TrophyBonusNames do
+		local amount = perk[pair[1]]
+		if amount then
+			table.insert(parts, `+{math.floor(amount * 100 + 0.5)}% {pair[2]}`)
+		end
+	end
+	return table.concat(parts, ", ")
+end
+
+-- Who a member is: "You" or the soldier's name.
+local function memberLabel(state, member: number?): string
+	if member == 0 then
+		return "You"
+	end
+	local soldier = member and state.crew[member]
+	return if soldier then soldier.name else "Nobody"
+end
+
+-- One worn piece for a Warband row. Kept short so it fits on one line;
+-- the Gear window shows full stats.
+local function gearLine(item, counts): string
 	if not item then
 		return `<font color="#7F847E">empty</font>`
 	end
-	return `{rarityName(item)} ({statText(item.attack, item.defense)})`
+	return `{rarityName(item)} Lv {item.level}{setTag(item, counts)}`
 end
+
+local openEquipWindow -- defined further down, with the equip window
+
+local equipButtons = makeButtonRow(pages.Warband, nextOrder(), "Gear", { "Equip best", "New gear" }, 70)
+equipButtons[1].Activated:Connect(function()
+	send("EquipBest")
+end)
+local equipNewOn = true
+equipButtons[2].Activated:Connect(function()
+	send("EquipNew", if equipNewOn then "off" else "on")
+end)
 
 local function makeCrewRow(order: number)
 	local row = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 76), UDim2.fromOffset(0, 0), COLOR_ROW)
 	row.LayoutOrder = order
 	addCorner(row, 6)
 
-	local info = makeText(row, UDim2.new(0.34, -10, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 13)
+	local info = makeText(row, UDim2.new(0.3, -10, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 13)
 	info.RichText = true
-	local gearText = makeText(row, UDim2.new(0.66, -250, 1, -8), UDim2.new(0.34, 0, 0, 4), COLOR_DIM, 12)
+	local gearText = makeText(row, UDim2.new(0.7, -306, 1, -8), UDim2.new(0.3, 0, 0, 4), COLOR_DIM, 12)
 	gearText.RichText = true
 
 	local function button(width: number, offset: number): TextButton
@@ -599,14 +664,21 @@ local function makeCrewRow(order: number)
 	local release = button(60, -6)
 	local roll = button(70, -70)
 	local train = button(98, -144)
+	local gear = button(56, -246)
 
-	return { frame = row, info = info, gearText = gearText, train = train, roll = roll, release = release }
+	return { frame = row, info = info, gearText = gearText, train = train, roll = roll, release = release, gear = gear }
 end
 
 local youRow = makeCrewRow(nextOrder())
 youRow.train.Visible = false
 youRow.roll.Visible = false
 youRow.release.Visible = false
+-- The you row has only the Gear button, so it sits on the right.
+youRow.gear.Position = UDim2.new(1, -6, 0.5, 0)
+youRow.gearText.Size = UDim2.new(0.7, -76, 1, -8)
+youRow.gear.Activated:Connect(function()
+	openEquipWindow(0)
+end)
 
 local crewRows = {}
 for slot = 1, GameConfig.MaxSoldierSlots do
@@ -621,6 +693,9 @@ for slot = 1, GameConfig.MaxSoldierSlots do
 	row.release.Activated:Connect(function()
 		send("Release", tostring(slot))
 	end)
+	row.gear.Activated:Connect(function()
+		openEquipWindow(slot)
+	end)
 end
 
 local lockedInfo, unlockButton = makeRow(pages.Warband, nextOrder(), 56, true)
@@ -629,7 +704,7 @@ unlockButton.Activated:Connect(function()
 end)
 
 -- Inventory: tabs for gear by slot and for trophies, and a rarity filter.
-local INVENTORY_TABS = { "All", "Weapon", "Armor", "Mount", "Trophies" }
+local INVENTORY_TABS = { "All", "Weapon", "Armor", "Mount", "Sets", "Trophies" }
 local inventoryTab = "All"
 local inventoryRarity = 0 -- 0 shows every rarity, otherwise the lowest rank shown
 local redraw -- draws the last state again; defined after draw()
@@ -655,6 +730,14 @@ for _, trophy in GameConfig.Trophies do
 	info.RichText = true
 	button.AutoButtonColor = false
 	trophyRows[trophy.id] = { info = info, button = button }
+end
+local setRows = {}
+for _, set in GameConfig.GearSets do
+	local info, button = makeRow(pages.Inventory, nextOrder(), 70, true)
+	info.RichText = true
+	info.TextSize = 13
+	button.AutoButtonColor = false
+	setRows[set.id] = { info = info, button = button }
 end
 local gearRows = {}
 for index = 1, GameConfig.MaxGearOwned do
@@ -866,6 +949,7 @@ local function draw(state)
 		.. `Deposit fee {math.floor(GameConfig.BankFee * 100)}%`
 
 	-- Market
+	marketWindowShown = state.marketWindow
 	marketSummary.Text = `New stock in {formatClock(state.marketRestock)}\nItems roll around your level. Rarer items are stronger and cost more.`
 	for index, row in marketRows do
 		local item = state.market[index]
@@ -914,8 +998,14 @@ local function draw(state)
 	warbandSummary.Text = `Soldiers {stats.crewSize} / {#crew}   |   Attack {Format.short(stats.attack)}   |   Defense {Format.short(stats.defense)}\n`
 		.. `Warband size bonus +{math.floor(stats.crewBonus * 100 + 0.5)}% attack and defense`
 
+	equipNewOn = state.autoEquipNew == true
+	setButton(equipButtons[1], "Equip best", true, COLOR_BUY)
+	setButton(equipButtons[2], if equipNewOn then "New gear: put on" else "New gear: keep spare", true, COLOR_SELECTED)
+
 	youRow.info.Text = `<b>You</b>, leader\nAttack {GameConfig.BaseAttack + (state.skills.attack or 0)}, defense {GameConfig.BaseDefense + (state.skills.defense or 0)} before gear`
-	youRow.gearText.Text = `Weapon: {gearLine(state.yourGear.Weapon)}\nArmor: {gearLine(state.yourGear.Armor)}\nMount: {gearLine(state.yourGear.Mount)}`
+	local youCounts = memberSetCounts(state, 0)
+	youRow.gearText.Text = `Weapon: {gearLine(state.yourGear.Weapon, youCounts)}\nArmor: {gearLine(state.yourGear.Armor, youCounts)}\nMount: {gearLine(state.yourGear.Mount, youCounts)}`
+	setButton(youRow.gear, "Gear", true, COLOR_SELECTED)
 
 	for slot, row in crewRows do
 		local soldier = crew[slot]
@@ -926,7 +1016,10 @@ local function draw(state)
 		if soldier then
 			local rank = if soldier.train > 0 then ` +{soldier.train}` else ""
 			row.info.Text = `{rarityName({ rarity = soldier.rarity, name = soldier.class })}{rank}\n{soldier.name}, {soldier.tier} recruit\n{statText(soldier.attack, soldier.defense)}`
-			row.gearText.Text = `Weapon: {gearLine(soldier.gear.Weapon)}\nArmor: {gearLine(soldier.gear.Armor)}\nMount: {gearLine(soldier.gear.Mount)}`
+			local counts = memberSetCounts(state, slot)
+			row.gearText.Text = `Weapon: {gearLine(soldier.gear.Weapon, counts)}\nArmor: {gearLine(soldier.gear.Armor, counts)}\nMount: {gearLine(soldier.gear.Mount, counts)}`
+			row.gear.Visible = true
+			setButton(row.gear, "Gear", true, COLOR_SELECTED)
 			row.train.Visible = true
 			if soldier.train >= GameConfig.MaxTrainRank then
 				setButton(row.train, "Fully trained", false, COLOR_BUY)
@@ -941,6 +1034,7 @@ local function draw(state)
 			row.gearText.Text = ""
 			row.train.Visible = false
 			row.release.Visible = false
+			row.gear.Visible = false
 			setButton(row.roll, "Recruit", true, COLOR_ACTION)
 		end
 	end
@@ -960,10 +1054,11 @@ local function draw(state)
 
 	-- Inventory
 	for index, tab in INVENTORY_TABS do
-		setButton(tabButtons[index], if tab == "Trophies" then tab else (if tab == "All" then "All gear" else tab .. "s"), tab == inventoryTab, COLOR_SELECTED)
+		setButton(tabButtons[index], if tab == "Trophies" or tab == "Sets" then tab else (if tab == "All" then "All gear" else tab .. "s"), tab == inventoryTab, COLOR_SELECTED)
 	end
 	local showTrophies = inventoryTab == "Trophies"
-	filterInfo.Parent.Visible = not showTrophies
+	local showSets = inventoryTab == "Sets"
+	filterInfo.Parent.Visible = not showTrophies and not showSets
 	local filterRarity = GameConfig.Rarities[inventoryRarity]
 	filterInfo.Text = if filterRarity then `Showing {filterRarity.id} and rarer` else "Showing every rarity"
 	setButton(filterButton, "Change rarity", true, COLOR_SELECTED)
@@ -990,19 +1085,60 @@ local function draw(state)
 		row.button.TextColor3 = if earned then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
 	end
 
-	if showTrophies then
+	-- Sets: which pieces you own, and whether anyone wears the full set.
+	local ownedNames = {}
+	for _, item in state.gear do
+		if item.set then
+			ownedNames[item.name] = true
+		end
+	end
+	for _, set in GameConfig.GearSets do
+		local row = setRows[set.id]
+		row.info.Parent.Visible = showSets
+		local house = "a foe house"
+		for _, candidate in GameConfig.Houses do
+			if candidate.id == set.house then
+				house = candidate.name
+			end
+		end
+		local have, missing = {}, {}
+		for _, slot in GameConfig.GearSlots do
+			local name = set.pieces[slot]
+			table.insert(if ownedNames[name] then have else missing, name)
+		end
+		local two = math.floor(GameConfig.SetPieceBonus[2] * 100 + 0.5)
+		local three = math.floor(GameConfig.SetPieceBonus[3] * 100 + 0.5)
+		row.info.Text = `<b>{set.name}</b>   <font color="#9FD49A">Full set: {perkText(set.perk)}</font>\n`
+			.. `Drops from {house}. One person wearing 2 pieces: +{two}% on them, all 3: +{three}%.\n`
+			.. `Owned: {if #have > 0 then table.concat(have, ", ") else "none"}`
+			.. (if #missing > 0 and #have > 0 then `   <font color="#7F847E">Missing: {table.concat(missing, ", ")}</font>` else "")
+		local full = state.fullSets and state.fullSets[set.id] == true
+		setButton(row.button, if full then "Worn in full" else (if #missing == 0 then "Owned" else `{#have} / {GameConfig.SetPieceCount}`), full, COLOR_GOLD)
+		row.button.TextColor3 = if full then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
+	end
+
+	if showSets then
+		local bonus = stats.setBonus or {}
+		local active = perkText(bonus)
+		armorySummary.Text = `Gear sets. Wear all {GameConfig.SetPieceCount} pieces of a set on one person to switch on its bonus for your whole realm. `
+			.. `Equip set pieces by hand with the Gear button on the Warband page. Now: {if active ~= "" then active else "no full sets worn"}`
+	elseif showTrophies then
 		local bonus = stats.trophyBonus
 		armorySummary.Text = `Trophies {earnedCount} / {#GameConfig.Trophies}. Their bonuses never go away.   Now: `
 			.. `+{math.floor(bonus.attack * 100 + 0.5)}% attack, +{math.floor(bonus.defense * 100 + 0.5)}% defense, `
 			.. `+{math.floor(bonus.income * 100 + 0.5)}% income, +{math.floor(bonus.xp * 100 + 0.5)}% quest XP, +{math.floor(bonus.questGold * 100 + 0.5)}% quest gold`
 	else
-		armorySummary.Text = `Gear {#state.gear} / {GameConfig.MaxGearOwned}. Your best weapon, armor and mount are used automatically, `
-			.. `one each for you and every soldier, strongest soldier first. Buy gear in the Market.`
+		local wornCount = 0
+		for _ in state.gearInUse do
+			wornCount += 1
+		end
+		armorySummary.Text = `Gear {#state.gear} / {GameConfig.MaxGearOwned}, {wornCount} worn. Gear only counts while someone wears it. `
+			.. `Use the Gear buttons on the Warband page, or Equip best there. Take gear off before selling it.`
 	end
 	local gear = {}
 	for _, item in state.gear do
 		local slotMatches = inventoryTab == "All" or item.slot == inventoryTab
-		if not showTrophies and slotMatches and GameConfig.getRarityRank(item.rarity) >= math.max(1, inventoryRarity) then
+		if not showTrophies and not showSets and slotMatches and GameConfig.getRarityRank(item.rarity) >= math.max(1, inventoryRarity) then
 			table.insert(gear, item)
 		end
 	end
@@ -1018,9 +1154,15 @@ local function draw(state)
 		row.uid = if item then item.uid else nil
 		row.info.Parent.Visible = item ~= nil
 		if item then
-			local status = if state.gearInUse[item.uid] then "In use" else "Spare"
-			row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}   |   {status}`
-			setButton(row.button, `Sell\n+{Format.short(item.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
+			local worn = item.wornBy ~= nil
+			local status = if worn then `Worn by {memberLabel(state, item.wornBy)}` else "Spare"
+			local counts = if worn then memberSetCounts(state, item.wornBy) else nil
+			row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)}){setTag(item, counts)}\n{statText(item.attack, item.defense)}   |   {status}`
+			if worn then
+				setButton(row.button, "Worn", false, COLOR_ACTION)
+			else
+				setButton(row.button, `Sell\n+{Format.short(item.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
+			end
 		end
 	end
 
@@ -1095,9 +1237,12 @@ redraw = function()
 	end
 end
 
+local refreshEquipWindow -- defined further down, with the equip window
+
 stateRemote.OnClientEvent:Connect(function(state)
 	draw(state)
 	refreshRecruitWindow()
+	refreshEquipWindow()
 end)
 
 ---------------------------------------------------------------------------
@@ -1307,6 +1452,229 @@ startButton.Activated:Connect(function()
 	local rarity = GameConfig.Rarities[chosenRarity]
 	send("Roll", `{math.max(recruitSlot, 1)}:{tier.id}:{rarity.id}:{chosenScope}`)
 end)
+
+---------------------------------------------------------------------------
+-- Equip window: pick what one member wears
+---------------------------------------------------------------------------
+
+local equipGui = Instance.new("ScreenGui")
+equipGui.Name = "KingdomEquip"
+equipGui.DisplayOrder = 5
+equipGui.ResetOnSpawn = false
+equipGui.Enabled = false
+equipGui.Parent = playerGui
+
+local equipShade = makeFrame(equipGui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(0, 0, 0))
+equipShade.BackgroundTransparency = 0.45
+
+local EQUIP_WIDTH, EQUIP_HEIGHT = 580, 480
+local equipWindow = makeFrame(equipGui, UDim2.fromOffset(EQUIP_WIDTH, EQUIP_HEIGHT), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
+equipWindow.AnchorPoint = Vector2.new(0.5, 0.5)
+addCorner(equipWindow, 10)
+local equipStroke = Instance.new("UIStroke")
+equipStroke.Color = COLOR_HEADER
+equipStroke.Thickness = 1.5
+equipStroke.Parent = equipWindow
+local equipScale = Instance.new("UIScale")
+equipScale.Parent = equipWindow
+
+local equipTitle = makeText(equipWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
+equipTitle.Font = Enum.Font.GothamBold
+equipTitle.Text = "GEAR"
+
+local equipClose = makeButton(equipWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
+equipClose.Text = "X"
+equipClose.TextSize = 18
+equipClose.Activated:Connect(function()
+	equipGui.Enabled = false
+end)
+
+local equipWho = makeText(equipWindow, UDim2.new(1, -32, 0, 36), UDim2.fromOffset(16, 46), COLOR_TEXT, 13)
+equipWho.RichText = true
+
+-- One box per gear slot: what is worn there, and a Take off button.
+-- Clicking a box lists the pieces you own for that slot.
+local equipMember = 0 -- 0 is you, 1 and up is a warband slot
+local equipSlot = "Weapon"
+local slotBoxes = {}
+for index, gearSlot in GameConfig.GearSlots do
+	local columns = #GameConfig.GearSlots
+	local box = makeButton(
+		equipWindow,
+		UDim2.new(1 / columns, -8 - 32 / columns, 0, 74),
+		UDim2.new((index - 1) / columns, 20 - 32 * (index - 1) / columns, 0, 88),
+		COLOR_ROW
+	)
+	box.AutoButtonColor = true
+	local label = makeText(box, UDim2.new(1, -12, 1, -8), UDim2.fromOffset(6, 4), COLOR_TEXT, 12)
+	label.RichText = true
+	label.TextYAlignment = Enum.TextYAlignment.Top
+	local takeOff = makeButton(
+		equipWindow,
+		UDim2.new(1 / columns, -8 - 32 / columns, 0, 26),
+		UDim2.new((index - 1) / columns, 20 - 32 * (index - 1) / columns, 0, 166),
+		COLOR_DISABLED
+	)
+	takeOff.TextSize = 12
+	slotBoxes[gearSlot] = { box = box, label = label, takeOff = takeOff, uid = nil }
+	box.Activated:Connect(function()
+		equipSlot = gearSlot
+		refreshEquipWindow()
+	end)
+	takeOff.Activated:Connect(function()
+		local uid = slotBoxes[gearSlot].uid
+		if uid then
+			send("Unequip", uid)
+		end
+	end)
+end
+
+local listLabel = makeText(equipWindow, UDim2.new(1, -32, 0, 18), UDim2.fromOffset(16, 200), COLOR_DIM, 12)
+listLabel.Font = Enum.Font.GothamBold
+
+local equipList = Instance.new("ScrollingFrame")
+equipList.Position = UDim2.fromOffset(16, 222)
+equipList.Size = UDim2.new(1, -32, 1, -234)
+equipList.BackgroundTransparency = 1
+equipList.BorderSizePixel = 0
+equipList.ScrollBarThickness = 6
+equipList.CanvasSize = UDim2.new(0, 0, 0, 0)
+equipList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+equipList.Parent = equipWindow
+local equipLayout = Instance.new("UIListLayout")
+equipLayout.Padding = UDim.new(0, 4)
+equipLayout.SortOrder = Enum.SortOrder.LayoutOrder
+equipLayout.Parent = equipList
+
+local emptyNote = makeText(equipList, UDim2.new(1, -10, 0, 40), UDim2.fromOffset(0, 0), COLOR_DIM, 13)
+emptyNote.LayoutOrder = 0
+emptyNote.Text = "You own nothing for this slot yet. Buy gear in the Market or win it from quests and foes."
+
+local equipRows = {}
+for index = 1, GameConfig.MaxGearOwned do
+	local row = makeFrame(equipList, UDim2.new(1, -10, 0, 46), UDim2.fromOffset(0, 0), COLOR_ROW)
+	row.LayoutOrder = index
+	addCorner(row, 6)
+	local info = makeText(row, UDim2.new(1, -110, 1, -6), UDim2.fromOffset(8, 3), COLOR_TEXT, 12)
+	info.RichText = true
+	local button = makeButton(row, UDim2.fromOffset(90, 34), UDim2.new(1, -6, 0.5, 0), COLOR_DISABLED)
+	button.AnchorPoint = Vector2.new(1, 0.5)
+	button.TextSize = 12
+	local entry = { frame = row, info = info, button = button, uid = nil, usable = false }
+	equipRows[index] = entry
+	button.Activated:Connect(function()
+		if entry.uid and entry.usable then
+			send("Equip", `{entry.uid}:{equipMember}`)
+		end
+	end)
+end
+
+function refreshEquipWindow()
+	if not equipGui.Enabled or not lastState then
+		return
+	end
+	local state = lastState
+
+	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+	equipScale.Scale = math.min(1, (viewport.X - 20) / EQUIP_WIDTH, (viewport.Y - 20) / EQUIP_HEIGHT)
+
+	-- The soldier may have been released while the window was open.
+	local soldier = if equipMember > 0 then state.crew[equipMember] else nil
+	if equipMember > 0 and not soldier then
+		equipGui.Enabled = false
+		return
+	end
+	local wearing = if equipMember == 0 then state.yourGear else soldier.gear
+	local counts = memberSetCounts(state, equipMember)
+
+	-- Header: who, and any set bonuses they have going.
+	local setParts = {}
+	for setId, count in counts do
+		local set = GameConfig.getGearSet(setId)
+		local bonus = GameConfig.SetPieceBonus[count]
+		if set and bonus then
+			local full = if count >= GameConfig.SetPieceCount then `, realm {perkText(set.perk)}` else ""
+			table.insert(setParts, `{set.name} {count}/{GameConfig.SetPieceCount}: +{math.floor(bonus * 100 + 0.5)}% on those pieces{full}`)
+		end
+	end
+	local setLine = if #setParts > 0
+		then `<font color="#9FD49A">{table.concat(setParts, "   ")}</font>`
+		else `<font color="#7F847E">No set bonus. Wear 2 or 3 pieces of one set to get one.</font>`
+	if equipMember == 0 then
+		equipTitle.Text = "YOUR GEAR"
+		equipWho.Text = `<b>You</b>, leader\n{setLine}`
+	else
+		equipTitle.Text = string.upper(`{soldier.name}'s gear`)
+		equipWho.Text = `{rarityName({ rarity = soldier.rarity, name = soldier.class })}  {soldier.name}, slot {equipMember}\n{setLine}`
+	end
+
+	for _, gearSlot in GameConfig.GearSlots do
+		local box = slotBoxes[gearSlot]
+		local item = wearing[gearSlot]
+		box.uid = if item then item.uid else nil
+		box.box.BackgroundColor3 = if gearSlot == equipSlot then COLOR_SELECTED else COLOR_ROW
+		if item then
+			box.label.Text = `<b>{string.upper(gearSlot)}</b>\n{rarityName(item)} Lv {item.level}\n{statText(item.attack, item.defense)}{setTag(item, counts)}`
+			setButton(box.takeOff, "Take off", true, COLOR_ACTION)
+		else
+			box.label.Text = `<b>{string.upper(gearSlot)}</b>\n<font color="#7F847E">empty</font>`
+			setButton(box.takeOff, "Nothing worn", false, COLOR_ACTION)
+		end
+	end
+
+	-- Every piece you own for the chosen slot, strongest first. Pieces of
+	-- a set this member already wears come first among equals.
+	local pieces = {}
+	for _, item in state.gear do
+		if item.slot == equipSlot then
+			table.insert(pieces, item)
+		end
+	end
+	table.sort(pieces, function(a, b)
+		local aPower, bPower = a.attack + a.defense, b.attack + b.defense
+		if aPower ~= bPower then
+			return aPower > bPower
+		end
+		return a.uid < b.uid
+	end)
+	listLabel.Text = `YOUR {string.upper(equipSlot)}S ({#pieces}), STRONGEST FIRST`
+	emptyNote.Visible = #pieces == 0
+
+	for index, row in equipRows do
+		local item = pieces[index]
+		row.uid = if item then item.uid else nil
+		row.frame.Visible = item ~= nil
+		if not item then
+			continue
+		end
+		local where
+		if item.wornBy == equipMember then
+			where = `<font color="#9FD49A">Wearing now</font>`
+		elseif item.wornBy ~= nil then
+			where = `Worn by {memberLabel(state, item.wornBy)}`
+		else
+			where = "Spare"
+		end
+		row.info.Text = `{rarityName(item)}  Lv {item.level}{setTag(item, nil)}\n{statText(item.attack, item.defense)}   |   {where}`
+		if item.wornBy == equipMember then
+			row.usable = false
+			setButton(row.button, "Wearing", false, COLOR_BUY)
+		elseif item.wornBy ~= nil then
+			row.usable = true
+			setButton(row.button, "Take and\nequip", true, COLOR_SELECTED)
+		else
+			row.usable = true
+			setButton(row.button, "Equip", true, COLOR_BUY)
+		end
+	end
+end
+
+function openEquipWindow(member: number)
+	equipMember = member
+	equipGui.Enabled = true
+	equipList.CanvasPosition = Vector2.new(0, 0)
+	refreshEquipWindow()
+end
 
 ---------------------------------------------------------------------------
 -- Toasts: short messages from the server

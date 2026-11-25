@@ -290,7 +290,8 @@ end
 
 ---------------------------------------------------------------------------
 -- Gear: one weapon, one armor and one mount for you and for each soldier.
--- The best pieces you own are used automatically.
+-- Gear only counts while someone wears it. Equip pieces by hand from the
+-- Warband page, or press Equip best.
 ---------------------------------------------------------------------------
 
 GameConfig.GearSlots = { "Weapon", "Armor", "Mount" }
@@ -300,6 +301,77 @@ GameConfig.GearTypes = {
 	Armor = { attack = 0, defense = 2, price = 250, names = { "Jerkin", "Chainmail", "Brigandine", "Plate Harness", "Scale Mail" } },
 	Mount = { attack = 1, defense = 1, price = 300, names = { "Mule", "Pony", "Warhorse", "Elk", "Griffin" } },
 }
+
+---------------------------------------------------------------------------
+-- Gear sets: each foe house drops pieces of its own set. When one person
+-- wears 2 or 3 pieces of the same set, those pieces get stronger, and the
+-- whole set also gives a bonus to the realm (counted once per set, however
+-- many people wear it).
+---------------------------------------------------------------------------
+
+-- Extra stats on the matching pieces, by how many of the set one person wears.
+GameConfig.SetPieceBonus = { [2] = 0.2, [3] = 0.5 }
+GameConfig.SetPieceCount = 3 -- pieces in a full set
+
+-- Chance (0 to 1) that beating a foe stage drops a piece of its house's set.
+GameConfig.SetDropChance = 0.5
+
+-- perk uses the same names as trophy bonuses.
+GameConfig.GearSets = {
+	{
+		id = "briar",
+		name = "Briar Outlaw",
+		house = "thornwood",
+		pieces = { Weapon = "Briar Shortbow", Armor = "Briar Hood", Mount = "Briar Stag" },
+		perk = { questGold = 0.05 },
+	},
+	{
+		id = "saltreaver",
+		name = "Saltreaver",
+		house = "reavers",
+		pieces = { Weapon = "Saltreaver Axe", Armor = "Saltreaver Hauberk", Mount = "Saltreaver Destrier" },
+		perk = { income = 0.05 },
+	},
+	{
+		id = "cinderveil",
+		name = "Cinderveil",
+		house = "ember",
+		pieces = { Weapon = "Cinderveil Staff", Armor = "Cinderveil Robes", Mount = "Cinderveil Salamander" },
+		perk = { xp = 0.05 },
+	},
+	{
+		id = "ironbaron",
+		name = "Ironbaron",
+		house = "barony",
+		pieces = { Weapon = "Ironbaron Warhammer", Armor = "Ironbaron Plate", Mount = "Ironbaron Charger" },
+		perk = { defense = 0.06 },
+	},
+	{
+		id = "hollowcrown",
+		name = "Hollow Crown",
+		house = "hollow",
+		pieces = { Weapon = "Hollow Crown Blade", Armor = "Hollow Crown Mail", Mount = "Hollow Crown Nightmare" },
+		perk = { attack = 0.06 },
+	},
+}
+
+function GameConfig.getGearSet(id: string?)
+	for _, set in GameConfig.GearSets do
+		if set.id == id then
+			return set
+		end
+	end
+	return nil
+end
+
+function GameConfig.getHouseSet(houseId: string)
+	for _, set in GameConfig.GearSets do
+		if set.house == houseId then
+			return set
+		end
+	end
+	return nil
+end
 
 ---------------------------------------------------------------------------
 -- Foes: stages fought turn by turn with stamina
