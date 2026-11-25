@@ -1175,7 +1175,7 @@ local function gearLine(item, counts): string
 	if not item then
 		return `<font color="#7F847E">empty</font>`
 	end
-	return `{rarityName(item)} Lv {item.level}{setTag(item, counts)}`
+	return `{rarityName(item)}{setTag(item, counts)}`
 end
 
 local openEquipWindow -- defined further down, with the equip window
@@ -1376,6 +1376,7 @@ do
 		{ key = "Amount", title = "How many?", width = 440, height = 330 },
 		{ key = "Skills", title = "Skill points", width = 640, height = 590 },
 		{ key = "Pass", title = "Game pass", width = 520, height = 300 },
+		{ key = "ChestOdds", title = "Chest odds", width = 560, height = 580 },
 	}
 	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560
 
@@ -2276,11 +2277,9 @@ local function draw(state)
 		end
 		row.info.Parent.Visible = true
 		ItemArt.set(row.picture, item)
-		row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}`
+		row.info.Text = `{rarityName(item)}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}`
 		if item.sold then
 			setButton(row.button, "Sold", false, COLOR_BUY)
-		elseif state.level < item.level then
-			setButton(row.button, `Level {item.level}`, false, COLOR_BUY)
 		else
 			local price = math.floor(item.price * (1 - festivalDiscount(state, "marketPrice")))
 			setButton(row.button, `Buy\n{Format.short(price)}`, gold >= price, COLOR_BUY)
@@ -2498,7 +2497,7 @@ local function draw(state)
 			local worn = item.wornBy ~= nil
 			local status = if worn then `Worn by {memberLabel(state, item.wornBy)}` else "Spare"
 			local counts = if worn then memberSetCounts(state, item.wornBy) else nil
-			row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)}){setTag(item, counts)}\n{statText(item.attack, item.defense)}   |   {status}`
+			row.info.Text = `{rarityName(item)}  ({string.lower(item.slot)}){setTag(item, counts)}\n{statText(item.attack, item.defense)}   |   {status}`
 			if worn then
 				setButton(row.button, "Worn", false, COLOR_ACTION)
 			else
@@ -3022,7 +3021,7 @@ do
 			box.uid = if item then item.uid else nil
 			box.box.BackgroundColor3 = if gearSlot == equipSlot then COLOR_SELECTED else COLOR_ROW
 			if item then
-				box.label.Text = `<b>{string.upper(gearSlot)}</b>\n{rarityName(item)} Lv {item.level}\n{statText(item.attack, item.defense)}{setTag(item, counts)}`
+				box.label.Text = `<b>{string.upper(gearSlot)}</b>\n{rarityName(item)}\n{statText(item.attack, item.defense)}{setTag(item, counts)}`
 				setButton(box.takeOff, "Take off", true, COLOR_ACTION)
 			else
 				box.label.Text = `<b>{string.upper(gearSlot)}</b>\n<font color="#7F847E">empty</font>`
@@ -3063,7 +3062,7 @@ do
 			else
 				where = "Spare"
 			end
-			row.info.Text = `{rarityName(item)}  Lv {item.level}{setTag(item, nil)}\n{statText(item.attack, item.defense)}   |   {where}`
+			row.info.Text = `{rarityName(item)} {setTag(item, nil)}\n{statText(item.attack, item.defense)}   |   {where}`
 			if item.wornBy == equipMember then
 				row.usable = false
 				setButton(row.button, "Wearing", false, COLOR_BUY)

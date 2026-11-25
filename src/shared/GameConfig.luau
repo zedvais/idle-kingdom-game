@@ -477,7 +477,44 @@ function GameConfig.getRarity(id: string)
 	return GameConfig.Rarities[1]
 end
 
--- Attack or defense for an item at `level` with the given rarity.
+-- Every item's stats are fixed by its name and rarity (never random).
+-- Each item has the same stat budget for its rarity; the name decides how
+-- the budget is split between attack and defense, so no item is stronger
+-- overall, only shaped differently.
+GameConfig.GearBudget = 8 -- attack + defense of a Common item; times rarity.stats
+
+-- Share of the budget that goes to attack (the rest is defense).
+GameConfig.GearSplits = {
+	-- Weapons: all attack, or mostly attack.
+	["Longbow"] = 1, ["War Axe"] = 1, ["Spear"] = 0.8, ["Mace"] = 0.8, ["Sword"] = 0.6, ["Halberd"] = 0.6,
+	-- Armor: all defense, or mostly defense.
+	["Plate Harness"] = 0, ["Scale Mail"] = 0, ["Chainmail"] = 0.2, ["Brigandine"] = 0.2, ["Jerkin"] = 0.4,
+	-- Mounts: even, or leaning one way.
+	["Warhorse"] = 0.7, ["Griffin"] = 0.7, ["Elk"] = 0.5, ["Pony"] = 0.5, ["Mule"] = 0.3,
+	-- Set pieces.
+	["Briar Shortbow"] = 1, ["Briar Hood"] = 0.4, ["Briar Stag"] = 0.5,
+	["Saltreaver Axe"] = 1, ["Saltreaver Hauberk"] = 0.2, ["Saltreaver Destrier"] = 0.7,
+	["Cinderveil Staff"] = 0.8, ["Cinderveil Robes"] = 0.4, ["Cinderveil Salamander"] = 0.7,
+	["Ironbaron Warhammer"] = 0.6, ["Ironbaron Plate"] = 0, ["Ironbaron Charger"] = 0.3,
+	["Hollow Crown Blade"] = 0.8, ["Hollow Crown Mail"] = 0.2, ["Hollow Crown Nightmare"] = 0.7,
+}
+local DEFAULT_SPLIT = { Weapon = 1, Armor = 0, Mount = 0.5 }
+
+function GameConfig.getGearSplit(slot: string, name: string): number
+	return GameConfig.GearSplits[name] or DEFAULT_SPLIT[slot] or 0.5
+end
+
+-- Fixed attack and defense of an item. `rarity` is a rarity table or id.
+function GameConfig.getGearStats(slot: string, name: string, rarity): (number, number)
+	if type(rarity) ~= "table" then
+		rarity = GameConfig.getRarity(rarity)
+	end
+	local budget = GameConfig.GearBudget * rarity.stats
+	local attack = math.floor(budget * GameConfig.getGearSplit(slot, name) + 0.5)
+	return attack, math.floor(budget + 0.5) - attack
+end
+
+-- (Old level-based stat formula, kept for anything that still scales by level.)
 function GameConfig.getItemStat(base: number, level: number, rarity): number
 	if base <= 0 then
 		return 0

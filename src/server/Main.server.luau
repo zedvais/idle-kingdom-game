@@ -850,6 +850,7 @@ local function relicTake(data, key: string)
 	end
 	local gearType = GameConfig.GearTypes[entry.slot]
 	local rarity = GameConfig.getRarity(entry.rarity)
+	local attack, defense = GameConfig.getGearStats(entry.slot, entry.name, rarity)
 	return {
 		kind = "Gear",
 		slot = entry.slot,
@@ -857,8 +858,8 @@ local function relicTake(data, key: string)
 		rarity = rarity.id,
 		level = best,
 		set = entry.set,
-		attack = GameConfig.getItemStat(gearType.attack, best, rarity),
-		defense = GameConfig.getItemStat(gearType.defense, best, rarity),
+		attack = attack,
+		defense = defense,
 		price = GameConfig.getItemPrice(gearType.price, best, rarity),
 	}
 end
@@ -1261,12 +1262,6 @@ end
 -- Buys a Market item. `auto` is true when auto-buy does it, which keeps
 -- its messages short.
 local function buyItem(player: Player, data, item, auto: boolean): boolean
-	if data.level < item.level then
-		if not auto then
-			sendToast(player, `You need level {item.level} to buy this.`)
-		end
-		return false
-	end
 	if armoryFull(data) then
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return false
@@ -2784,7 +2779,6 @@ local function runAutoBuy(player: Player, data)
 			and GameConfig.getRarityRank(item.rarity) >= minRank
 			and marketPrice(item) >= rule.minPrice
 			and (rule.maxPrice <= 0 or marketPrice(item) <= rule.maxPrice)
-			and data.level >= item.level
 		if not wanted then
 			continue
 		end

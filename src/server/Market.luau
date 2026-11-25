@@ -49,15 +49,19 @@ function Market.rollGear(random: Random, playerLevel: number, minRank: number?)
 	local slot = GameConfig.GearSlots[random:NextInteger(1, #GameConfig.GearSlots)]
 	local gearType = GameConfig.GearTypes[slot]
 	local rarity = rollRarity(random, minRank or 1)
+	-- The level only sets the price (Market prices follow the player's
+	-- level); stats are fixed by name and rarity.
 	local level = rollLevel(random, playerLevel)
+	local name = gearType.names[random:NextInteger(1, #gearType.names)]
+	local attack, defense = GameConfig.getGearStats(slot, name, rarity)
 	return {
 		kind = "Gear",
 		slot = slot,
-		name = gearType.names[random:NextInteger(1, #gearType.names)],
+		name = name,
 		rarity = rarity.id,
 		level = level,
-		attack = GameConfig.getItemStat(gearType.attack, level, rarity),
-		defense = GameConfig.getItemStat(gearType.defense, level, rarity),
+		attack = attack,
+		defense = defense,
 		price = GameConfig.getItemPrice(gearType.price, level, rarity),
 	}
 end
@@ -68,8 +72,7 @@ function Market.rollGearOfRarity(random: Random, playerLevel: number, rarityId: 
 	local rarity = GameConfig.getRarity(rarityId)
 	local gearType = GameConfig.GearTypes[item.slot]
 	item.rarity = rarity.id
-	item.attack = GameConfig.getItemStat(gearType.attack, item.level, rarity)
-	item.defense = GameConfig.getItemStat(gearType.defense, item.level, rarity)
+	item.attack, item.defense = GameConfig.getGearStats(item.slot, item.name, rarity)
 	item.price = GameConfig.getItemPrice(gearType.price, item.level, rarity)
 	return item
 end
@@ -80,6 +83,7 @@ function Market.rollSetPiece(random: Random, playerLevel: number, set, minRank: 
 	local item = Market.rollGear(random, playerLevel, minRank)
 	item.name = set.pieces[item.slot]
 	item.set = set.id
+	item.attack, item.defense = GameConfig.getGearStats(item.slot, item.name, item.rarity)
 	return item
 end
 

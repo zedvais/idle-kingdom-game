@@ -189,6 +189,12 @@ local function repair(data)
 		end
 	end
 	data.foes = nil -- replaced by stages
+	-- Gear stats are fixed by name and rarity: bring older items in line.
+	for _, item in data.gear do
+		if type(item) == "table" and type(item.slot) == "string" and type(item.name) == "string" then
+			item.attack, item.defense = GameConfig.getGearStats(item.slot, item.name, item.rarity or "Common")
+		end
+	end
 	-- Every castle needs its levels and builder, and the home castle exists.
 	local estate = data.estate
 	for _, resource in EstateConfig.Resources do

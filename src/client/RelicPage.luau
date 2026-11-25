@@ -222,6 +222,14 @@ local function makeCard(ui, grid, entry, order: number)
 	ui.addCorner(tierFill, 3)
 	art.bar(tierBack, tierFill)
 
+	-- The item's own fixed stats and how they are split.
+	local attack, defense = GameConfig.getGearStats(entry.slot, entry.name, rarity)
+	local share = math.floor(GameConfig.getGearSplit(entry.slot, entry.name) * 100 + 0.5)
+	local itemStats = ui.makeText(card, UDim2.new(1, -16, 0, 18), UDim2.fromOffset(8, 112), colors.text, 12)
+	itemStats.RichText = true
+	itemStats.TextWrapped = false
+	itemStats.Text = `<font color="#F08A6A"><b>{attack}</b> ATK</font>   <font color="#7FB4F0"><b>{defense}</b> DEF</font>   <font color="#9A8C7A">({share}% / {100 - share}%)</font>`
+
 	local rarityTag = tag(ui, card, string.upper(rarity.id), rarity.color, UDim2.new(0, 8, 1, -46))
 	rarityTag.TextColor3 = rarity.color
 	tag(ui, card, entry.source, colors.text, UDim2.new(0, 8, 1, -24))
@@ -360,7 +368,7 @@ function RelicPage.build(ui)
 	end
 	note.Text = `Deposit spare gear for lasting attack and defense. Bonus tiers: {table.concat(tiers, ", ")}. Press a card to deposit or withdraw.`
 
-	local grid = ui.makeGrid(page, ui.nextOrder(), 168, 3)
+	local grid = ui.makeGrid(page, ui.nextOrder(), 190, 3)
 	for index, entry in catalog do
 		makeCard(ui, grid, entry, index)
 	end
