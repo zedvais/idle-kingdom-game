@@ -555,7 +555,11 @@ local function payHoldings(player: Player, session, stats)
 	for _, holding in GameConfig.Holdings do
 		local count = data.holdings[holding.id] or 0
 		if count > 0 then
-			local each = holding.income * stats.incomeFactor / 3600 * GameConfig.HoldingCycle
+			-- Whole gold only: the fraction carries over to the next payout.
+			local carry = session.holdingCarry[holding.id] or 0
+			local exact = holding.income * stats.incomeFactor / 3600 * GameConfig.HoldingCycle + carry
+			local each = math.floor(exact)
+			session.holdingCarry[holding.id] = exact - each
 			if each > 0 then
 				data.gold += each * count
 				countLifetime(data, "goldEarned", each * count)
@@ -3111,6 +3115,7 @@ local function onPlayerAdded(player: Player)
 		regen = { energy = 0, stamina = 0, health = 0 },
 		boardSent = {}, -- [board key] = last score written
 		holdingTimer = 0, -- seconds into the holdings' pay cycle
+		holdingCarry = {}, -- [holding id] = fraction of a gold not paid yet
 	}
 	refresh(player)
 

@@ -448,7 +448,7 @@ function HoldingsPage.pop(ui, card, amount: number)
 	label.TextStrokeTransparency = 0.2
 	label.TextStrokeColor3 = Color3.fromRGB(40, 28, 12)
 	label.ZIndex = 80
-	local shown = if amount < 10 then string.format("%.1f", amount) else Format.short(math.floor(amount))
+	local shown = Format.short(math.floor(amount + 0.5))
 	label.Text = `+{shown} {ui.art.Icons.gold}`
 	local scale = Instance.new("UIScale")
 	scale.Scale = 0.6
@@ -626,7 +626,7 @@ function HoldingsPage.drawPopup(state, ui)
 	local income = perCopy(state, holding)
 	w.popupName.Text = holding.name
 	w.popupInfo.Text = `<font color="#6ED26E"><b>{Format.short(income)} gold/hr</b></font> each, with your bonuses\n`
-		.. `Pays <b>{string.format("%.1f", income / 3600)} gold</b> each every second. You have {count}, `
+		.. `Pays about <b>{Format.short(math.max(1, math.floor(income / 3600 + 0.5)))} gold</b> each every second. You have {count}, `
 		.. `<b>{Format.short(income * count)} gold/hr</b> together\n`
 		.. `<font color="#B2A690">{holding.region}, from level {holding.level}</font>`
 	local price = GameConfig.getHoldingCost(holding, count)
