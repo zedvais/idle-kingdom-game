@@ -35,11 +35,15 @@ function Recruit.roll(tier, uid: string)
 	local class = GameConfig.SoldierClasses[random:NextInteger(1, #GameConfig.SoldierClasses)]
 	local first = GameConfig.FirstNames[random:NextInteger(1, #GameConfig.FirstNames)]
 	local epithet = GameConfig.Epithets[random:NextInteger(1, #GameConfig.Epithets)]
+	local rarity = rollRarity(tier)
+	local attack, defense = GameConfig.rollSoldierStats(rarity, random)
 	return {
 		uid = uid,
 		name = `{first} {epithet}`,
 		class = class.id,
-		rarity = rollRarity(tier),
+		rarity = rarity,
+		baseAttack = attack,
+		baseDefense = defense,
 		tier = tier.id,
 		train = 0,
 	}

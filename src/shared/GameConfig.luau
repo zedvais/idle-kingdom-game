@@ -153,15 +153,18 @@ GameConfig.PlaytimeRewards = {
 -- item's attack and defense, and price multiplies its cost.
 ---------------------------------------------------------------------------
 
+-- crewMin/crewMax: a soldier of this rarity rolls attack and defense,
+-- each between these (fixed once rolled). gear: attack + defense of a
+-- Market item of this rarity (other pools multiply it by their power).
 GameConfig.Rarities = {
-	{ id = "Common", chance = 500, stats = 1, price = 1, color = Color3.fromRGB(190, 190, 185) },
-	{ id = "Uncommon", chance = 280, stats = 1.4, price = 1.6, color = Color3.fromRGB(110, 200, 110) },
-	{ id = "Rare", chance = 140, stats = 2, price = 3, color = Color3.fromRGB(90, 150, 240) },
-	{ id = "Epic", chance = 60, stats = 3, price = 6, color = Color3.fromRGB(180, 100, 230) },
-	{ id = "Legendary", chance = 18, stats = 4.5, price = 12, color = Color3.fromRGB(245, 165, 50) },
-	{ id = "Mythic", chance = 2, stats = 7, price = 30, color = Color3.fromRGB(240, 70, 90) },
+	{ id = "Common", chance = 500, stats = 1, crewMin = 3, crewMax = 6, gear = 4, price = 1, color = Color3.fromRGB(190, 190, 185) },
+	{ id = "Uncommon", chance = 280, stats = 1.4, crewMin = 5, crewMax = 9, gear = 6, price = 1.6, color = Color3.fromRGB(110, 200, 110) },
+	{ id = "Rare", chance = 140, stats = 2, crewMin = 8, crewMax = 14, gear = 10, price = 3, color = Color3.fromRGB(90, 150, 240) },
+	{ id = "Epic", chance = 60, stats = 3, crewMin = 12, crewMax = 20, gear = 15, price = 6, color = Color3.fromRGB(180, 100, 230) },
+	{ id = "Legendary", chance = 18, stats = 4.5, crewMin = 18, crewMax = 30, gear = 22, price = 12, color = Color3.fromRGB(245, 165, 50) },
+	{ id = "Mythic", chance = 2, stats = 7, crewMin = 28, crewMax = 45, gear = 34, price = 30, color = Color3.fromRGB(240, 70, 90) },
 	-- Divine never appears in the Market. Only Royal recruits can roll it.
-	{ id = "Divine", chance = 0, stats = 11, price = 80, color = Color3.fromRGB(255, 240, 150) },
+	{ id = "Divine", chance = 0, stats = 11, crewMin = 45, crewMax = 70, gear = 52, price = 80, color = Color3.fromRGB(255, 240, 150) },
 }
 
 ---------------------------------------------------------------------------
@@ -222,10 +225,9 @@ GameConfig.TrainCostShare = 0.5
 GameConfig.TrainCostGrowth = 1.6
 GameConfig.MaxTrainRank = 10
 
--- Soldier classes. attack and defense are for a Common Village soldier.
--- Across all classes attack and defense add up to the same total, so a
--- warband is as good at holding as at hitting (attack rolls against
--- defense rolls in fights between players).
+-- Soldier classes (name and icon). Stats come from rarity: attack and
+-- defense each roll between the rarity's crewMin and crewMax. The recruit
+-- tier (Village, Mercenary, Royal) only changes the rarity odds.
 GameConfig.SoldierClasses = {
 	{ id = "Militia", attack = 3, defense = 3 },
 	{ id = "Archer", attack = 5, defense = 1 },
@@ -274,7 +276,8 @@ function GameConfig.getChanceAtLeast(tier, rarityId: string): number
 	return if total > 0 then hit / total else 0
 end
 
--- A soldier's own attack and defense, before gear and the crew size bonus.
+-- A soldier's own attack and defense with training, before gear and the
+-- crew size bonus.
 function GameConfig.getSoldierStats(soldier): (number, number)
 	local class = GameConfig.SoldierClasses[1]
 	for _, candidate in GameConfig.SoldierClasses do
@@ -282,10 +285,18 @@ function GameConfig.getSoldierStats(soldier): (number, number)
 			class = candidate
 		end
 	end
-	local tier = GameConfig.getRecruitTier(soldier.tier) or GameConfig.RecruitTiers[1]
+	-- Base stats are rolled once when recruited (GameConfig.rollSoldierStats).
+	-- Soldiers from before that get their rarity's middle value.
 	local rarity = GameConfig.getRarity(soldier.rarity)
-	local scale = rarity.stats * tier.power * (1 + GameConfig.TrainStatBonus * soldier.train)
-	return math.floor(class.attack * scale + 0.5), math.floor(class.defense * scale + 0.5)
+	local middle = (rarity.crewMin + rarity.crewMax) / 2
+	local scale = 1 + GameConfig.TrainStatBonus * (soldier.train or 0)
+	return math.floor((soldier.baseAttack or middle) * scale + 0.5), math.floor((soldier.baseDefense or middle) * scale + 0.5)
+end
+
+-- Rolls a new soldier's base attack and defense for its rarity.
+function GameConfig.rollSoldierStats(rarityId: string, random: Random): (number, number)
+	local rarity = GameConfig.getRarity(rarityId)
+	return random:NextInteger(rarity.crewMin, rarity.crewMax), random:NextInteger(rarity.crewMin, rarity.crewMax)
 end
 
 -- Training takes time: short at first, longer each rank, at most 8 hours.
@@ -492,7 +503,6 @@ end
 -- Each item has the same stat budget for its rarity; the name decides how
 -- the budget is split between attack and defense, so no item is stronger
 -- overall, only shaped differently.
-GameConfig.GearBudget = 8 -- attack + defense of a Common item; times rarity.stats
 
 -- Share of the budget that goes to attack (the rest is defense).
 GameConfig.GearSplits = {
@@ -586,7 +596,7 @@ function GameConfig.getGearStats(slot: string, name: string, rarity): (number, n
 	if type(rarity) ~= "table" then
 		rarity = GameConfig.getRarity(rarity)
 	end
-	local budget = GameConfig.GearBudget * rarity.stats * GameConfig.getGearPower(name)
+	local budget = rarity.gear * GameConfig.getGearPower(name)
 	local attack = math.floor(budget * GameConfig.getGearSplit(slot, name) + 0.5)
 	return attack, math.floor(budget + 0.5) - attack
 end

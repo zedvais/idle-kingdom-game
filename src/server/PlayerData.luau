@@ -206,11 +206,16 @@ local function repair(data)
 		data.nextItemId = 1
 	end
 	-- Training tops out at MaxTrainRank; older saves could go higher.
+	-- Every soldier needs rolled base stats.
 	if type(data.crew) == "table" then
 		for _, soldier in data.crew do
 			if type(soldier) == "table" and type(soldier.train) == "number" and soldier.train > GameConfig.MaxTrainRank then
 				soldier.train = GameConfig.MaxTrainRank
 				soldier.trainUntil = nil
+			end
+			-- Soldiers from before rolled stats get theirs now.
+			if type(soldier) == "table" and (type(soldier.baseAttack) ~= "number" or type(soldier.baseDefense) ~= "number") then
+				soldier.baseAttack, soldier.baseDefense = GameConfig.rollSoldierStats(soldier.rarity or "Common", Random.new())
 			end
 		end
 	end
