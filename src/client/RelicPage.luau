@@ -178,6 +178,12 @@ function RelicPage.draw(state, ui)
 		local spareCount = if spare[key] then spare[key].count else 0
 		local tier = RelicConfig.getTier(heldCount)
 		local nextTier = RelicConfig.Tiers[tier + 1]
+		if nextTier then
+			local from = if tier > 0 then RelicConfig.Tiers[tier].copies else 0
+			ui.art.progress(row.info, heldCount - from, nextTier.copies - from, colors.gold)
+		else
+			ui.art.progress(row.info, 1, 1)
+		end
 		local itemBonus = RelicConfig.getItemBonus(item.rarity, heldCount)
 		local tierText = if tier > 0 then `Tier {tier}: +{Format.short(itemBonus)} atk/def` else "Not in the hall yet"
 		local nextText = if nextTier then `   |   next tier at {Format.short(nextTier.copies)}` else "   |   top tier"

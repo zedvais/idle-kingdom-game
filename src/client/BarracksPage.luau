@@ -89,10 +89,13 @@ function BarracksPage.draw(state, ui)
 	local lines = { `<b>Army {total} / {state.armyCap}</b>   |   {home} at home, {away} away, {training.count} in training` }
 	if busy then
 		local troop = ArmyConfig.getTroop(training.kind)
+		local totalSeconds = if troop then troop.seconds * training.count else 0
+		ui.art.progress(summary, totalSeconds - state.trainingLeft, totalSeconds, colors.info)
 		table.insert(lines, `Training {training.count} {troop and troop.name or training.kind}: ready in {ui.formatLong(state.trainingLeft)}.`)
 		local cost = ResearchConfig.getFinishCost(state.trainingLeft)
 		ui.setButton(finishButton, `Finish now\n{cost} Crowns`, state.crowns >= cost, colors.selected)
 	else
+		ui.art.progress(summary, total, state.armyCap, colors.claim, true)
 		table.insert(lines, "The Barracks are free. One batch trains at a time and keeps going while you are away.")
 		ui.setButton(finishButton, "Idle", false, colors.selected)
 	end

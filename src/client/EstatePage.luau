@@ -6,6 +6,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local ResearchConfig = require(Shared:WaitForChild("ResearchConfig"))
 local Format = require(Shared:WaitForChild("Format"))
+local Scenes = require(script.Parent:WaitForChild("Scenes"))
 
 local EstatePage = {}
 
@@ -65,11 +66,21 @@ function EstatePage.build(ui)
 	end)
 
 	ui.makeHeading(page, ui.nextOrder(), "Buildings")
-	local grid = ui.makeGrid(page, ui.nextOrder(), 150, 3)
+	local grid = ui.makeGrid(page, ui.nextOrder(), 232, 3)
+	local function onPage()
+		return page.Visible
+	end
 	for _, building in EstateConfig.Buildings do
 		local info, button = ui.makeCard(grid)
 		info.RichText = true
 		info.TextSize = 12
+		-- A small moving picture of the building above its text.
+		local picture = ui.makeFrame(info.Parent, UDim2.new(1, -12, 0, 76), UDim2.fromOffset(6, 6), Color3.fromRGB(12, 9, 7))
+		picture.ClipsDescendants = true
+		ui.addCorner(picture, 6)
+		Scenes.building(picture, building.key, onPage, 280)
+		info.Position = UDim2.fromOffset(8, 86)
+		info.Size = UDim2.new(1, -16, 1, -52 - 80)
 		cards[building.key] = { info = info, button = button }
 		button.Activated:Connect(function()
 			ui.send("EstateBuild", `{selected}:{building.key}`)
@@ -119,10 +130,13 @@ function EstatePage.draw(state, ui)
 		local building = EstateConfig.getBuilding(castle.build.key)
 		local left = state.estateLeft[selected] or 0
 		local cost = ResearchConfig.getFinishCost(left)
+		local total = if building then EstateConfig.getSeconds(building, castle.build.level - 1) else 0
+		ui.art.progress(castleInfo, total - left, total, colors.info)
 		castleInfo.Text = `<b>Builder:</b> {building and building.name or castle.build.key} to level {castle.build.level}, ready in {ui.formatLong(left)}.\n`
 			.. "One upgrade at a time per castle. It keeps going while you are away."
 		ui.setButton(castleButton, `Finish now\n{cost} Crowns`, state.crowns >= cost, colors.selected)
 	else
+		ui.art.progress(castleInfo, 0, 1)
 		castleInfo.Text = `<b>Builder: free</b> at {castleDef.name}.\nPick a building below to upgrade. Each castle has its own builder.`
 		ui.setButton(castleButton, "Idle", false, colors.selected)
 	end
@@ -130,6 +144,7 @@ function EstatePage.draw(state, ui)
 	for _, building in EstateConfig.Buildings do
 		local card = cards[building.key]
 		local level = if castle then castle.levels[building.key] or 0 else 0
+		ui.art.progress(card.info, level, EstateConfig.MaxLevel, nil, true)
 		local header = `<b>{building.name}</b>   Lv {level}\n<font color="#B2A690">{building.note}</font>\n`
 		if level >= EstateConfig.MaxLevel then
 			card.info.Text = header .. `Now: {effect(building, level)}\nTop level.`

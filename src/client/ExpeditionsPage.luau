@@ -33,10 +33,13 @@ function ExpeditionsPage.draw(state, ui)
 	local home = ArmyConfig.countTroops(state.troops)
 	if isAway then
 		local target = ArmyConfig.getExpedition(away.target)
+		local totalSeconds = if target then target.minutes * 60 else 0
+		ui.art.progress(status, totalSeconds - state.expeditionLeft, totalSeconds, colors.info)
 		status.Text = `<b>Your army is away at {target and target.name or away.target}</b>\n`
 			.. `Back in {ui.formatLong(state.expeditionLeft)} with {ArmyConfig.countTroops(away.sent)} troops. The battle is fought when they arrive.\n`
 			.. "The report will be in the War Chronicle (Arena section)."
 	else
+		ui.art.progress(status, 0, 0)
 		status.Text = `<b>{home} troops at home</b>\n`
 			.. "Sending an expedition marches your whole army. Train troops that counter the enemy for more power.\n"
 			.. `Your power must beat the enemy's to win. Losses grow the closer the fight is.`

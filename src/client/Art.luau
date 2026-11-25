@@ -62,6 +62,7 @@ Art.Icons = {
 	Profile = "\u{1F6E1}\u{FE0F}", -- shield
 	Rebirth = "\u{1F31F}", -- glowing star
 	Mail = "\u{2709}\u{FE0F}", -- envelope
+	Skills = "\u{1F4AA}", -- flexed arm
 	gold = "\u{1F4B0}", -- money bag
 	crowns = "\u{1F451}", -- crown
 	energy = "\u{26A1}", -- lightning
@@ -380,6 +381,59 @@ end
 function Art.bar(back: GuiObject, fill: GuiObject)
 	Art.stroke(back, Art.Colors.ink, 1, 0.2)
 	Art.gloss(fill, 1, 0.7)
+end
+
+-- Progress bars under a row's or card's text. The first call adds the bar
+-- (a row grows 8 pixels for it); later calls move the fill smoothly.
+-- maximum <= 0 hides it. Full bars turn green unless a color is forced.
+local progressBars = setmetatable({}, { __mode = "k" })
+local PROGRESS_GREEN = Color3.fromRGB(90, 180, 95)
+function Art.progress(info: GuiObject, value: number, maximum: number, color: Color3?, keepColor: boolean?)
+	local bar = progressBars[info]
+	if not bar then
+		local holder = info.Parent :: GuiObject
+		local card = info.Size.Y.Offset <= -40 -- card text leaves room for a button below
+		local back = Instance.new("Frame")
+		back.Name = "Progress"
+		back.BackgroundColor3 = Color3.fromRGB(16, 12, 10)
+		back.BorderSizePixel = 0
+		back.Size = UDim2.new(info.Size.X.Scale, info.Size.X.Offset, 0, 7)
+		if card then
+			back.Position = UDim2.new(info.Position.X.Scale, info.Position.X.Offset, 1, -51)
+			info.Size -= UDim2.fromOffset(0, 9)
+		else
+			holder.Size += UDim2.fromOffset(0, 8)
+			info.Size -= UDim2.fromOffset(0, 8)
+			back.Position = UDim2.new(info.Position.X.Scale, info.Position.X.Offset, 1, -11)
+		end
+		back.ZIndex = info.ZIndex
+		back.Parent = holder
+		corner(back, UDim.new(0, 4))
+		Art.stroke(back, Art.Colors.ink, 1, 0.3)
+		local fill = Instance.new("Frame")
+		fill.BorderSizePixel = 0
+		fill.Size = UDim2.fromScale(0, 1)
+		fill.ZIndex = info.ZIndex
+		fill.Parent = back
+		corner(fill, UDim.new(0, 4))
+		Art.gloss(fill, 1, 0.65)
+		bar = { back = back, fill = fill, share = -1 }
+		progressBars[info] = bar
+	end
+	bar.back.Visible = maximum > 0
+	if maximum <= 0 then
+		return
+	end
+	local share = math.clamp(value / maximum, 0, 1)
+	bar.fill.BackgroundColor3 = if share >= 1 and not keepColor then PROGRESS_GREEN else (color or Art.Colors.gold)
+	if share ~= bar.share then
+		if bar.share < 0 then
+			bar.fill.Size = UDim2.fromScale(share, 1)
+		else
+			Art.tween(bar.fill, 0.35, { Size = UDim2.fromScale(share, 1) })
+		end
+		bar.share = share
+	end
 end
 
 -- Picks an emoji for a toast message from its words.

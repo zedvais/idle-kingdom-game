@@ -877,14 +877,8 @@ local function makeRegionHeader(page: Instance, order: number, region)
 	end
 end
 
--- Keep: your home, your numbers, daily rewards and skills.
-local keepInfo, keepButton = makeRow(pages.Keep, nextOrder(), 74, true)
-keepButton.Activated:Connect(function()
-	send("Keep")
-end)
-local keepSummary = makeRow(pages.Keep, nextOrder(), 74, false)
-local breakdownText = makeRow(pages.Keep, nextOrder(), 96, false)
-breakdownText.TextColor3 = COLOR_DIM
+-- Keep: the picture, numbers and skills are in KeepPage.luau; the daily
+-- playtime rewards are here.
 
 makeHeading(pages.Keep, nextOrder(), "Daily playtime rewards")
 local playtimeSummary = makeRow(pages.Keep, nextOrder(), 32, false)
@@ -902,18 +896,6 @@ do
 	end
 end
 
-makeHeading(pages.Keep, nextOrder(), "Skills")
-local skillRows = {}
-do
-	local skillGrid = makeGrid(pages.Keep, nextOrder(), 104, 3)
-	for _, skill in GameConfig.Skills do
-		local info, button = makeCard(skillGrid)
-		skillRows[skill.id] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("Skill", skill.id)
-		end)
-	end
-end
 
 -- Quests, in folding regions.
 local questRows = {}
@@ -1371,6 +1353,7 @@ do
 		{ key = "AutoQuest", title = "Auto quests", width = 520, height = 400 },
 		{ key = "AutoBuy", title = "Auto-buy", width = 600, height = 560 },
 		{ key = "Amount", title = "How many?", width = 440, height = 300 },
+		{ key = "Skills", title = "Skill points", width = 640, height = 590 },
 	}
 	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560
 
@@ -1527,6 +1510,9 @@ ui = {
 	openModal = function(key: string, title: string?)
 		openModal(key, title)
 	end,
+	showPage = function(name: string)
+		showPage(name)
+	end,
 	closeModal = function()
 		closeModal()
 	end,
@@ -1535,7 +1521,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -1711,6 +1697,7 @@ do
 					setButton(row.button, robuxText(product.price), true, COLOR_BUY)
 				end
 			elseif product.group == "tithe" then
+				Art.progress(row.info, state.tithe, StoreConfig.TitheMax, Color3.fromRGB(200, 150, 230))
 				row.info.Text = `<b>Tithe Chest: {state.tithe} / {StoreConfig.TitheMax} Crowns</b>\n`
 					.. `Fills as you play: 1 Crown per {StoreConfig.TitheEnergyPerCrown} quest energy and {StoreConfig.TitheCrownsPerFoe} per foe beaten. `
 					.. `Break it once it holds {StoreConfig.TitheMinToBreak}.`
@@ -1735,6 +1722,7 @@ do
 				table.insert(odds, `{label}{pair[2]}%`)
 			end
 			local left = coffer.pityEvery - (state.pity[coffer.key] or 0)
+			Art.progress(row.info, coffer.pityEvery - left, coffer.pityEvery, Color3.fromRGB(180, 100, 230))
 			row.info.Text = `<b>{coffer.name}</b>: one piece of gear at your level\n{table.concat(odds, "   ")}\n`
 				.. `{coffer.pityRarity} or better guaranteed within {left} opens`
 			setButton(row.button, `Open\n{coffer.cost} Crowns`, crowns >= coffer.cost, COLOR_BUY)
@@ -1796,6 +1784,7 @@ do
 		for _, challenge in StoreConfig.WeeklyChallenges do
 			local row = challengeRows[challenge.key]
 			local value = math.min(challenge.goal, weekly[challenge.stat] or 0)
+			Art.progress(row.info, value, challenge.goal)
 			local shown = if challenge.stat == "play"
 				then `{math.floor(value / 60)} / {math.floor(challenge.goal / 60)} min`
 				else `{value} / {challenge.goal}`
@@ -1954,6 +1943,7 @@ do
 		local function drawTask(task, counts)
 			local row = bountyRows[task.key]
 			local value = math.min(task.goal, counts[task.stat] or 0)
+			Art.progress(row.info, value, task.goal)
 			row.info.Text = `<b>{task.name}</b>   +{task.seals} Seals\n{value} / {task.goal}`
 			if bounty.claimed[task.key] then
 				setButton(row.button, "Done", false, COLOR_CLAIM)
@@ -1994,6 +1984,20 @@ do
 			.. `<font color="#F0C450">This week: {festival.bonusText}</font>\n`
 			.. `Your points: <b>{math.floor(festivalState.points)}</b>\n`
 			.. `Points for: {table.concat(pointParts, ", ")}`
+		do
+			local goal = 0
+			for _, milestone in FestivalConfig.Milestones do
+				if festivalState.points < milestone.points then
+					goal = milestone.points
+					break
+				end
+			end
+			if goal > 0 then
+				Art.progress(festivalInfo, festivalState.points, goal, Color3.fromRGB(230, 120, 70))
+			else
+				Art.progress(festivalInfo, 1, 1)
+			end
+		end
 		for index, milestone in FestivalConfig.Milestones do
 			local button = milestoneRows[index]
 			if festivalState.milestones[tostring(index)] then
@@ -2024,18 +2028,22 @@ do
 		if busy then
 			local tech = ResearchConfig.Techs[research.active]
 			local level = (research.levels[research.active] or 0) + 1
+			local total = if tech then ResearchConfig.getSeconds(tech, level - 1) else 0
+			Art.progress(researchInfo, total - state.researchLeft, total, COLOR_INFO)
 			researchInfo.Text = `<b>Researching {tech and tech.name or research.active} level {level}</b>\n`
 				.. `Done in {formatLong(state.researchLeft)}. Research keeps going while you are away.`
 			local cost = ResearchConfig.getFinishCost(state.researchLeft)
 			setButton(researchFinish, `Finish now\n{cost} Crowns`, state.crowns >= cost, COLOR_SELECTED)
 		else
 			researchInfo.Text = "<b>The scholars are idle.</b>\nPick a research below. Only one runs at a time."
+			Art.progress(researchInfo, 0, 1)
 			setButton(researchFinish, "Idle", false, COLOR_SELECTED)
 		end
 		for key, row in techRows do
 			local tech = ResearchConfig.Techs[key]
 			local level = research.levels[key] or 0
 			local nowText = if level > 0 then ResearchConfig.describe(tech, level) else "nothing yet"
+			Art.progress(row.info, level, tech.maxLevel, COLOR_INFO)
 			local text = `<b>{tech.name}</b>   Lv {level} / {tech.maxLevel}\nNow: {nowText}`
 			local locked = false
 			if tech.needs and (research.levels[tech.needs[1]] or 0) < tech.needs[2] then
@@ -2084,9 +2092,17 @@ local function draw(state)
 	chips.gold.sub.Text = `Banked {Format.short(state.banked)}`
 	chips.crowns.value.Text = Format.short(state.crowns)
 	chips.crowns.sub.Text = if state.tithe > 0 then `{state.tithe} in Tithe Chest` else "premium"
-	setBar(energyBar, state.energy, stats.maxEnergy, `Energy {state.energy} / {stats.maxEnergy}`)
-	setBar(staminaBar, state.stamina, stats.maxStamina, `Stamina {state.stamina} / {stats.maxStamina}`)
-	setBar(healthBar, state.health, stats.maxHealth, `Health {state.health} / {stats.maxHealth}`)
+	do
+		-- "(+1 0:07)" until the next point, or FULL.
+		local regen = state.regenIn or {}
+		local function regenText(key: string): string
+			local left = regen[key] or 0
+			return if left > 0 then `   (+1 {math.floor(left / 60)}:{string.format("%02d", left % 60)})` else "   (FULL)"
+		end
+		setBar(energyBar, state.energy, stats.maxEnergy, `{state.energy} / {stats.maxEnergy}{regenText("energy")}`)
+		setBar(staminaBar, state.stamina, stats.maxStamina, `{state.stamina} / {stats.maxStamina}{regenText("stamina")}`)
+		setBar(healthBar, state.health, stats.maxHealth, `{state.health} / {stats.maxHealth}{regenText("health")}`)
+	end
 
 	-- Header chips for anything boosting the player right now.
 	local boosts = {}
@@ -2125,40 +2141,12 @@ local function draw(state)
 	end
 	setBadge("Keep", keepCount)
 
-	-- Keep
-	local keep = GameConfig.KeepLevels[state.keep]
-	local nextKeep = GameConfig.KeepLevels[state.keep + 1]
-	local keepText = `<b>{string.upper(keep.name)}</b>   Keep level {state.keep} of {#GameConfig.KeepLevels}\n`
-		.. `Income, attack and defense +{math.floor(keep.bonus * 100)}%`
-	if nextKeep then
-		local keepCost = table.clone(nextKeep.resources or {})
-		keepCost.gold = nextKeep.cost
-		keepText ..= `\nNext: {nextKeep.name}, +{math.floor(nextKeep.bonus * 100)}%. Costs {EstateConfig.describeCost(keepCost, Format.short)} (resources from the Estate).`
-		if state.level < nextKeep.level then
-			setButton(keepButton, `Level {nextKeep.level}\n{Format.short(nextKeep.cost)}`, false, COLOR_BUY)
-		else
-			setButton(keepButton, `Upgrade\n{Format.short(nextKeep.cost)}`, EstateConfig.canPay(keepCost, gold, state.estate.stock), COLOR_BUY)
-		end
-	else
-		setButton(keepButton, "Max level", false, COLOR_BUY)
-	end
-	keepInfo.RichText = true
-	keepInfo.Text = keepText
-
-	keepSummary.Text = `Attack {Format.short(stats.attack)}   |   Defense {Format.short(stats.defense)}   |   Renown {Format.short(state.renown)}\n`
-		.. `Income {Format.short(stats.incomePerHour)}/hr   |   Lots {stats.lotsUsed} / {stats.lots}   |   Soldiers {stats.crewSize} / {#state.crew}\n`
-		.. `Skill points to spend: {state.skillPoints}`
-	local lines = { "Where your attack and defense come from:" }
-	for _, part in stats.breakdown do
-		table.insert(lines, `{part[1]}: {Format.short(part[2])} attack, {Format.short(part[3])} defense`)
-	end
-	breakdownText.Text = table.concat(lines, "\n")
-
 	local played = state.playSeconds
 	playtimeSummary.Text = `Played today: {math.floor(played / 3600)}h {math.floor(played / 60) % 60}m. Rewards reset at 00:00 UTC.`
 	for index, reward in GameConfig.PlaytimeRewards do
 		local row = rewardRows[index]
 		local key = tostring(index)
+		Art.progress(row.info, if state.claimed[key] then 1 else played, if state.claimed[key] then 1 else reward.minutes * 60)
 		if state.claimed[key] then
 			setButton(row.button, "Claimed", false, COLOR_BUY)
 		elseif played >= reward.minutes * 60 then
@@ -2166,15 +2154,6 @@ local function draw(state)
 		else
 			setButton(row.button, `In {formatClock(reward.minutes * 60 - played)}`, false, COLOR_BUY)
 		end
-	end
-
-	for _, skill in GameConfig.Skills do
-		local row = skillRows[skill.id]
-		local bought = state.skills[skill.id] or 0
-		local cost = GameConfig.getSkillCost(skill, bought)
-		row.info.Text = `{skill.name}  (bought {bought})\n{skill.note}`
-		local pointWord = if cost == 1 then "point" else "points"
-		setButton(row.button, `Add\n{cost} {pointWord}`, state.skillPoints >= cost, COLOR_BUY)
 	end
 
 	-- Quests
@@ -2209,6 +2188,11 @@ local function draw(state)
 		local progress = if rank >= GameConfig.MaxMasteryRanks
 			then "Mastered"
 			else `{done % GameConfig.MasteryPerRank}/{GameConfig.MasteryPerRank}`
+		if rank >= GameConfig.MaxMasteryRanks then
+			Art.progress(row.info, 1, 1, Color3.fromHex(medalColors[#medalColors]), true)
+		else
+			Art.progress(row.info, done % GameConfig.MasteryPerRank, GameConfig.MasteryPerRank, Color3.fromHex(medalColors[rank + 1] or "#F0C85A"))
+		end
 		row.info.Text = `<b>{quest.name}</b>\n{quest.energy} energy   {Format.short(GameConfig.getQuestGold(quest, done))} gold   {quest.xp} XP   `
 			.. `{string.format("%.1f", quest.drop * 100)}% gear drop\n{table.concat(medals, "  ")}   {progress}`
 		if state.level < quest.level then
@@ -2220,6 +2204,7 @@ local function draw(state)
 
 	-- Holdings
 	local lotsFull = stats.lotsUsed >= stats.lots
+	Art.progress(holdingSummary, stats.lotsUsed, stats.lots, Color3.fromRGB(110, 170, 90), true)
 	holdingSummary.Text = `Income {Format.short(stats.incomePerHour)} gold/hr   |   Lots {stats.lotsUsed} / {stats.lots}{if lotsFull then " (full)" else ""}\n`
 		.. `Holdings earn {math.floor(GameConfig.OfflineRate * 100)}% while you are away. More lots come from skill points in the Keep.`
 	local anyOwned = false
@@ -2254,6 +2239,7 @@ local function draw(state)
 
 	-- Market
 	marketWindowShown = state.marketWindow
+	Art.progress(marketSummary, GameConfig.MarketRestockSeconds - state.marketRestock, GameConfig.MarketRestockSeconds, COLOR_INFO, true)
 	marketSummary.Text = `New stock in {formatClock(state.marketRestock)}\nItems roll around your level. Rarer items are stronger and cost more.`
 	for index, row in marketRows do
 		local item = state.market[index]
@@ -2394,6 +2380,7 @@ local function draw(state)
 			end
 		end
 		local progress = state.trophyProgress[trophy.id] or 0
+		Art.progress(row.info, if earned then 1 else progress, if earned then 1 else trophy.value)
 		row.info.Text = `<b>{trophy.name}</b>   <font color="#9FD49A">{table.concat(bonuses, ", ")}</font>\n`
 			.. (if earned then trophy.note else `{trophy.note}   ({progress} / {trophy.value})`)
 		setButton(row.button, if earned then "Earned" else "Locked", earned, COLOR_GOLD)
@@ -2428,6 +2415,7 @@ local function draw(state)
 			.. `Owned: {if #have > 0 then table.concat(have, ", ") else "none"}`
 			.. (if #missing > 0 and #have > 0 then `   <font color="#7F847E">Missing: {table.concat(missing, ", ")}</font>` else "")
 		local full = state.fullSets and state.fullSets[set.id] == true
+		Art.progress(row.info, #have, GameConfig.SetPieceCount)
 		setButton(row.button, if full then "Worn in full" else (if #missing == 0 then "Owned" else `{#have} / {GameConfig.SetPieceCount}`), full, COLOR_GOLD)
 		row.button.TextColor3 = if full then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
 	end
@@ -2526,6 +2514,11 @@ local function draw(state)
 
 	for _, stage in GameConfig.Stages do
 		local row = stageRows[stage.id]
+		if state.stageCleared[stage.id] then
+			Art.progress(row.info, 1, 1)
+		else
+			Art.progress(row.info, state.stageHealth[stage.id] or stage.health, stage.health, COLOR_HEALTH, true)
+		end
 		local chest = if stage.chest then `   {stage.chest} chest` else ""
 		local first = if state.firstClears[stage.id] then "" else `   <font color="#F0C450">First clear: +{stage.firstCrowns} Crowns</font>`
 		row.info.Text = `<b>Stage {stage.index}: {stage.name}</b>   Level {stage.level}\n`

@@ -551,7 +551,22 @@ local function refresh(player: Player)
 		estateLeft[key] = math.max(0, castle.build.endsAt - now)
 	end
 
+	-- Seconds until each bar gains its next point (0 when full).
+	local regenIn = {}
+	do
+		local speed = if hasPass(data, "couriers") then StoreConfig.CouriersSpeed else 1
+		for _, pair in {
+			{ "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy },
+			{ "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina },
+			{ "health", GameConfig.HealthRegenSeconds, stats.maxHealth },
+		} do
+			local key = pair[1]
+			regenIn[key] = if data[key] >= pair[3] then 0 else math.max(1, math.ceil((pair[2] - (session.regen[key] or 0)) / speed))
+		end
+	end
+
 	stateRemote:FireClient(player, {
+		regenIn = regenIn,
 		gold = data.gold,
 		level = data.level,
 		xp = data.xp,
@@ -1057,6 +1072,45 @@ function actions.Skill(player: Player, data, id: string)
 	if id == "energy" or id == "stamina" or id == "health" then
 		data[id] += skill.amount
 	end
+end
+
+-- Spends several skill points at once, from the Skill points window.
+-- id is "<skill>:<count>" pairs joined by commas, for example
+-- "energy:3,attack:2". Nothing is bought unless all of it is affordable.
+function actions.SkillMany(player: Player, data, id: string)
+	if type(id) ~= "string" or #id > 200 then
+		return
+	end
+	local plan = {}
+	local total = 0
+	for key, countText in string.gmatch(id, "(%a+):(%d+)") do
+		local skill = skillById[key]
+		local count = tonumber(countText)
+		if not skill or not count or count < 1 or count > 1000 or plan[key] then
+			return
+		end
+		local bought = data.skills[key] or 0
+		for step = 0, count - 1 do
+			total += GameConfig.getSkillCost(skill, bought + step)
+		end
+		plan[key] = count
+	end
+	if next(plan) == nil then
+		return
+	end
+	if data.skillPoints < total then
+		sendToast(player, "Not enough skill points for all of that.")
+		return
+	end
+	data.skillPoints -= total
+	for key, count in plan do
+		local skill = skillById[key]
+		data.skills[key] = (data.skills[key] or 0) + count
+		if key == "energy" or key == "stamina" or key == "health" then
+			data[key] += skill.amount * count
+		end
+	end
+	sendToast(player, `Skill points spent: {total}.`)
 end
 
 function actions.Slot(player: Player, data)
