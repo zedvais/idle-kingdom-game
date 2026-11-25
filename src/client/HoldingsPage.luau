@@ -40,6 +40,7 @@ local shownHolding = nil -- the holding the popup shows
 local drawBonusNow -- set below: fills the income bonus popup
 local timer = { base = 0, at = 0 } -- seconds into the pay cycle at os.clock() `at`
 local building = nil -- { id, left, total, at }: the holding under construction
+local demolishing = false -- a demolish animation is playing
 
 local function holdingById(id: string)
 	for _, holding in GameConfig.Holdings do
@@ -448,8 +449,8 @@ local function buildPopups(ui)
 	w.popupBuild = ui.makeButton(buttons, UDim2.new(0.5, -4, 1, 0), UDim2.new(0.5, 4, 0, 0), colors.buy)
 	w.popupBuild.TextSize = 15
 	w.popupDemolish.Activated:Connect(function()
-		if shownHolding then
-			ui.send("Demolish", shownHolding)
+		if shownHolding and not demolishing then
+			HoldingsPage.demolish(ui, shownHolding)
 		end
 	end)
 	w.popupBuild.Activated:Connect(function()
@@ -527,6 +528,85 @@ function HoldingsPage.build(ui)
 			end
 		end
 	end
+end
+
+-- Demolish: the popup closes, the last card of that holding shakes, sinks
+-- into a cloud of dust and shows the refund, then the server pulls it down.
+function HoldingsPage.demolish(ui, id: string)
+	local state = latest
+	local holding = holdingById(id)
+	local count = state and state.holdings[id] or 0
+	if not holding or count <= 0 then
+		return
+	end
+	local refund = math.floor(GameConfig.getHoldingCost(holding, count - 1) * GameConfig.DemolishRefund)
+	ui.closeModal()
+	local card = nil
+	for _, candidate in landCards do
+		if candidate.frame.Visible and candidate.id == id then
+			card = candidate
+		end
+	end
+	if not card or not w.gateLands() then
+		ui.send("Demolish", id)
+		return
+	end
+	demolishing = true
+	local frame = card.frame
+	local dust = Color3.fromRGB(170, 150, 120)
+	-- Shake.
+	task.spawn(function()
+		for step = 1, 10 do
+			frame.Rotation = if step % 2 == 0 then 2.5 else -2.5
+			task.wait(0.04)
+		end
+		frame.Rotation = 0
+	end)
+	-- Darken and sink the picture.
+	local cover = ui.makeFrame(frame, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.fromRGB(30, 24, 18))
+	cover.BackgroundTransparency = 1
+	cover.ZIndex = 70
+	TweenService:Create(cover, TweenInfo.new(0.9), { BackgroundTransparency = 0.25 }):Play()
+	TweenService:Create(card.picture, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.fromScale(0, 0.7) }):Play()
+	-- Dust clouds rolling out from the bottom.
+	for index = 1, 9 do
+		local puff = ui.makeFrame(frame, UDim2.fromOffset(20, 20), UDim2.new(index / 10, 0, 0.85, 0), dust)
+		puff.AnchorPoint = Vector2.new(0.5, 0.5)
+		puff.ZIndex = 72
+		puff.BackgroundTransparency = 0.2
+		ui.addCorner(puff, 40)
+		task.delay(0.15 + index * 0.03, function()
+			local size = 70 + (index % 3) * 25
+			local tween = TweenService:Create(puff, TweenInfo.new(1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.fromOffset(size, size),
+				Position = UDim2.new(index / 10, (index - 5) * 6, 0.62, 0),
+				BackgroundTransparency = 1,
+			})
+			tween:Play()
+			tween.Completed:Connect(function()
+				puff:Destroy()
+			end)
+		end)
+	end
+	-- "DEMOLISHED" and the refund.
+	local label = ui.makeText(frame, UDim2.new(1, 0, 0, 60), UDim2.new(0, 0, 0.35, 0), Color3.fromRGB(240, 120, 90), 24)
+	label.Font = Enum.Font.GothamBlack
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.RichText = true
+	label.TextStrokeTransparency = 0.3
+	label.ZIndex = 75
+	label.Text = `DEMOLISHED\n<font color="#F0C450">+{Format.short(refund)} {ui.art.Icons.gold}</font>`
+	label.TextTransparency = 1
+	TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
+	task.delay(1.4, function()
+		ui.send("Demolish", id)
+		task.delay(0.4, function()
+			cover:Destroy()
+			label:Destroy()
+			card.picture.Position = UDim2.fromOffset(0, 0)
+			demolishing = false
+		end)
+	end)
 end
 
 -- "+amount gold" floating up from a card, and a quick gold flash.
