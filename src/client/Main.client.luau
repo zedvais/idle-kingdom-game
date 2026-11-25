@@ -275,8 +275,8 @@ local PAGE_GROUPS = {
 	{ name = "Realm", pages = { "Profile", "Keep", "Holdings", "Research", "Bank", "Rebirth" } },
 	{ name = "Daily", pages = { "Bounties", "Festival" } },
 	{ name = "Community", pages = { "Rankings", "Mail" } },
-	{ name = "Campaign", pages = { "Quests", "Foes" } },
-	{ name = "Court", pages = { "Warband", "Inventory", "Relic Hall", "Market" } },
+	{ name = "Campaign", pages = { "Quests", "Foes", "Expeditions", "Chronicle" } },
+	{ name = "Court", pages = { "Warband", "Barracks", "Inventory", "Relic Hall", "Market" } },
 	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
 }
 local PAGE_INFO = {
@@ -295,6 +295,18 @@ local PAGE_INFO = {
 	Mail = {
 		about = "Letters from the court: news, gifts and rewards.",
 		tip = "Festival rank rewards and gifts arrive here. Claim them before deleting the letter.",
+	},
+	Barracks = {
+		about = "Train troops for expeditions. Each type beats one kind of enemy.",
+		tip = "Spearmen beat riders, archers beat spearmen, cavalry beat archers, and siege rams break forts.",
+	},
+	Expeditions = {
+		about = "Send your army out on timed raids for gold, tokens and gear.",
+		tip = "Your whole army marches. Check your power against each enemy before you send it.",
+	},
+	Chronicle = {
+		about = "The War Chronicle: reports of your foe fights and expeditions.",
+		tip = "Expedition reports show each round, so you can see how close the fight was.",
 	},
 	["Relic Hall"] = {
 		about = "Give spare gear away for good, for lasting attack and defense.",
@@ -1237,7 +1249,7 @@ local ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage" } do
+for _, name in { "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)

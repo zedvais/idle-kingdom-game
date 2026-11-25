@@ -17,6 +17,7 @@ local ResearchConfig = require(ReplicatedStorage.Shared.ResearchConfig)
 local ProfileConfig = require(ReplicatedStorage.Shared.ProfileConfig)
 local RelicConfig = require(ReplicatedStorage.Shared.RelicConfig)
 local RebirthConfig = require(ReplicatedStorage.Shared.RebirthConfig)
+local ArmyConfig = require(ReplicatedStorage.Shared.ArmyConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
 local Recruit = require(script.Parent.Recruit)
@@ -98,6 +99,18 @@ local function sendMail(data, title: string, text: string, rewards)
 		if not dropped then
 			table.remove(data.mail)
 		end
+	end
+end
+
+-- Adds a battle report to the War Chronicle. report has title, text, win
+-- (true, false or nil) and optionally rounds.
+local function addReport(data, report)
+	report.id = "r" .. data.chronicleNext
+	data.chronicleNext += 1
+	report.time = os.time()
+	table.insert(data.chronicle, 1, report)
+	while #data.chronicle > ArmyConfig.ChronicleKept do
+		table.remove(data.chronicle)
 	end
 end
 
@@ -572,6 +585,13 @@ local function refresh(player: Player)
 		rebirth = data.rebirth,
 		rebirthStars = RebirthConfig.getStars(data.level),
 		rankings = boardTops,
+		troops = data.troops,
+		training = data.training,
+		trainingLeft = math.max(0, data.training.endsAt - now),
+		expedition = data.expedition,
+		expeditionLeft = math.max(0, data.expedition.endsAt - now),
+		armyCap = ArmyConfig.getCap(data.keep),
+		chronicle = data.chronicle,
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -615,6 +635,15 @@ local function spendGold(player: Player, data, cost: number): boolean
 		return false
 	end
 	data.gold -= cost
+	return true
+end
+
+local function spendCrowns(player: Player, data, cost: number): boolean
+	if data.crowns < cost then
+		sendToast(player, `Not enough Crowns. You need {cost}. Get more at the top of the Shop.`)
+		return false
+	end
+	data.crowns -= cost
 	return true
 end
 
@@ -1092,6 +1121,11 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 			data.tokens += stage.firstTokens
 			first = ` First clear bonus: +{stage.firstCrowns} Crowns, +{stage.firstTokens} tokens!`
 		end
+		addReport(data, {
+			title = `Stage {stage.index}: {stage.name} beaten`,
+			text = `You brought down {stage.name}, {string.lower(stage.title)}, for {Format.short(stage.gold)} gold and {stage.tokens} boss tokens.`,
+			win = true,
+		})
 		sendToast(
 			player,
 			`Stage {stage.index} cleared! {stage.name} is beaten. +{Format.short(stage.gold)} gold, +{stage.xp} XP, +{stage.tokens} boss tokens.{first}`
@@ -1123,6 +1157,11 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 		-- Losing sends the foe back to full health.
 		data.stageHealth[id] = nil
 		countLifetime(data, "knockdowns", 1)
+		addReport(data, {
+			title = `Stage {stage.index}: knocked down by {stage.name}`,
+			text = `{stage.name} took your last health and recovered. Grow stronger and try again.`,
+			win = false,
+		})
 		sendToast(player, `{stage.name} knocked you down and recovered. Rest, grow stronger and try again.`)
 		return "down", damage, hurt
 	end
@@ -1521,6 +1560,188 @@ function actions.Rebirth(player: Player, data, id: string)
 	sendToast(player, `You are reborn! +{stars} Stars ({data.rebirth.stars} in all). Your warband, gear and research came with you.`)
 end
 
+---------------------------------------------------------------------------
+-- Barracks and expeditions
+---------------------------------------------------------------------------
+
+-- Troops at home, in training and away on an expedition.
+local function armyTotal(data): number
+	return ArmyConfig.countTroops(data.troops) + data.training.count + ArmyConfig.countTroops(data.expedition.sent)
+end
+
+-- "3 Spearmen, 1 Archers" for a { [troop key] = count } table.
+local function troopList(troops): string
+	local parts = {}
+	for _, troop in ArmyConfig.Troops do
+		local count = troops[troop.key] or 0
+		if count > 0 then
+			table.insert(parts, `{count} {troop.name}`)
+		end
+	end
+	return if #parts > 0 then table.concat(parts, ", ") else "nobody"
+end
+
+-- Trains a batch of troops. id is "<troop key>:<count>" or "<troop key>:max".
+function actions.TroopTrain(player: Player, data, id: string)
+	local key, countText = string.match(id, "^(%a+):(%w+)$")
+	local troop = key and ArmyConfig.getTroop(key)
+	if not troop then
+		return
+	end
+	if data.level < troop.level then
+		sendToast(player, `{troop.name} can be trained from level {troop.level}.`)
+		return
+	end
+	if data.training.count > 0 then
+		sendToast(player, "The Barracks are busy. Wait for the current batch, or finish it with Crowns.")
+		return
+	end
+	local room = ArmyConfig.getCap(data.keep) - armyTotal(data)
+	if room <= 0 then
+		sendToast(player, "Your army is at its limit. Upgrade the Keep to raise it.")
+		return
+	end
+	local count = if countText == "max" then math.floor(data.gold / troop.cost) else tonumber(countText)
+	count = math.min(math.floor(count or 0), room)
+	if count < 1 then
+		sendToast(player, `Not enough gold. One {troop.name} costs {Format.short(troop.cost)}.`)
+		return
+	end
+	if spendGold(player, data, troop.cost * count) then
+		data.training = { kind = key, count = count, endsAt = os.time() + troop.seconds * count }
+		sendToast(player, `Training {count} {troop.name}. Ready in {math.ceil(troop.seconds * count / 60)} min.`)
+	end
+end
+
+-- Moves a finished batch into the army. Runs every second and on join.
+local function checkTraining(player: Player, data)
+	local training = data.training
+	if training.count <= 0 or os.time() < training.endsAt then
+		return
+	end
+	local troop = ArmyConfig.getTroop(training.kind)
+	if troop then
+		data.troops[troop.key] = (data.troops[troop.key] or 0) + training.count
+		sendToast(player, `{training.count} {troop.name} finished training.`)
+	end
+	data.training = { kind = "", count = 0, endsAt = 0 }
+end
+
+-- Finishes the current batch now for Crowns.
+function actions.TroopFinish(player: Player, data)
+	local training = data.training
+	if training.count <= 0 then
+		return
+	end
+	local cost = ResearchConfig.getFinishCost(math.max(0, training.endsAt - os.time()))
+	if spendCrowns(player, data, cost) then
+		training.endsAt = os.time()
+		checkTraining(player, data)
+	end
+end
+
+-- Sends the whole army at home on an expedition. id is its key.
+function actions.Expedition(player: Player, data, id: string)
+	local expedition = ArmyConfig.getExpedition(id)
+	if not expedition then
+		return
+	end
+	if data.level < expedition.level then
+		sendToast(player, `{expedition.name} opens at level {expedition.level}.`)
+		return
+	end
+	if data.expedition.target ~= "" then
+		sendToast(player, "Your army is already away. Wait for it to come home.")
+		return
+	end
+	if ArmyConfig.countTroops(data.troops) == 0 then
+		sendToast(player, "You have no troops at home. Train some in the Barracks first.")
+		return
+	end
+	data.expedition = { target = id, sent = data.troops, endsAt = os.time() + expedition.minutes * 60 }
+	data.troops = {}
+	sendToast(player, `Your army marches on {expedition.name}. Back in {expedition.minutes} min.`)
+end
+
+-- Fights out an expedition that has ended, brings the survivors home and
+-- hands out the loot. Runs every second and on join.
+local function checkExpedition(player: Player, data)
+	local away = data.expedition
+	if away.target == "" or os.time() < away.endsAt then
+		return
+	end
+	local expedition = ArmyConfig.getExpedition(away.target)
+	local sent = away.sent
+	data.expedition = { target = "", sent = {}, endsAt = 0 }
+	local function bringHome(troops)
+		for key, count in troops do
+			if count > 0 then
+				data.troops[key] = (data.troops[key] or 0) + count
+			end
+		end
+	end
+	if not expedition then
+		bringHome(sent) -- the expedition was taken out of the game
+		return
+	end
+
+	local attack, defense = ArmyConfig.getPower(sent, expedition.enemy)
+	local enemyHealth = expedition.power * ArmyConfig.EnemyHealth
+	local armyHealth = math.max(1, defense * ArmyConfig.ArmyHealth)
+	local damageTaken = 0
+	local rounds = {}
+	for _ = 1, ArmyConfig.Rounds do
+		local dealt = math.floor(attack * random:NextNumber(0.85, 1.15))
+		enemyHealth = math.max(0, enemyHealth - dealt)
+		local taken = 0
+		if enemyHealth > 0 then
+			taken = math.floor(expedition.power * ArmyConfig.EnemyHit * random:NextNumber(0.85, 1.15))
+			damageTaken += taken
+		end
+		table.insert(rounds, { dealt = dealt, taken = taken, enemyLeft = enemyHealth })
+		if enemyHealth <= 0 then
+			break
+		end
+	end
+	local win = enemyHealth <= 0
+	-- Troops lost in proportion to the health lost; a defeat costs a fifth more.
+	local lossShare = math.min(1, damageTaken / armyHealth + (if win then 0 else 0.2))
+	local lost, survivors = {}, {}
+	for key, count in sent do
+		local dead = math.min(count, math.floor(count * lossShare + 0.5))
+		lost[key] = dead
+		survivors[key] = count - dead
+	end
+	bringHome(survivors)
+	countLifetime(data, "expeditions", 1)
+
+	local text
+	if win then
+		local got = {
+			grantReward(player, data, { kind = "gold", minutes = expedition.goldMinutes }, expedition.name),
+			grantReward(player, data, { kind = "tokens", amount = expedition.tokens }, expedition.name),
+		}
+		if expedition.chest and random:NextNumber() < expedition.chestChance then
+			table.insert(got, grantReward(player, data, { kind = "chest", rarity = expedition.chest }, expedition.name))
+		end
+		if expedition.crowns and random:NextNumber() < expedition.crownChance then
+			table.insert(got, grantReward(player, data, { kind = "crowns", amount = expedition.crowns }, expedition.name))
+		end
+		text = `Victory against {ArmyConfig.EnemyNames[expedition.enemy]}. Loot: {table.concat(got, ", ")}. Lost: {troopList(lost)}.`
+		sendToast(player, `Your army won at {expedition.name}! {table.concat(got, ", ")}.`)
+	else
+		text = `Your army was driven back by {ArmyConfig.EnemyNames[expedition.enemy]} and brought home no loot. Lost: {troopList(lost)}.`
+		sendToast(player, `Your army was driven back at {expedition.name}. See the War Chronicle.`)
+	end
+	addReport(data, {
+		title = `Expedition: {expedition.name}`,
+		text = text,
+		win = win,
+		rounds = rounds,
+		enemyHealth = expedition.power * ArmyConfig.EnemyHealth,
+	})
+end
+
 -- Called by Store once Roblox has taken the Robux (or in a Studio test).
 local function grantProduct(player: Player, data, product)
 	if product.group == "crowns" then
@@ -1593,15 +1814,6 @@ function actions.Robux(player: Player, data, id: string)
 	if message then
 		sendToast(player, message)
 	end
-end
-
-local function spendCrowns(player: Player, data, cost: number): boolean
-	if data.crowns < cost then
-		sendToast(player, `Not enough Crowns. You need {cost}. Get more at the top of the Shop.`)
-		return false
-	end
-	data.crowns -= cost
-	return true
 end
 
 -- Buys something in the Crown shop. id is its key.
@@ -2166,6 +2378,8 @@ local function onPlayerAdded(player: Player)
 
 	applyTimeAway(player, data)
 	checkResearch(player, data)
+	checkTraining(player, data)
+	checkExpedition(player, data)
 
 	-- Saves from before titles, first clears and mail.
 	if data.title ~= "" then
@@ -2282,6 +2496,8 @@ task.spawn(function()
 			runAutoQuests(player, data)
 			runAutoBuy(player, data)
 			checkResearch(player, data)
+			checkTraining(player, data)
+			checkExpedition(player, data)
 
 			refresh(player)
 		end

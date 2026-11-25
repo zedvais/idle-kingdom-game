@@ -134,6 +134,12 @@ local function newData()
 		newsSeen = {}, -- [news id] = true once delivered
 		relics = { points = 0, count = 0 },
 		rebirth = { count = 0, stars = 0 },
+		-- Barracks, expeditions and the War Chronicle
+		troops = {}, -- [troop key] = count at home
+		training = { kind = "", count = 0, endsAt = 0 }, -- one batch at a time
+		expedition = { target = "", sent = {}, endsAt = 0 }, -- the army while away
+		chronicle = {}, -- battle reports, newest first
+		chronicleNext = 1,
 		lastSeen = 0,
 	}
 end
@@ -151,7 +157,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth" } do
+	for _, name in { "autoBuy", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default
