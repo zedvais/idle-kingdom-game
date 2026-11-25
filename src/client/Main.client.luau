@@ -1365,10 +1365,14 @@ for slot = 1, GameConfig.MaxSoldierSlots do
 			ui.offerTrain(slot)
 		end
 	end)
-	-- Auto: opens the auto roll window for this slot (it offers the pass
-	-- to players who don't own it).
+	-- Auto: opens the auto roll window for this slot. Without the pass it
+	-- shows as disabled and opens the pass popup instead.
 	row.roll.Activated:Connect(function()
-		openRecruitWindow(slot)
+		if ownsAutoRoll then
+			openRecruitWindow(slot)
+		elseif ui and ui.offerPass then
+			ui.offerPass("autoroll")
+		end
 	end)
 	row.up.Activated:Connect(function()
 		send("MoveSoldier", `{slot}:up`)
@@ -2640,7 +2644,7 @@ local function draw(state)
 				row.rollId = `{slot}:{tier.id}:{soldier.rarity}:this:once`
 			end
 			row.empty = false
-			setButton(row.roll, if ownsAutoRoll then "AUTO" else "AUTO\n<font size=\"10\">pass</font>", true, COLOR_ACTION)
+			setButton(row.roll, "AUTO", ownsAutoRoll, COLOR_ACTION)
 			row.release.Visible = true
 			setButton(row.release, "\u{1F5D1}\u{FE0F}", true, Color3.fromRGB(120, 40, 36))
 		else
@@ -2658,7 +2662,7 @@ local function draw(state)
 			-- RECRUIT makes one roll; AUTO opens the auto roll window.
 			row.train.Visible = true
 			setButton(row.train, `RECRUIT\n{Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_BUY)
-			setButton(row.roll, if ownsAutoRoll then "AUTO" else "AUTO\n<font size=\"10\">pass</font>", true, COLOR_ACTION)
+			setButton(row.roll, "AUTO", ownsAutoRoll, COLOR_ACTION)
 		end
 		-- Empty slots are short cards (no gear tiles).
 		row.frame.Size = UDim2.new(1, -10, 0, if soldier then 160 else 76)
