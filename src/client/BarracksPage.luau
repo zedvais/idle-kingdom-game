@@ -17,7 +17,21 @@ local latest = nil -- the last state drawn, for the Train X popup
 local function canTrain(state, troop): number
 	local total = ArmyConfig.countTroops(state.troops) + ArmyConfig.countTroops(state.expedition.sent) + state.training.count
 	local room = state.armyCap - total
-	return math.max(0, math.min(room, math.floor(state.gold / troop.cost)))
+	local most = math.min(room, math.floor(state.gold / troop.cost))
+	for resource, amount in troop.resources or {} do
+		most = math.min(most, math.floor((state.estate.stock[resource] or 0) / amount))
+	end
+	return math.max(0, most)
+end
+
+-- "3 grain, 2 lumber" for one troop.
+local function resourceText(troop): string
+	local parts = {}
+	for resource, amount in troop.resources or {} do
+		table.insert(parts, `{amount} {resource}`)
+	end
+	table.sort(parts)
+	return table.concat(parts, ", ")
 end
 
 function BarracksPage.build(ui)
@@ -52,7 +66,7 @@ function BarracksPage.build(ui)
 			end
 			ui.askAmount({
 				title = `Train {troop.name}`,
-				note = `<b>{troop.name}</b>: {Format.short(troop.cost)} gold and {troop.seconds}s each.`,
+				note = `<b>{troop.name}</b>: {Format.short(troop.cost)} gold, {resourceText(troop)} and {troop.seconds}s each.`,
 				max = most,
 				confirm = "Train",
 				onConfirm = function(amount)
@@ -90,7 +104,7 @@ function BarracksPage.draw(state, ui)
 		local card = cards[troop.key]
 		local have = state.troops[troop.key] or 0
 		card.info.Text = `<b>{troop.name}</b>   you have {have}\n{troop.note}\n`
-			.. `Attack {troop.attack}, defense {troop.defense}\n{Format.short(troop.cost)} gold, {troop.seconds}s each`
+			.. `Attack {troop.attack}, defense {troop.defense}\n{Format.short(troop.cost)} gold, {resourceText(troop)}, {troop.seconds}s each`
 		local most = canTrain(state, troop)
 		if state.level < troop.level then
 			ui.setButton(card.button, `Level {troop.level}`, false, colors.buy)
@@ -102,7 +116,7 @@ function BarracksPage.draw(state, ui)
 			ui.setButton(card.button, "Army full", false, colors.buy)
 			ui.setButton(card.many, "Army full", false, colors.buy)
 		else
-			ui.setButton(card.button, "Train 1", state.gold >= troop.cost, colors.buy)
+			ui.setButton(card.button, "Train 1", most >= 1, colors.buy)
 			ui.setButton(card.many, "Train X", most >= 1, colors.buy)
 		end
 	end

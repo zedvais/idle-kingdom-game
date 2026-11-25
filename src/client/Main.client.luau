@@ -12,6 +12,7 @@ local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
 local BountyConfig = require(Shared:WaitForChild("BountyConfig"))
 local FestivalConfig = require(Shared:WaitForChild("FestivalConfig"))
 local ResearchConfig = require(Shared:WaitForChild("ResearchConfig"))
+local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -354,7 +355,7 @@ addStroke(main)
 -- Every page: its group, a one line description, and a tip shown until
 -- the player presses Got it.
 local PAGE_GROUPS = {
-	{ name = "Realm", pages = { "Keep", "Holdings", "Research", "Bank" } },
+	{ name = "Realm", pages = { "Keep", "Estate", "Holdings", "Research", "Bank" } },
 	{ name = "Daily", pages = { "Bounties", "Festival" } },
 	{ name = "Campaign", pages = { "Quests", "Foes", "Expeditions" } },
 	{ name = "Arena", pages = { "Rankings", "War Chronicle" } },
@@ -362,6 +363,10 @@ local PAGE_GROUPS = {
 	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
 }
 local PAGE_INFO = {
+	Estate = {
+		about = "Lumber, stone, iron and grain, your buildings, defenses and castles.",
+		tip = "Upgrade the Lumber Camp and Quarry first. Resources pay for buildings, Keep upgrades and troops, and stop at your storage cap.",
+	},
 	Rankings = {
 		about = "The mightiest players across every server.",
 		tip = "Scores are sent while you play and the boards refresh every couple of minutes. Fights with other players come here later.",
@@ -1398,7 +1403,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -1994,11 +1999,13 @@ local function draw(state)
 	local keepText = `<b>{string.upper(keep.name)}</b>   Keep level {state.keep} of {#GameConfig.KeepLevels}\n`
 		.. `Income, attack and defense +{math.floor(keep.bonus * 100)}%`
 	if nextKeep then
-		keepText ..= `\nNext: {nextKeep.name}, +{math.floor(nextKeep.bonus * 100)}%`
+		local keepCost = table.clone(nextKeep.resources or {})
+		keepCost.gold = nextKeep.cost
+		keepText ..= `\nNext: {nextKeep.name}, +{math.floor(nextKeep.bonus * 100)}%. Costs {EstateConfig.describeCost(keepCost, Format.short)} (resources from the Estate).`
 		if state.level < nextKeep.level then
 			setButton(keepButton, `Level {nextKeep.level}\n{Format.short(nextKeep.cost)}`, false, COLOR_BUY)
 		else
-			setButton(keepButton, `Upgrade\n{Format.short(nextKeep.cost)}`, gold >= nextKeep.cost, COLOR_BUY)
+			setButton(keepButton, `Upgrade\n{Format.short(nextKeep.cost)}`, EstateConfig.canPay(keepCost, gold, state.estate.stock), COLOR_BUY)
 		end
 	else
 		setButton(keepButton, "Max level", false, COLOR_BUY)

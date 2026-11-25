@@ -8,14 +8,15 @@
 local ArmyConfig = {}
 
 -- strong = the enemy kind this troop hits harder (x CounterBonus).
+-- resources = what each troop costs from the Estate, on top of gold.
 -- siege only works well against forts; against anything else it hits at
 -- SiegeOpenField.
 ArmyConfig.Troops = {
-	{ key = "spear", name = "Spearmen", level = 1, cost = 200, seconds = 6, attack = 4, defense = 6, strong = "cavalry", note = "Strong against cavalry" },
-	{ key = "archer", name = "Archers", level = 1, cost = 260, seconds = 8, attack = 6, defense = 3, strong = "spear", note = "Strong against spearmen" },
-	{ key = "cavalry", name = "Cavalry", level = 5, cost = 450, seconds = 14, attack = 9, defense = 5, strong = "archer", note = "Strong against archers" },
-	{ key = "knight", name = "Knights", level = 15, cost = 1200, seconds = 30, attack = 16, defense = 14, note = "Tough all-rounders" },
-	{ key = "siege", name = "Siege Rams", level = 25, cost = 2500, seconds = 60, attack = 30, defense = 4, strong = "fort", note = "Breaks forts, weak in the open" },
+	{ key = "spear", name = "Spearmen", level = 1, cost = 200, seconds = 6, attack = 4, defense = 6, strong = "cavalry", resources = { grain = 3 }, note = "Strong against cavalry" },
+	{ key = "archer", name = "Archers", level = 1, cost = 260, seconds = 8, attack = 6, defense = 3, strong = "spear", resources = { grain = 3, lumber = 2 }, note = "Strong against spearmen" },
+	{ key = "cavalry", name = "Cavalry", level = 5, cost = 450, seconds = 14, attack = 9, defense = 5, strong = "archer", resources = { grain = 6 }, note = "Strong against archers" },
+	{ key = "knight", name = "Knights", level = 15, cost = 1200, seconds = 30, attack = 16, defense = 14, resources = { grain = 8, iron = 4 }, note = "Tough all-rounders" },
+	{ key = "siege", name = "Siege Rams", level = 25, cost = 2500, seconds = 60, attack = 30, defense = 4, strong = "fort", resources = { lumber = 40, iron = 10 }, note = "Breaks forts, weak in the open" },
 }
 ArmyConfig.CounterBonus = 1.5
 ArmyConfig.SiegeOpenField = 0.5
@@ -35,6 +36,7 @@ ArmyConfig.CapPerKeep = 20
 
 -- Expeditions. power = the enemy's strength; your attack power must beat
 -- it. Rewards: `goldMinutes` of holding income (with the usual floor),
+-- `plunder` resources (up to your storage),
 -- boss tokens, and a chance of a gear chest and of Crowns.
 ArmyConfig.Expeditions = {
 	{
@@ -45,6 +47,7 @@ ArmyConfig.Expeditions = {
 		enemy = "cavalry",
 		power = 60,
 		goldMinutes = 20,
+		plunder = { lumber = 600, grain = 300 },
 		tokens = 2,
 		chest = "Common",
 		chestChance = 0.3,
@@ -57,6 +60,7 @@ ArmyConfig.Expeditions = {
 		enemy = "spear",
 		power = 200,
 		goldMinutes = 40,
+		plunder = { grain = 1500, lumber = 1000 },
 		tokens = 4,
 		chest = "Uncommon",
 		chestChance = 0.35,
@@ -69,6 +73,7 @@ ArmyConfig.Expeditions = {
 		enemy = "archer",
 		power = 600,
 		goldMinutes = 60,
+		plunder = { stone = 3000, iron = 600 },
 		tokens = 6,
 		chest = "Rare",
 		chestChance = 0.35,
@@ -81,6 +86,7 @@ ArmyConfig.Expeditions = {
 		enemy = "fort",
 		power = 1800,
 		goldMinutes = 100,
+		plunder = { stone = 8000, iron = 2000 },
 		tokens = 10,
 		chest = "Epic",
 		chestChance = 0.4,
@@ -95,6 +101,7 @@ ArmyConfig.Expeditions = {
 		enemy = "mixed",
 		power = 6000,
 		goldMinutes = 150,
+		plunder = { iron = 8000, stone = 15000 },
 		tokens = 16,
 		chest = "Legendary",
 		chestChance = 0.4,
@@ -109,6 +116,7 @@ ArmyConfig.Expeditions = {
 		enemy = "fort",
 		power = 20000,
 		goldMinutes = 200,
+		plunder = { iron = 25000, stone = 40000, lumber = 40000 },
 		tokens = 25,
 		chest = "Mythic",
 		chestChance = 0.35,

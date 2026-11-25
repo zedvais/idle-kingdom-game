@@ -18,6 +18,7 @@ local ProfileConfig = require(ReplicatedStorage.Shared.ProfileConfig)
 local RelicConfig = require(ReplicatedStorage.Shared.RelicConfig)
 local RebirthConfig = require(ReplicatedStorage.Shared.RebirthConfig)
 local ArmyConfig = require(ReplicatedStorage.Shared.ArmyConfig)
+local EstateConfig = require(ReplicatedStorage.Shared.EstateConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
 local Recruit = require(script.Parent.Recruit)
@@ -206,6 +207,8 @@ local function getPerkBonus(data, gear)
 	for key, amount in RebirthConfig.PerStar do
 		total[key] += amount * data.rebirth.stars
 	end
+	-- Walls and Archer Towers on the Estate.
+	total.defense += EstateConfig.summarize(data.estate.castles).defense
 	return total
 end
 
@@ -533,6 +536,11 @@ local function refresh(player: Player)
 		trophyProgressList[trophy.id] = math.min(trophy.value, trophyProgress(data, trophy.kind))
 	end
 
+	local estateLeft = {} -- [castle key] = seconds left on its upgrade
+	for key, castle in data.estate.castles do
+		estateLeft[key] = math.max(0, castle.build.endsAt - now)
+	end
+
 	stateRemote:FireClient(player, {
 		gold = data.gold,
 		level = data.level,
@@ -612,6 +620,9 @@ local function refresh(player: Player)
 		expeditionLeft = math.max(0, data.expedition.endsAt - now),
 		armyCap = ArmyConfig.getCap(data.keep),
 		chronicle = data.chronicle,
+		estate = data.estate,
+		estateSummary = EstateConfig.summarize(data.estate.castles),
+		estateLeft = estateLeft,
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -682,6 +693,67 @@ local function spendCrowns(player: Player, data, cost: number): boolean
 	end
 	data.crowns -= cost
 	return true
+end
+
+---------------------------------------------------------------------------
+-- Estate: resources, buildings and castles (numbers in EstateConfig)
+---------------------------------------------------------------------------
+
+-- Adds to a resource, up to its storage cap. Stock already over the cap
+-- (from before a cap change) is never taken away.
+local function addStock(data, resource: string, amount: number, caps)
+	local stock = data.estate.stock
+	local have = stock[resource] or 0
+	if not isAmount(amount) or amount <= 0 or have >= caps[resource] then
+		return
+	end
+	stock[resource] = math.min(caps[resource], have + amount)
+end
+
+-- Takes a cost ({ gold, lumber, ... }) if everything is covered. Hard
+-- checks every part first, so nothing is taken unless all of it can be.
+local function payCost(player: Player, data, cost, quiet: boolean?): boolean
+	for _, amount in cost do
+		if not isAmount(amount) then
+			return false
+		end
+	end
+	if not isAmount(data.gold) or not EstateConfig.canPay(cost, data.gold, data.estate.stock) then
+		if not quiet then
+			sendToast(player, `Not enough. This needs {EstateConfig.describeCost(cost, Format.short)}.`)
+		end
+		return false
+	end
+	data.gold -= cost.gold or 0
+	for _, resource in EstateConfig.Resources do
+		data.estate.stock[resource.key] = (data.estate.stock[resource.key] or 0) - (cost[resource.key] or 0)
+	end
+	return true
+end
+
+-- Finishes any upgrades whose time is up.
+local function checkEstateBuilds(player: Player, data)
+	local now = os.time()
+	for castleKey, castle in data.estate.castles do
+		local build = castle.build
+		if build.key ~= "" and now >= build.endsAt then
+			local building = EstateConfig.getBuilding(build.key)
+			castle.levels[build.key] = build.level
+			castle.build = { key = "", level = 0, endsAt = 0 }
+			local where = EstateConfig.getCastle(castleKey)
+			if building then
+				sendToast(player, `{building.name} reached level {build.level} at {where and where.name or castleKey}.`)
+			end
+		end
+	end
+end
+
+-- Production for `seconds` of time, from every castle.
+local function produceEstate(data, seconds: number)
+	local summary = EstateConfig.summarize(data.estate.castles)
+	for resource, rate in summary.rates do
+		addStock(data, resource, rate / 3600 * seconds, summary.caps)
+	end
 end
 
 -- Who a member is, for messages.
@@ -879,7 +951,9 @@ function actions.Keep(player: Player, data)
 		sendToast(player, `You need level {nextKeep.level} for the {nextKeep.name}.`)
 		return
 	end
-	if spendGold(player, data, nextKeep.cost) then
+	local cost = table.clone(nextKeep.resources or {})
+	cost.gold = nextKeep.cost
+	if payCost(player, data, cost) then
 		data.keep += 1
 		sendToast(player, `Your home is now the {nextKeep.name}! +{math.floor(nextKeep.bonus * 100)}% income, attack and defense.`)
 	end
@@ -1770,11 +1844,19 @@ function actions.TroopTrain(player: Player, data, id: string)
 		return
 	end
 	count = math.min(math.floor(count), room)
+	-- Troops also cost resources (grain, and iron or lumber for some).
+	for resource, amount in troop.resources or {} do
+		count = math.min(count, math.floor((data.estate.stock[resource] or 0) / amount))
+	end
 	if count < 1 then
 		sendToast(player, `Not enough gold. One {troop.name} costs {Format.short(troop.cost)}.`)
 		return
 	end
-	if spendGold(player, data, troop.cost * count) then
+	local cost = { gold = troop.cost * count }
+	for resource, amount in troop.resources or {} do
+		cost[resource] = amount * count
+	end
+	if payCost(player, data, cost) then
 		data.training = { kind = key, count = count, endsAt = os.time() + troop.seconds * count }
 		sendToast(player, `Training {count} {troop.name}. Ready in {math.ceil(troop.seconds * count / 60)} min.`)
 	end
@@ -1890,6 +1972,12 @@ local function checkExpedition(player: Player, data)
 		}
 		if expedition.chest and random:NextNumber() < expedition.chestChance then
 			table.insert(got, grantReward(player, data, { kind = "chest", rarity = expedition.chest }, expedition.name))
+		end
+		-- Plunder: resources, up to your storage.
+		local summary = EstateConfig.summarize(data.estate.castles)
+		for resource, amount in expedition.plunder or {} do
+			addStock(data, resource, amount, summary.caps)
+			table.insert(got, `{Format.short(amount)} {resource}`)
 		end
 		if expedition.crowns and random:NextNumber() < expedition.crownChance then
 			table.insert(got, grantReward(player, data, { kind = "crowns", amount = expedition.crowns }, expedition.name))
@@ -2235,6 +2323,64 @@ function actions.ResearchFinish(player: Player, data)
 	end
 end
 
+-- Starts an upgrade. id is "castle:building", e.g. "home:quarry".
+function actions.EstateBuild(player: Player, data, id: string)
+	local castleKey, buildingKey = string.match(id, "^(%a+):(%a+)$")
+	local castle = castleKey and data.estate.castles[castleKey]
+	local building = buildingKey and EstateConfig.getBuilding(buildingKey)
+	if not castle or not building then
+		return
+	end
+	checkEstateBuilds(player, data)
+	if castle.build.key ~= "" then
+		sendToast(player, "This castle's builder is busy. Wait, or finish the current upgrade with Crowns.")
+		return
+	end
+	if data.level < building.level then
+		sendToast(player, `The {building.name} can be built from level {building.level}.`)
+		return
+	end
+	local level = castle.levels[buildingKey] or 0
+	if level >= EstateConfig.MaxLevel then
+		sendToast(player, `The {building.name} is at its top level.`)
+		return
+	end
+	if payCost(player, data, EstateConfig.getCost(building, level)) then
+		local seconds = EstateConfig.getSeconds(building, level)
+		castle.build = { key = buildingKey, level = level + 1, endsAt = os.time() + seconds }
+		sendToast(player, `Building {building.name} level {level + 1}. Ready in {math.ceil(seconds / 60)} min.`)
+	end
+end
+
+-- Finishes a castle's current upgrade with Crowns. id is the castle key.
+function actions.EstateFinish(player: Player, data, id: string)
+	local castle = data.estate.castles[id]
+	if not castle or castle.build.key == "" then
+		return
+	end
+	local cost = ResearchConfig.getFinishCost(math.max(0, castle.build.endsAt - os.time()))
+	if spendCrowns(player, data, cost) then
+		castle.build.endsAt = os.time()
+		checkEstateBuilds(player, data)
+	end
+end
+
+-- Buys another castle. id is its key.
+function actions.CastleBuy(player: Player, data, id: string)
+	local castle = EstateConfig.getCastle(id)
+	if not castle or not castle.cost or data.estate.castles[id] then
+		return
+	end
+	if data.level < castle.level then
+		sendToast(player, `{castle.name} can be claimed from level {castle.level}.`)
+		return
+	end
+	if payCost(player, data, castle.cost) then
+		data.estate.castles[id] = { levels = {}, build = { key = "", level = 0, endsAt = 0 } }
+		sendToast(player, `{castle.name} is yours! It has its own builder and buildings.`)
+	end
+end
+
 ---------------------------------------------------------------------------
 -- Festival leaderboard, shared by every server through an OrderedDataStore
 ---------------------------------------------------------------------------
@@ -2565,6 +2711,9 @@ local function applyTimeAway(player: Player, data)
 	data.stamina = math.max(data.stamina, math.min(stats.maxStamina, data.stamina + math.floor(regenSeconds / GameConfig.StaminaRegenSeconds)))
 	data.health = math.max(data.health, math.min(stats.maxHealth, data.health + math.floor(regenSeconds / GameConfig.HealthRegenSeconds)))
 
+	-- The Estate keeps working while you are away, up to your storage.
+	produceEstate(data, seconds)
+
 	local nightWatch = hasPass(data, "nightwatch")
 	local maxSeconds = if nightWatch then StoreConfig.NightWatchHours * 3600 else GameConfig.OfflineMaxSeconds
 	local rate = if nightWatch then StoreConfig.NightWatchRate else GameConfig.OfflineRate
@@ -2754,6 +2903,8 @@ task.spawn(function()
 			checkResearch(player, data)
 			checkTraining(player, data)
 			checkExpedition(player, data)
+			produceEstate(data, 1)
+			checkEstateBuilds(player, data)
 
 			refresh(player)
 		end

@@ -14,7 +14,7 @@ function ExpeditionsPage.build(ui)
 	local page = ui.pages.Expeditions
 	status = ui.makeRow(page, ui.nextOrder(), 74, false)
 	status.RichText = true
-	local grid = ui.makeGrid(page, ui.nextOrder(), 150, 2)
+	local grid = ui.makeGrid(page, ui.nextOrder(), 170, 2)
 	for _, expedition in ArmyConfig.Expeditions do
 		local info, button = ui.makeCard(grid)
 		info.RichText = true
@@ -50,6 +50,9 @@ function ExpeditionsPage.draw(state, ui)
 		local extras = {}
 		if expedition.chest then
 			table.insert(extras, `{math.floor(expedition.chestChance * 100)}% {expedition.chest} chest`)
+		end
+		for resource, amount in expedition.plunder or {} do
+			table.insert(extras, 1, `{Format.short(amount)} {resource}`)
 		end
 		if expedition.crowns then
 			table.insert(extras, `{math.floor(expedition.crownChance * 100)}% {expedition.crowns} Crowns`)

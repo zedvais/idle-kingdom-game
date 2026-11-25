@@ -4,6 +4,7 @@ local DataStoreService = game:GetService("DataStoreService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
+local EstateConfig = require(ReplicatedStorage.Shared.EstateConfig)
 
 local PlayerData = {}
 
@@ -153,6 +154,14 @@ local function newData()
 		training = { kind = "", count = 0, endsAt = 0 }, -- one batch at a time
 		expedition = { target = "", sent = {}, endsAt = 0 }, -- the army while away
 		chronicle = {}, -- battle reports, newest first
+		-- Estate: resources in stock, and each castle you own with its
+		-- building levels and the upgrade its builder is working on.
+		estate = {
+			stock = table.clone(EstateConfig.StartingStock),
+			castles = {
+				home = { levels = {}, build = { key = "", level = 0, endsAt = 0 } },
+			},
+		},
 		chronicleNext = 1,
 		lastSeen = 0,
 	}
@@ -171,7 +180,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition" } do
+	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default
@@ -179,6 +188,28 @@ local function repair(data)
 		end
 	end
 	data.foes = nil -- replaced by stages
+	-- Every castle needs its levels and builder, and the home castle exists.
+	local estate = data.estate
+	for _, resource in EstateConfig.Resources do
+		if type(estate.stock[resource.key]) ~= "number" then
+			estate.stock[resource.key] = EstateConfig.StartingStock[resource.key] or 0
+		end
+	end
+	if type(estate.castles.home) ~= "table" then
+		estate.castles.home = { levels = {}, build = { key = "", level = 0, endsAt = 0 } }
+	end
+	for key, castle in estate.castles do
+		if type(castle) ~= "table" or not EstateConfig.getCastle(key) then
+			estate.castles[key] = nil
+		else
+			if type(castle.levels) ~= "table" then
+				castle.levels = {}
+			end
+			if type(castle.build) ~= "table" or type(castle.build.key) ~= "string" then
+				castle.build = { key = "", level = 0, endsAt = 0 }
+			end
+		end
+	end
 	-- Old Relic Hall saves only kept points; the hall now keeps the items.
 	if data.relics.points ~= nil then
 		data.relics.points = nil

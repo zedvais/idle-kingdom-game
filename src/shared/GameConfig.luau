@@ -114,17 +114,18 @@ GameConfig.Holdings = {
 
 ---------------------------------------------------------------------------
 -- Keep: your home. Each upgrade adds to income, attack and defense.
+-- Upgrades cost gold plus Estate resources (`resources`).
 ---------------------------------------------------------------------------
 
 GameConfig.KeepLevels = {
 	{ name = "Timber Hall", level = 1, cost = 0, bonus = 0 },
-	{ name = "Palisade Fort", level = 3, cost = 5000, bonus = 0.05 },
-	{ name = "Stone Tower", level = 6, cost = 40000, bonus = 0.1 },
-	{ name = "Motte Castle", level = 10, cost = 250000, bonus = 0.16 },
-	{ name = "Curtain-Wall Keep", level = 14, cost = 1500000, bonus = 0.23 },
-	{ name = "Fortress of the Vale", level = 18, cost = 8000000, bonus = 0.31 },
-	{ name = "Highcrown Citadel", level = 23, cost = 45000000, bonus = 0.4 },
-	{ name = "Sunspire Palace", level = 28, cost = 250000000, bonus = 0.5 },
+	{ name = "Palisade Fort", level = 3, cost = 5000, resources = { lumber = 300, stone = 150 }, bonus = 0.05 },
+	{ name = "Stone Tower", level = 6, cost = 40000, resources = { lumber = 1500, stone = 1800 }, bonus = 0.1 },
+	{ name = "Motte Castle", level = 10, cost = 250000, resources = { lumber = 8000, stone = 12000, iron = 800 }, bonus = 0.16 },
+	{ name = "Curtain-Wall Keep", level = 14, cost = 1500000, resources = { lumber = 30000, stone = 50000, iron = 4000 }, bonus = 0.23 },
+	{ name = "Fortress of the Vale", level = 18, cost = 8000000, resources = { lumber = 120000, stone = 180000, iron = 18000 }, bonus = 0.31 },
+	{ name = "Highcrown Citadel", level = 23, cost = 45000000, resources = { lumber = 450000, stone = 650000, iron = 70000 }, bonus = 0.4 },
+	{ name = "Sunspire Palace", level = 28, cost = 250000000, resources = { lumber = 1800000, stone = 2500000, iron = 280000 }, bonus = 0.5 },
 }
 
 ---------------------------------------------------------------------------
