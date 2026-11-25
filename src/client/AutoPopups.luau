@@ -91,7 +91,9 @@ local function buildAutoQuest(ui)
 		if not latest then
 			return
 		end
-		quest.on = latest.autoQuestOn == true
+		-- The switch starts on the opposite of now: open it while running
+		-- and Save turns it off; open it while off and Save turns it on.
+		quest.on = latest.autoQuestOn ~= true
 		quest.mode = latest.autoQuestMode or "last"
 		ui.openModal("AutoQuest")
 	end
@@ -191,7 +193,7 @@ local function buildAutoBuy(ui)
 			return
 		end
 		local rule = latest.autoBuy
-		buy.on = rule.on == true
+		buy.on = rule.on ~= true -- starts on the opposite of now (see above)
 		buy.slots = table.clone(rule.slots)
 		buy.rarity = rule.minRarity
 		buy.minPrice = rule.minPrice

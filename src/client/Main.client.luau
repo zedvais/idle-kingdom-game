@@ -2859,7 +2859,12 @@ do
 		local auto = state.autoRoll
 		if auto.on then
 			local waiting = if auto.waiting then " Waiting for gold." else ""
-			chanceText.Text ..= `\nAuto rolling {auto.tier} for {auto.rarity}: {auto.rolls} rolls, {Format.short(auto.spent)} gold so far.{waiting}`
+			local stopped = 0
+			for _ in auto.skip or {} do
+				stopped += 1
+			end
+			local stoppedText = if stopped > 0 then ` {stopped} slot{if stopped == 1 then "" else "s"} stopped by hand.` else ""
+			chanceText.Text ..= `\nAuto rolling {auto.tier} for {auto.rarity}: {auto.rolls} rolls, {Format.short(auto.spent)} gold so far.{waiting}{stoppedText} Stop single slots with STOP on the Warband rows, or everything here.`
 		elseif state.passes.autoroll then
 			chanceText.Text ..= `\nAuto roll makes {GameConfig.AutoRollsPerTick} roll a second until it hits, gold runs out or you stop it.`
 		else
@@ -2867,7 +2872,7 @@ do
 		end
 		local ready = state.level >= tier.level and gold >= rollCost and scopeCount(state, chosenScope) > 0
 		if auto.on then
-			startButton.Text = "STOP AUTO ROLL"
+			startButton.Text = "STOP ALL AUTO ROLL"
 			startButton.BackgroundColor3 = COLOR_ACTION
 			startButton.TextColor3 = Color3.new(1, 1, 1)
 		else
