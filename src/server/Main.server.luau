@@ -84,6 +84,21 @@ local function sendFx(player: Player, kind: string, info)
 	fxRemote:FireClient(player, kind, info)
 end
 
+-- One recruit roll for a warband slot, for the slot's rolling animation.
+local function sendRollFx(player: Player, slot: number, soldier, kept: boolean, target: string)
+	local attack, defense = GameConfig.getSoldierStats(soldier)
+	sendFx(player, "roll", {
+		slot = slot,
+		rarity = soldier.rarity,
+		class = soldier.class,
+		name = soldier.name,
+		attack = attack,
+		defense = defense,
+		kept = kept,
+		target = target,
+	})
+end
+
 -- Puts a letter in the player's mail. rewards is a list of rewards to
 -- claim (see StoreConfig), or nil for a letter that only tells something.
 local function sendMail(data, title: string, text: string, rewards)
@@ -1193,7 +1208,10 @@ function actions.Roll(player: Player, data, id: string)
 		data.nextItemId += 1
 		track(data, "rolls", 1)
 		local kept = not data.crew[slot] or GameConfig.getRarityRank(soldier.rarity) >= targetRank
-		sendFx(player, "soldier", { rarity = soldier.rarity, name = `{soldier.class} {soldier.name}`, tier = tier.id, kept = kept })
+		sendRollFx(player, slot, soldier, kept, rarityId)
+		if kept and GameConfig.getRarityRank(soldier.rarity) >= GameConfig.getRarityRank("Legendary") then
+			sendFx(player, "soldier", { rarity = soldier.rarity, name = `{soldier.class} {soldier.name}`, tier = tier.id, kept = kept })
+		end
 		if kept then
 			data.crew[slot] = soldier
 			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {slot}.`)
@@ -1215,7 +1233,25 @@ function actions.Roll(player: Player, data, id: string)
 	auto.spent = 0
 	auto.whenBroke = if once == "stop" then "stop" else "wait"
 	auto.waiting = false
+	auto.skip = {}
 	sendToast(player, `Auto roll started: {tier.id} recruits until {rarityId} or better.`)
+end
+
+-- Stops auto roll on one slot (it keeps whoever is there); the others go on.
+function actions.AutoRollSkip(player: Player, data, id: string)
+	local slot = tonumber(id)
+	local auto = data.autoRoll
+	if not slot or data.crew[slot] == nil or not auto.on then
+		return
+	end
+	auto.skip = auto.skip or {}
+	auto.skip[tostring(slot)] = true
+	if auto.scope == "this" and auto.slot == slot then
+		auto.on = false
+		sendToast(player, `Auto roll stopped on slot {slot} after {auto.rolls} rolls.`)
+	else
+		sendToast(player, `Slot {slot} keeps its soldier. Auto roll goes on for the other slots.`)
+	end
 end
 
 -- Stops auto roll. id is ignored.
@@ -2701,13 +2737,17 @@ local function runAutoRoll(player: Player, data)
 	for _ = 1, GameConfig.AutoRollsPerTick do
 		-- The next slot to roll for.
 		local target = nil
+		local skip = auto.skip or {}
 		if auto.scope == "this" then
 			-- Rolls until a hit replaces whoever is in the slot.
-			if data.crew[auto.slot] ~= nil then
+			if data.crew[auto.slot] ~= nil and not skip[tostring(auto.slot)] then
 				target = auto.slot
 			end
 		else
 			for slot, soldier in data.crew do
+				if skip[tostring(slot)] then
+					continue
+				end
 				if not soldier or (auto.scope == "below" and GameConfig.getRarityRank(soldier.rarity) < targetRank) then
 					target = slot
 					break
@@ -2742,7 +2782,9 @@ local function runAutoRoll(player: Player, data)
 		track(data, "rolls", 1)
 		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
 		data.nextItemId += 1
-		if GameConfig.getRarityRank(soldier.rarity) >= targetRank then
+		local hit = GameConfig.getRarityRank(soldier.rarity) >= targetRank
+		sendRollFx(player, target, soldier, hit, auto.rarity)
+		if hit then
 			data.crew[target] = soldier
 			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {target} after {auto.rolls} rolls.`)
 			if auto.scope == "this" then

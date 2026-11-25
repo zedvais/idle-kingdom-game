@@ -687,6 +687,10 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt, send)
 			})
 		elseif kind == "chestGot" then
 			Fx.chestGot(info)
+		elseif kind == "roll" then
+			if Fx.onRoll then
+				Fx.onRoll(info)
+			end
 		elseif kind == "soldier" then
 			info.what = "soldier"
 			Fx.reveal(info)

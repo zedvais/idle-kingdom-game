@@ -1528,6 +1528,7 @@ end
 ui = {
 	art = Art,
 	itemArt = ItemArt,
+	crewRows = crewRows,
 	pages = pages,
 	player = player,
 	colors = {
@@ -1581,7 +1582,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
