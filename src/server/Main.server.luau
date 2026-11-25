@@ -395,6 +395,7 @@ local function refresh(player: Player)
 		passSecondsLeft = StoreConfig.getSeasonSecondsLeft(now),
 		weekly = data.weekly,
 		weekSecondsLeft = StoreConfig.getWeekSecondsLeft(now),
+		tipsSeen = data.tipsSeen,
 	})
 
 	local leaderstats = player:FindFirstChild("leaderstats")
@@ -1273,6 +1274,18 @@ function actions.WeeklyClaim(player: Player, data, id: string)
 			sendToast(player, `Challenge done: +{challenge.points} Royal Pass points.`)
 			return
 		end
+	end
+end
+
+-- Hides a page's tip for good. id is the page name.
+function actions.Tip(player: Player, data, id: string)
+	-- The client names the page, so keep the list small and the names short.
+	local count = 0
+	for _ in data.tipsSeen do
+		count += 1
+	end
+	if #id > 0 and #id <= 20 and count < 30 then
+		data.tipsSeen[id] = true
 	end
 end
 

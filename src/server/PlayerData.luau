@@ -98,6 +98,7 @@ local function newData()
 			play = 0,
 			claimed = {}, -- [challenge key] = true
 		},
+		tipsSeen = {}, -- [page name] = true once its tip is dismissed
 		lastSeen = 0,
 	}
 end

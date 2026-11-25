@@ -18,24 +18,31 @@ local stateRemote = remotes:WaitForChild("State")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local COLOR_BACKGROUND = Color3.fromRGB(24, 30, 27)
-local COLOR_PANEL = Color3.fromRGB(36, 45, 40)
-local COLOR_ROW = Color3.fromRGB(50, 61, 54)
-local COLOR_HEADER = Color3.fromRGB(205, 178, 120)
-local COLOR_TEXT = Color3.fromRGB(236, 232, 220)
-local COLOR_DIM = Color3.fromRGB(170, 175, 165)
-local COLOR_GOLD = Color3.fromRGB(240, 200, 90)
-local COLOR_ACTION = Color3.fromRGB(150, 60, 50)
-local COLOR_BUY = Color3.fromRGB(60, 120, 80)
-local COLOR_SELECTED = Color3.fromRGB(110, 85, 45)
-local COLOR_DISABLED = Color3.fromRGB(80, 84, 80)
+-- Colors. Gold buttons are the main action, red is attack or danger,
+-- blue is help, green is claim.
+local COLOR_BACKGROUND = Color3.fromRGB(22, 17, 13)
+local COLOR_PANEL = Color3.fromRGB(38, 30, 23)
+local COLOR_ROW = Color3.fromRGB(54, 43, 33)
+local COLOR_EDGE = Color3.fromRGB(96, 76, 50)
+local COLOR_HEADER = Color3.fromRGB(226, 192, 120)
+local COLOR_TEXT = Color3.fromRGB(242, 234, 216)
+local COLOR_DIM = Color3.fromRGB(178, 166, 144)
+local COLOR_GOLD = Color3.fromRGB(240, 196, 80)
+local COLOR_ACTION = Color3.fromRGB(168, 58, 46)
+local COLOR_BUY = Color3.fromRGB(218, 166, 60)
+local COLOR_CLAIM = Color3.fromRGB(72, 142, 82)
+local COLOR_INFO = Color3.fromRGB(70, 128, 176)
+local COLOR_SELECTED = Color3.fromRGB(104, 76, 42)
+local COLOR_DISABLED = Color3.fromRGB(78, 70, 62)
 local COLOR_ENERGY = Color3.fromRGB(215, 170, 60)
 local COLOR_STAMINA = Color3.fromRGB(70, 130, 190)
 local COLOR_HEALTH = Color3.fromRGB(180, 65, 65)
 local COLOR_XP = Color3.fromRGB(130, 100, 190)
 
-local TOP_HEIGHT = 70
-local RAIL_WIDTH = 116
+local TOP_HEIGHT = 72
+local RAIL_WIDTH = 150
+local LEFT_BLOCK = 270 -- top bar: level, name and XP
+local RIGHT_BLOCK = 240 -- top bar: energy, stamina and health
 
 -- A plain backdrop that covers the whole screen, including the top strip.
 local backdropGui = Instance.new("ScreenGui")
@@ -64,6 +71,16 @@ local function addCorner(instance: Instance, radius: number)
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(0, radius)
 	corner.Parent = instance
+end
+
+-- A thin border, for panels and cards.
+local function addStroke(instance: Instance): UIStroke
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = COLOR_EDGE
+	stroke.Transparency = 0.4
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = instance
+	return stroke
 end
 
 local function makeFrame(parent: Instance, size: UDim2, position: UDim2, color: Color3): Frame
@@ -107,9 +124,16 @@ local function makeButton(parent: Instance, size: UDim2, position: UDim2, color:
 end
 
 -- Shows a button as usable (its own color) or greyed out.
+-- Bright buttons (gold) get dark text so it stays readable.
 local function setButton(button: TextButton, text: string, usable: boolean, color: Color3)
 	button.Text = text
 	button.BackgroundColor3 = if usable then color else COLOR_DISABLED
+	local bright = usable and (color.R * 0.299 + color.G * 0.587 + color.B * 0.114) > 0.55
+	button.TextColor3 = if bright then Color3.fromRGB(40, 28, 12) else Color3.new(1, 1, 1)
+end
+
+local function send(action: string, id: string?)
+	actionRemote:FireServer(action, id)
 end
 
 -- A bar that fills from left to right, with text on top.
@@ -131,89 +155,327 @@ local function setBar(bar, value: number, maximum: number, text: string)
 end
 
 ---------------------------------------------------------------------------
--- Top status bar
+-- Top bar: you on the left, resources in the middle, bars on the right
 ---------------------------------------------------------------------------
 
 local topBar = makeFrame(gui, UDim2.new(1, -12, 0, TOP_HEIGHT), UDim2.fromOffset(6, 4), COLOR_PANEL)
 addCorner(topBar, 8)
+addStroke(topBar)
 
-local nameLabel = makeText(topBar, UDim2.new(0.32, -12, 0, 26), UDim2.fromOffset(10, 6), COLOR_HEADER, 17)
+-- Level badge, name and experience.
+local levelBadge = makeText(topBar, UDim2.fromOffset(52, 52), UDim2.fromOffset(10, 10), Color3.fromRGB(40, 28, 12), 20)
+levelBadge.BackgroundTransparency = 0
+levelBadge.BackgroundColor3 = COLOR_GOLD
+levelBadge.Font = Enum.Font.GothamBlack
+levelBadge.TextXAlignment = Enum.TextXAlignment.Center
+addCorner(levelBadge, 26)
+
+local nameLabel = makeText(topBar, UDim2.fromOffset(190, 24), UDim2.fromOffset(70, 10), COLOR_HEADER, 16)
 nameLabel.Font = Enum.Font.GothamBold
 nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 nameLabel.TextWrapped = false
-local xpBar = makeBar(topBar, UDim2.new(0.32, -12, 0, 18), UDim2.fromOffset(10, 40), COLOR_XP)
+local xpBar = makeBar(topBar, UDim2.fromOffset(190, 16), UDim2.fromOffset(70, 40), COLOR_XP)
 
-local goldLabel = makeText(topBar, UDim2.new(0.34, 0, 0, 30), UDim2.new(0.33, 0, 0, 6), COLOR_GOLD, 22)
-goldLabel.Font = Enum.Font.GothamBold
-goldLabel.TextXAlignment = Enum.TextXAlignment.Center
-local incomeLabel = makeText(topBar, UDim2.new(0.34, 0, 0, 20), UDim2.new(0.33, 0, 0, 40), COLOR_DIM, 13)
-incomeLabel.TextXAlignment = Enum.TextXAlignment.Center
+-- Resource chips: a big number with a small line under it.
+local chipRow = makeFrame(topBar, UDim2.new(1, -(LEFT_BLOCK + RIGHT_BLOCK), 1, -12), UDim2.fromOffset(LEFT_BLOCK, 6), COLOR_PANEL)
+chipRow.BackgroundTransparency = 1
+local chipLayout = Instance.new("UIListLayout")
+chipLayout.FillDirection = Enum.FillDirection.Horizontal
+chipLayout.Padding = UDim.new(0, 6)
+chipLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+chipLayout.SortOrder = Enum.SortOrder.LayoutOrder
+chipLayout.Parent = chipRow
 
-local energyBar = makeBar(topBar, UDim2.new(0.32, -12, 0, 18), UDim2.new(0.68, 2, 0, 5), COLOR_ENERGY)
-local staminaBar = makeBar(topBar, UDim2.new(0.32, -12, 0, 18), UDim2.new(0.68, 2, 0, 26), COLOR_STAMINA)
-local healthBar = makeBar(topBar, UDim2.new(0.32, -12, 0, 18), UDim2.new(0.68, 2, 0, 47), COLOR_HEALTH)
+local chips = {}
+local function makeChip(key: string, label: string, color: Color3)
+	local chip = makeFrame(chipRow, UDim2.new(0.2, -6, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
+	chip.LayoutOrder = #chipRow:GetChildren()
+	addCorner(chip, 6)
+	local sizeLimit = Instance.new("UISizeConstraint")
+	sizeLimit.MaxSize = Vector2.new(150, 100)
+	sizeLimit.Parent = chip
+	local name = makeText(chip, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 3), color, 11)
+	name.Font = Enum.Font.GothamBold
+	name.Text = string.upper(label)
+	local value = makeText(chip, UDim2.new(1, -12, 0, 22), UDim2.fromOffset(8, 16), COLOR_TEXT, 18)
+	value.Font = Enum.Font.GothamBold
+	value.TextScaled = true
+	local sub = makeText(chip, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 38), COLOR_DIM, 11)
+	sub.TextTruncate = Enum.TextTruncate.AtEnd
+	sub.TextWrapped = false
+	chips[key] = { value = value, sub = sub }
+end
+makeChip("gold", "Gold", COLOR_GOLD)
+makeChip("bank", "Bank", Color3.fromRGB(150, 190, 140))
+makeChip("crowns", "Crowns", Color3.fromRGB(200, 150, 230))
+makeChip("tokens", "Boss tokens", Color3.fromRGB(220, 120, 100))
+makeChip("power", "Power", Color3.fromRGB(140, 180, 230))
+
+-- Energy, stamina and health, each with a + that opens the Shop's refills.
+local barBlock = makeFrame(topBar, UDim2.new(0, RIGHT_BLOCK - 10, 1, 0), UDim2.new(1, -(RIGHT_BLOCK - 4), 0, 0), COLOR_PANEL)
+barBlock.BackgroundTransparency = 1
+local showPage -- defined with the pages below
+local function makeTopBar(y: number, color: Color3)
+	local bar = makeBar(barBlock, UDim2.new(1, -30, 0, 18), UDim2.fromOffset(0, y), color)
+	local plus = makeButton(barBlock, UDim2.fromOffset(22, 18), UDim2.new(1, -24, 0, y), COLOR_SELECTED)
+	plus.Text = "+"
+	plus.TextSize = 14
+	plus.Activated:Connect(function()
+		showPage("Shop")
+	end)
+	return bar
+end
+local energyBar = makeTopBar(8, COLOR_ENERGY)
+local staminaBar = makeTopBar(29, COLOR_STAMINA)
+local healthBar = makeTopBar(50, COLOR_HEALTH)
 
 ---------------------------------------------------------------------------
--- Left rail and pages
+-- Left menu: pages grouped under small headings, with red count badges
 ---------------------------------------------------------------------------
 
-local rail = makeFrame(gui, UDim2.new(0, RAIL_WIDTH, 1, -(TOP_HEIGHT + 16)), UDim2.fromOffset(6, TOP_HEIGHT + 10), COLOR_PANEL)
+local rail = Instance.new("ScrollingFrame")
+rail.Size = UDim2.new(0, RAIL_WIDTH, 1, -(TOP_HEIGHT + 16))
+rail.Position = UDim2.fromOffset(6, TOP_HEIGHT + 10)
+rail.BackgroundColor3 = COLOR_PANEL
+rail.BorderSizePixel = 0
+rail.ScrollBarThickness = 4
+rail.CanvasSize = UDim2.new(0, 0, 0, 0)
+rail.AutomaticCanvasSize = Enum.AutomaticSize.Y
+rail.Parent = gui
 addCorner(rail, 8)
+addStroke(rail)
 
 local railLayout = Instance.new("UIListLayout")
-railLayout.Padding = UDim.new(0, 4)
+railLayout.Padding = UDim.new(0, 3)
 railLayout.SortOrder = Enum.SortOrder.LayoutOrder
 railLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 railLayout.Parent = rail
 
 local railPadding = Instance.new("UIPadding")
 railPadding.PaddingTop = UDim.new(0, 6)
+railPadding.PaddingBottom = UDim.new(0, 6)
 railPadding.Parent = rail
 
 local main = makeFrame(gui, UDim2.new(1, -(RAIL_WIDTH + 18), 1, -(TOP_HEIGHT + 16)), UDim2.fromOffset(RAIL_WIDTH + 12, TOP_HEIGHT + 10), COLOR_PANEL)
 addCorner(main, 8)
+addStroke(main)
 
-local pageTitle = makeText(main, UDim2.new(1, -24, 0, 30), UDim2.fromOffset(12, 4), COLOR_HEADER, 20)
-pageTitle.Font = Enum.Font.GothamBold
+-- Every page: its group, a one line description, and a tip shown until
+-- the player presses Got it.
+local PAGE_GROUPS = {
+	{ name = "Realm", pages = { "Keep", "Holdings", "Bank" } },
+	{ name = "Campaign", pages = { "Quests", "Foes" } },
+	{ name = "Court", pages = { "Warband", "Inventory", "Market" } },
+	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
+}
+local PAGE_INFO = {
+	Keep = {
+		about = "Your home, your numbers, daily rewards and skills.",
+		tip = "Upgrade the Keep to raise income, attack and defense. Spend skill points from level ups on the skills below.",
+	},
+	Holdings = {
+		about = "Lands that pay gold every hour, even while you are away.",
+		tip = "Each holding uses one lot. Build more copies to earn more; demolish one to free its lot.",
+	},
+	Bank = {
+		about = "Gold in the bank is safe. Gold on hand is what you spend.",
+		tip = "Deposits cost a small fee. Withdraw before buying, since purchases use gold on hand.",
+	},
+	Quests = {
+		about = "Spend energy for gold, experience and the odd piece of gear.",
+		tip = "Repeat a quest to earn bronze, silver and gold mastery. Turn on auto quests to keep repeating your last one.",
+	},
+	Foes = {
+		about = "Bring down each foe once a day for gold, tokens and set gear.",
+		tip = "Each attack costs 1 stamina and the foe hits back. Beat a stage to open the next one.",
+	},
+	Warband = {
+		about = "Soldiers add their attack and defense to yours.",
+		tip = "Roll recruits until you get the rarity you want, then train them and give them gear.",
+	},
+	Inventory = {
+		about = "Your gear, gear sets and trophies.",
+		tip = "Gear only counts while someone wears it. Take a piece off before selling it.",
+	},
+	Market = {
+		about = "Gear for sale. The stock changes every 5 minutes.",
+		tip = "Set auto-buy rules below and the Market will buy matching gear for you while you play.",
+	},
+	["Royal Pass"] = {
+		about = "Fifty tiers of rewards each season.",
+		tip = "Points come from quests, foes, playtime rewards and weekly challenges. The Noble track adds a second reward to every tier.",
+	},
+	Shop = {
+		about = "Crowns, packs and passes, and things to spend Crowns on.",
+		tip = "Game passes are yours forever. Coffers show their odds, and a pity counter guarantees a top piece.",
+	},
+}
 
-local PAGE_NAMES = { "Keep", "Quests", "Holdings", "Market", "Warband", "Inventory", "Foes", "Bank", "Royal Pass", "Shop" }
-local railButtons = {}
-local pages = {}
-
-local function showPage(name: string)
-	pageTitle.Text = string.upper(name)
-	for _, pageName in PAGE_NAMES do
-		pages[pageName].Visible = pageName == name
-		railButtons[pageName].BackgroundColor3 = if pageName == name then COLOR_SELECTED else COLOR_ROW
+local PAGE_NAMES = {}
+local pageGroup = {}
+for _, group in PAGE_GROUPS do
+	for _, name in group.pages do
+		table.insert(PAGE_NAMES, name)
+		pageGroup[name] = group.name
 	end
 end
 
-for index, name in PAGE_NAMES do
-	local button = makeButton(rail, UDim2.new(1, -12, 0, 34), UDim2.fromOffset(0, 0), COLOR_ROW)
-	button.LayoutOrder = index
-	button.Text = name
-	railButtons[name] = button
+-- Page header: small group label, big title, description, boost chips.
+local HEADER_HEIGHT = 64
+local eyebrow = makeText(main, UDim2.new(0.5, 0, 0, 14), UDim2.fromOffset(14, 8), COLOR_DIM, 11)
+eyebrow.Font = Enum.Font.GothamBold
+local pageTitle = makeText(main, UDim2.new(0.5, 0, 0, 26), UDim2.fromOffset(14, 20), COLOR_HEADER, 24)
+pageTitle.Font = Enum.Font.GothamBlack
+local pageAbout = makeText(main, UDim2.new(0.55, 0, 0, 16), UDim2.fromOffset(14, 45), COLOR_DIM, 12)
+pageAbout.TextTruncate = Enum.TextTruncate.AtEnd
+pageAbout.TextWrapped = false
 
-	local page = Instance.new("ScrollingFrame")
-	page.Position = UDim2.fromOffset(8, 38)
-	page.Size = UDim2.new(1, -16, 1, -44)
-	page.BackgroundTransparency = 1
-	page.BorderSizePixel = 0
-	page.ScrollBarThickness = 6
-	page.CanvasSize = UDim2.new(0, 0, 0, 0)
-	page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	page.Visible = false
-	page.Parent = main
-	pages[name] = page
+-- Boost chips on the right of the header (double XP, passes, automation).
+local boostRow = makeFrame(main, UDim2.new(0.45, -20, 0, 24), UDim2.new(1, -10, 0, 12), COLOR_PANEL)
+boostRow.AnchorPoint = Vector2.new(1, 0)
+boostRow.BackgroundTransparency = 1
+local boostLayout = Instance.new("UIListLayout")
+boostLayout.FillDirection = Enum.FillDirection.Horizontal
+boostLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+boostLayout.Padding = UDim.new(0, 5)
+boostLayout.SortOrder = Enum.SortOrder.LayoutOrder
+boostLayout.Parent = boostRow
 
-	local layout = Instance.new("UIListLayout")
-	layout.Padding = UDim.new(0, 5)
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Parent = page
+local boostChips = {}
+local function setBoostChips(list)
+	for index, entry in list do
+		local chip = boostChips[index]
+		if not chip then
+			chip = makeText(boostRow, UDim2.fromOffset(0, 24), UDim2.fromOffset(0, 0), COLOR_TEXT, 12)
+			chip.AutomaticSize = Enum.AutomaticSize.X
+			chip.BackgroundTransparency = 0
+			chip.TextWrapped = false
+			chip.Font = Enum.Font.GothamBold
+			chip.LayoutOrder = index
+			local padding = Instance.new("UIPadding")
+			padding.PaddingLeft = UDim.new(0, 8)
+			padding.PaddingRight = UDim.new(0, 8)
+			padding.Parent = chip
+			addCorner(chip, 12)
+			boostChips[index] = chip
+		end
+		chip.Text = entry[1]
+		chip.BackgroundColor3 = entry[2]
+		chip.Visible = true
+	end
+	for index = #list + 1, #boostChips do
+		boostChips[index].Visible = false
+	end
+end
 
-	button.Activated:Connect(function()
-		showPage(name)
-	end)
+-- Tip strip under the header. Got it hides it for that page for good.
+local tipStrip = makeFrame(main, UDim2.new(1, -24, 0, 34), UDim2.fromOffset(12, HEADER_HEIGHT), Color3.fromRGB(34, 48, 58))
+addCorner(tipStrip, 6)
+local tipStroke = addStroke(tipStrip)
+tipStroke.Color = COLOR_INFO
+local tipText = makeText(tipStrip, UDim2.new(1, -100, 1, -4), UDim2.fromOffset(10, 2), COLOR_TEXT, 12)
+local tipButton = makeButton(tipStrip, UDim2.fromOffset(76, 24), UDim2.new(1, -6, 0.5, 0), COLOR_INFO)
+tipButton.AnchorPoint = Vector2.new(1, 0.5)
+tipButton.Text = "Got it"
+tipButton.TextSize = 12
+
+local tipsSeen = {} -- filled from the server's state
+local currentPage = ""
+local railButtons = {}
+local railBadges = {}
+local pages = {}
+
+local function placePage()
+	local showTip = PAGE_INFO[currentPage] ~= nil and not tipsSeen[currentPage]
+	tipStrip.Visible = showTip
+	tipText.Text = if showTip then "Tip: " .. PAGE_INFO[currentPage].tip else ""
+	local top = HEADER_HEIGHT + (if showTip then 40 else 0)
+	local page = pages[currentPage]
+	if page then
+		page.Position = UDim2.fromOffset(8, top)
+		page.Size = UDim2.new(1, -16, 1, -(top + 6))
+	end
+end
+
+showPage = function(name: string)
+	currentPage = name
+	eyebrow.Text = string.upper(pageGroup[name] or "")
+	pageTitle.Text = string.upper(name)
+	pageAbout.Text = if PAGE_INFO[name] then PAGE_INFO[name].about else ""
+	for _, pageName in PAGE_NAMES do
+		pages[pageName].Visible = pageName == name
+		local selected = pageName == name
+		railButtons[pageName].BackgroundColor3 = if selected then COLOR_SELECTED else COLOR_PANEL
+		railButtons[pageName].TextColor3 = if selected then COLOR_GOLD else COLOR_TEXT
+	end
+	placePage()
+end
+
+tipButton.Activated:Connect(function()
+	tipsSeen[currentPage] = true
+	placePage()
+	send("Tip", currentPage)
+end)
+
+-- A red pill with a count on a menu button; 0 hides it.
+local function setBadge(name: string, count: number)
+	local badge = railBadges[name]
+	badge.Visible = count > 0
+	badge.Text = if count > 99 then "99+" else tostring(count)
+end
+
+local railOrder = 0
+for _, group in PAGE_GROUPS do
+	railOrder += 1
+	local heading = makeText(rail, UDim2.new(1, -16, 0, 18), UDim2.fromOffset(0, 0), COLOR_DIM, 10)
+	heading.Font = Enum.Font.GothamBold
+	heading.Text = string.upper(group.name)
+	heading.LayoutOrder = railOrder
+	heading.TextYAlignment = Enum.TextYAlignment.Bottom
+
+	for _, name in group.pages do
+		railOrder += 1
+		local button = makeButton(rail, UDim2.new(1, -12, 0, 30), UDim2.fromOffset(0, 0), COLOR_PANEL)
+		button.LayoutOrder = railOrder
+		button.Text = name
+		button.TextXAlignment = Enum.TextXAlignment.Left
+		button.TextSize = 13
+		local padding = Instance.new("UIPadding")
+		padding.PaddingLeft = UDim.new(0, 10)
+		padding.Parent = button
+		railButtons[name] = button
+
+		local badge = makeText(button, UDim2.fromOffset(24, 18), UDim2.new(1, -4, 0.5, 0), Color3.new(1, 1, 1), 11)
+		badge.AnchorPoint = Vector2.new(1, 0.5)
+		badge.BackgroundTransparency = 0
+		badge.BackgroundColor3 = COLOR_ACTION
+		badge.Font = Enum.Font.GothamBold
+		badge.TextXAlignment = Enum.TextXAlignment.Center
+		badge.Visible = false
+		addCorner(badge, 9)
+		railBadges[name] = badge
+
+		local page = Instance.new("ScrollingFrame")
+		page.Position = UDim2.fromOffset(8, HEADER_HEIGHT)
+		page.Size = UDim2.new(1, -16, 1, -(HEADER_HEIGHT + 6))
+		page.BackgroundTransparency = 1
+		page.BorderSizePixel = 0
+		page.ScrollBarThickness = 6
+		page.CanvasSize = UDim2.new(0, 0, 0, 0)
+		page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		page.Visible = false
+		page.Parent = main
+		pages[name] = page
+
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 5)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Parent = page
+
+		button.Activated:Connect(function()
+			showPage(name)
+		end)
+	end
 end
 
 -- One line in a page: text on the left and up to one button on the right.
@@ -223,6 +485,7 @@ local function makeRow(page: Instance, order: number, height: number, hasButton:
 	local row = makeFrame(page, UDim2.new(1, -10, 0, height), UDim2.fromOffset(0, 0), COLOR_ROW)
 	row.LayoutOrder = order
 	addCorner(row, 6)
+	addStroke(row)
 
 	local textWidthOffset = if hasButton then -(BUTTON_WIDTH + 26) else -20
 	local info = makeText(row, UDim2.new(1, textWidthOffset, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 14)
@@ -232,6 +495,36 @@ local function makeRow(page: Instance, order: number, height: number, hasButton:
 		button = makeButton(row, UDim2.fromOffset(BUTTON_WIDTH, math.min(42, height - 10)), UDim2.new(1, -6, 0.5, 0), COLOR_DISABLED)
 		button.AnchorPoint = Vector2.new(1, 0.5)
 	end
+	return info, button
+end
+
+-- A grid of cards that wrap into `columns` columns.
+local function makeGrid(page: Instance, order: number, cardHeight: number, columns: number): Frame
+	local grid = makeFrame(page, UDim2.new(1, -10, 0, 0), UDim2.fromOffset(0, 0), COLOR_PANEL)
+	grid.BackgroundTransparency = 1
+	grid.AutomaticSize = Enum.AutomaticSize.Y
+	grid.LayoutOrder = order
+	local layout = Instance.new("UIGridLayout")
+	layout.CellPadding = UDim2.fromOffset(6, 6)
+	layout.CellSize = UDim2.new(1 / columns, -6, 0, cardHeight)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = grid
+	return grid
+end
+
+-- One card in a grid: text at the top and one wide button at the bottom.
+-- Returns the same (text, button) pair as makeRow, so drawing works the same.
+local cardCount = 0
+local function makeCard(grid: Instance)
+	cardCount += 1
+	local card = makeFrame(grid, UDim2.fromOffset(100, 100), UDim2.fromOffset(0, 0), COLOR_ROW)
+	card.LayoutOrder = cardCount
+	addCorner(card, 8)
+	addStroke(card)
+	local info = makeText(card, UDim2.new(1, -16, 1, -52), UDim2.fromOffset(8, 6), COLOR_TEXT, 13)
+	info.TextYAlignment = Enum.TextYAlignment.Top
+	local button = makeButton(card, UDim2.new(1, -16, 0, 36), UDim2.new(0, 8, 1, -42), COLOR_DISABLED)
+	button.TextSize = 13
 	return info, button
 end
 
@@ -283,10 +576,6 @@ local function makeAmountBox(parent: Instance, size: UDim2, position: UDim2, pla
 	box.Parent = parent
 	addCorner(box, 6)
 	return box
-end
-
-local function send(action: string, id: string?)
-	actionRemote:FireServer(action, id)
 end
 
 ---------------------------------------------------------------------------
@@ -350,19 +639,22 @@ breakdownText.TextColor3 = COLOR_DIM
 makeHeading(pages.Keep, nextOrder(), "Daily playtime rewards")
 local playtimeSummary = makeRow(pages.Keep, nextOrder(), 32, false)
 local rewardRows = {}
+local rewardGrid = makeGrid(pages.Keep, nextOrder(), 92, 4)
 for index, reward in GameConfig.PlaytimeRewards do
-	local info, button = makeRow(pages.Keep, nextOrder(), 46, true)
+	local info, button = makeCard(rewardGrid)
 	rewardRows[index] = { info = info, button = button }
 	button.Activated:Connect(function()
 		send("Claim", tostring(index))
 	end)
-	info.Text = `{reward.minutes} min: {reward.label}`
+	info.RichText = true
+	info.Text = `<b>{reward.label}</b>\nAfter {reward.minutes} min`
 end
 
 makeHeading(pages.Keep, nextOrder(), "Skills")
 local skillRows = {}
+local skillGrid = makeGrid(pages.Keep, nextOrder(), 104, 3)
 for _, skill in GameConfig.Skills do
-	local info, button = makeRow(pages.Keep, nextOrder(), 50, true)
+	local info, button = makeCard(skillGrid)
 	skillRows[skill.id] = { info = info, button = button }
 	button.Activated:Connect(function()
 		send("Skill", skill.id)
@@ -412,10 +704,11 @@ makeHeading(pages.Holdings, nextOrder(), "Build")
 local holdingRows = {}
 for _, region in GameConfig.Regions do
 	local addRow = makeRegionHeader(pages.Holdings, nextOrder(), region)
+	local grid = makeGrid(pages.Holdings, nextOrder(), 112, 3)
+	addRow(grid)
 	for _, holding in GameConfig.Holdings do
 		if holding.region == region.id then
-			local info, button = makeRow(pages.Holdings, nextOrder(), 52, true)
-			addRow(info.Parent)
+			local info, button = makeCard(grid)
 			holdingRows[holding.id] = { info = info, button = button }
 			button.Activated:Connect(function()
 				send("Holding", holding.id)
@@ -552,6 +845,7 @@ makeText(priceRow, UDim2.new(0, 120, 1, 0), UDim2.fromOffset(10, 0), COLOR_TEXT,
 local minBox = makeAmountBox(priceRow, UDim2.new(0.5, -(65 + BUTTON_WIDTH / 2 + 12), 1, -10), UDim2.new(0, 130, 0, 5), "Min: none")
 local maxBox = makeAmountBox(priceRow, UDim2.new(0.5, -(65 + BUTTON_WIDTH / 2 + 12), 1, -10), UDim2.new(0.5, 65 - BUTTON_WIDTH / 2 + 2, 0, 5), "Max: none")
 local priceButton = makeButton(priceRow, UDim2.new(0, BUTTON_WIDTH, 1, -10), UDim2.new(1, -6, 0, 5), COLOR_BUY)
+priceButton.TextColor3 = Color3.fromRGB(40, 28, 12)
 priceButton.AnchorPoint = Vector2.new(1, 0)
 priceButton.Text = "Save prices"
 priceButton.Activated:Connect(function()
@@ -790,8 +1084,9 @@ end
 
 makeHeading(pages.Foes, nextOrder(), "Token shop")
 local tokenRows = {}
+local tokenGrid = makeGrid(pages.Foes, nextOrder(), 96, 3)
 for _, item in GameConfig.TokenShop do
-	local info, button = makeRow(pages.Foes, nextOrder(), 46, true)
+	local info, button = makeCard(tokenGrid)
 	info.Text = `<b>{item.name}</b>\n{item.note}`
 	info.RichText = true
 	tokenRows[item.id] = button
@@ -809,8 +1104,13 @@ local shopSummary = makeRow(pages.Shop, nextOrder(), 50, false)
 shopSummary.RichText = true
 
 local productRows = {}
-local function makeProductRow(product, height: number)
-	local info, button = makeRow(pages.Shop, nextOrder(), height, true)
+local function makeProductRow(product, grid: Instance?)
+	local info, button
+	if grid then
+		info, button = makeCard(grid)
+	else
+		info, button = makeRow(pages.Shop, nextOrder(), 60, true)
+	end
 	info.RichText = true
 	productRows[product.key] = { info = info, button = button, frame = info.Parent }
 	button.Activated:Connect(function()
@@ -819,30 +1119,33 @@ local function makeProductRow(product, height: number)
 end
 
 makeHeading(pages.Shop, nextOrder(), "Crowns")
+local crownGrid = makeGrid(pages.Shop, nextOrder(), 96, 4)
 for _, product in StoreConfig.Products do
 	if product.group == "crowns" then
-		makeProductRow(product, 46)
+		makeProductRow(product, crownGrid)
 	end
 end
 
 makeHeading(pages.Shop, nextOrder(), "Special offers")
+local packGrid = makeGrid(pages.Shop, nextOrder(), 136, 3)
 for _, product in StoreConfig.Products do
 	if product.group == "pack" then
-		makeProductRow(product, 60)
+		makeProductRow(product, packGrid)
 	end
 end
 
 makeHeading(pages.Shop, nextOrder(), "Tithe Chest")
 for _, product in StoreConfig.Products do
 	if product.group == "tithe" then
-		makeProductRow(product, 60)
+		makeProductRow(product, nil)
 	end
 end
 
 makeHeading(pages.Shop, nextOrder(), "Game passes (yours forever)")
 local passRows = {}
+local passGrid = makeGrid(pages.Shop, nextOrder(), 124, 3)
 for _, pass in StoreConfig.Passes do
-	local info, button = makeRow(pages.Shop, nextOrder(), 52, true)
+	local info, button = makeCard(passGrid)
 	info.RichText = true
 	info.Text = `<b>{pass.name}</b>\n{pass.note}`
 	passRows[pass.key] = button
@@ -853,8 +1156,9 @@ end
 
 makeHeading(pages.Shop, nextOrder(), "Crown shop")
 local crownRows = {}
+local crownShopGrid = makeGrid(pages.Shop, nextOrder(), 96, 3)
 for _, item in StoreConfig.CrownShop do
-	local info, button = makeRow(pages.Shop, nextOrder(), 46, true)
+	local info, button = makeCard(crownShopGrid)
 	info.RichText = true
 	info.Text = `<b>{item.name}</b>\n{item.note}`
 	crownRows[item.key] = button
@@ -865,8 +1169,9 @@ end
 
 makeHeading(pages.Shop, nextOrder(), "Royal Coffers (random gear, odds shown)")
 local cofferRows = {}
+local cofferGrid = makeGrid(pages.Shop, nextOrder(), 124, 2)
 for _, coffer in StoreConfig.Coffers do
-	local info, button = makeRow(pages.Shop, nextOrder(), 70, true)
+	local info, button = makeCard(cofferGrid)
 	info.RichText = true
 	cofferRows[coffer.key] = { info = info, button = button }
 	button.Activated:Connect(function()
@@ -1043,14 +1348,14 @@ local function drawStore(state)
 		local open = reached and (not freeDone or (pass.noble and not nobleDone))
 		if open then
 			claimable += 1
-			setButton(row.button, "Claim", true, COLOR_BUY)
+			setButton(row.button, "Claim", true, COLOR_CLAIM)
 		elseif reached then
 			setButton(row.button, "Claimed", false, COLOR_BUY)
 		else
 			setButton(row.button, "Locked", false, COLOR_BUY)
 		end
 	end
-	setButton(passButtons[1], if claimable > 0 then `Claim all ({claimable})` else "Claim all", claimable > 0, COLOR_BUY)
+	setButton(passButtons[1], if claimable > 0 then `Claim all ({claimable})` else "Claim all", claimable > 0, COLOR_CLAIM)
 	setButton(passButtons[2], `Buy a tier ({StoreConfig.TierSkipCost} Crowns)`, tier < maxTier and crowns >= StoreConfig.TierSkipCost, COLOR_SELECTED)
 
 	local weekly = state.weekly
@@ -1064,12 +1369,18 @@ local function drawStore(state)
 		if weekly.claimed[challenge.key] then
 			setButton(row.button, "Done", false, COLOR_BUY)
 		else
-			setButton(row.button, "Claim", value >= challenge.goal, COLOR_BUY)
+			setButton(row.button, "Claim", value >= challenge.goal, COLOR_CLAIM)
 		end
 	end
 
 	-- Red-dot style counts on the rail.
-	railButtons["Royal Pass"].Text = if claimable > 0 then `Royal Pass ({claimable})` else "Royal Pass"
+	local weeklyReady = 0
+	for _, challenge in StoreConfig.WeeklyChallenges do
+		if not state.weekly.claimed[challenge.key] and (state.weekly[challenge.stat] or 0) >= challenge.goal then
+			weeklyReady += 1
+		end
+	end
+	setBadge("Royal Pass", claimable + weeklyReady)
 end
 
 local function draw(state)
@@ -1080,17 +1391,60 @@ local function draw(state)
 
 	-- Top bar
 	local title = if state.title ~= "" then state.title .. " " else ""
-	nameLabel.Text = `Lv {state.level}  {title}{player.DisplayName}`
+	levelBadge.Text = tostring(state.level)
+	nameLabel.Text = `{title}{player.DisplayName}`
 	nameLabel.TextColor3 = if state.passes.charter then COLOR_GOLD else COLOR_HEADER
 	setBar(xpBar, state.xp, state.xpNeeded, `XP {state.xp} / {state.xpNeeded}`)
-	goldLabel.Text = `{Format.short(gold)} gold`
-	incomeLabel.Text = `+{Format.short(stats.incomePerHour)}/hr   |   Banked {Format.short(state.banked)}   |   {state.crowns} Crowns`
+	chips.gold.value.Text = Format.short(gold)
+	chips.gold.sub.Text = `+{Format.short(stats.incomePerHour)} per hour`
+	chips.bank.value.Text = Format.short(state.banked)
+	chips.bank.sub.Text = "safe from raids"
+	chips.crowns.value.Text = Format.short(state.crowns)
+	chips.crowns.sub.Text = if state.tithe > 0 then `{state.tithe} in Tithe Chest` else "premium"
+	chips.tokens.value.Text = Format.short(state.tokens)
+	chips.tokens.sub.Text = `stage {state.highestStage} best`
+	chips.power.value.Text = Format.short(stats.attack + stats.defense)
+	chips.power.sub.Text = `{Format.short(stats.attack)} atk / {Format.short(stats.defense)} def`
 	setBar(energyBar, state.energy, stats.maxEnergy, `Energy {state.energy} / {stats.maxEnergy}`)
 	setBar(staminaBar, state.stamina, stats.maxStamina, `Stamina {state.stamina} / {stats.maxStamina}`)
 	setBar(healthBar, state.health, stats.maxHealth, `Health {state.health} / {stats.maxHealth}`)
 
-	-- A dot on the Keep button when there are points to spend.
-	railButtons.Keep.Text = if state.skillPoints > 0 then `Keep ({state.skillPoints})` else "Keep"
+	-- Header chips for anything boosting the player right now.
+	local boosts = {}
+	if state.xpBoostLeft > 0 then
+		table.insert(boosts, { `2x XP {formatClock(state.xpBoostLeft)}`, COLOR_XP })
+	end
+	if state.autoQuestOn then
+		table.insert(boosts, { "Auto quests", COLOR_INFO })
+	end
+	if state.autoBuy.on then
+		table.insert(boosts, { "Auto-buy", COLOR_INFO })
+	end
+	if state.passes.charter then
+		table.insert(boosts, { "Royal Charter", COLOR_SELECTED })
+	end
+	setBoostChips(boosts)
+
+	-- Tips the player has dismissed, saved on the server.
+	local tipsChanged = false
+	for name in state.tipsSeen do
+		if not tipsSeen[name] then
+			tipsSeen[name] = true
+			tipsChanged = true
+		end
+	end
+	if tipsChanged then
+		placePage()
+	end
+
+	-- Badges: skill points to spend and playtime rewards ready on the Keep.
+	local keepCount = state.skillPoints
+	for index, reward in GameConfig.PlaytimeRewards do
+		if not state.claimed[tostring(index)] and state.playSeconds >= reward.minutes * 60 then
+			keepCount += 1
+		end
+	end
+	setBadge("Keep", keepCount)
 
 	-- Keep
 	local keep = GameConfig.KeepLevels[state.keep]
@@ -1127,7 +1481,7 @@ local function draw(state)
 		if state.claimed[key] then
 			setButton(row.button, "Claimed", false, COLOR_BUY)
 		elseif played >= reward.minutes * 60 then
-			setButton(row.button, "Claim", true, COLOR_GOLD)
+			setButton(row.button, "Claim", true, COLOR_CLAIM)
 		else
 			setButton(row.button, `In {formatClock(reward.minutes * 60 - played)}`, false, COLOR_BUY)
 		end
@@ -1953,28 +2307,52 @@ toastGui.DisplayOrder = 10
 toastGui.ResetOnSpawn = false
 toastGui.Parent = playerGui
 
-local toast = makeText(toastGui, UDim2.fromOffset(520, 40), UDim2.new(0.5, 0, 1, -54), Color3.new(1, 1, 1), 15)
-toast.AnchorPoint = Vector2.new(0.5, 0)
-toast.TextXAlignment = Enum.TextXAlignment.Center
-toast.BackgroundTransparency = 0.05
-toast.BackgroundColor3 = Color3.fromRGB(15, 18, 16)
-toast.ZIndex = 5
-toast.Visible = false
-addCorner(toast, 8)
+-- Toasts stack in the bottom right corner, newest at the bottom, and each
+-- fades out after a few seconds.
+local TOAST_SECONDS = 4
+local MAX_TOASTS = 4
+local toastStack = makeFrame(toastGui, UDim2.fromOffset(340, 300), UDim2.new(1, -16, 1, -16), Color3.new(0, 0, 0))
+toastStack.AnchorPoint = Vector2.new(1, 1)
+toastStack.BackgroundTransparency = 1
+local toastLayout = Instance.new("UIListLayout")
+toastLayout.Padding = UDim.new(0, 6)
+toastLayout.SortOrder = Enum.SortOrder.LayoutOrder
+toastLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+toastLayout.Parent = toastStack
 
 local toastCount = 0
+local liveToasts = {}
 local function showToast()
 	local text = player:GetAttribute("ToastText")
 	if typeof(text) ~= "string" or text == "" then
 		return
 	end
 	toastCount += 1
-	local thisToast = toastCount
-	toast.Text = text
-	toast.Visible = true
-	task.delay(3.5, function()
-		if toastCount == thisToast then
-			toast.Visible = false
+	local card = makeText(toastStack, UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 0), COLOR_TEXT, 14)
+	card.AutomaticSize = Enum.AutomaticSize.Y
+	card.BackgroundTransparency = 0.05
+	card.BackgroundColor3 = COLOR_PANEL
+	card.LayoutOrder = toastCount
+	card.Text = text
+	addCorner(card, 8)
+	local stroke = addStroke(card)
+	stroke.Color = COLOR_GOLD
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, 8)
+	padding.PaddingBottom = UDim.new(0, 8)
+	padding.PaddingLeft = UDim.new(0, 10)
+	padding.PaddingRight = UDim.new(0, 10)
+	padding.Parent = card
+
+	table.insert(liveToasts, card)
+	while #liveToasts > MAX_TOASTS do
+		table.remove(liveToasts, 1):Destroy()
+	end
+	task.delay(TOAST_SECONDS, function()
+		local index = table.find(liveToasts, card)
+		if index then
+			table.remove(liveToasts, index)
+			card:Destroy()
 		end
 	end)
 end
@@ -2006,6 +2384,7 @@ local function showWelcomeBack(amount: number)
 	local button = makeButton(window, UDim2.fromOffset(160, 42), UDim2.new(0.5, 0, 1, -14), COLOR_BUY)
 	button.AnchorPoint = Vector2.new(0.5, 1)
 	button.Text = "Splendid"
+	button.TextColor3 = Color3.fromRGB(40, 28, 12)
 	button.TextSize = 16
 	button.ZIndex = 11
 	button.Activated:Connect(function()
