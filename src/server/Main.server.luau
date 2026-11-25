@@ -555,7 +555,7 @@ local function payHoldings(player: Player, session, stats)
 	for _, holding in GameConfig.Holdings do
 		local count = data.holdings[holding.id] or 0
 		if count > 0 then
-			local each = math.floor(holding.income * stats.incomeFactor / 3600 * GameConfig.HoldingCycle)
+			local each = holding.income * stats.incomeFactor / 3600 * GameConfig.HoldingCycle
 			if each > 0 then
 				data.gold += each * count
 				countLifetime(data, "goldEarned", each * count)

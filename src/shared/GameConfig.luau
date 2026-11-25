@@ -102,7 +102,7 @@ GameConfig.Quests = {
 -- bar on each card), each its own share.
 ---------------------------------------------------------------------------
 
-GameConfig.HoldingCycle = 60
+GameConfig.HoldingCycle = 1 -- seconds
 
 GameConfig.Holdings = {
 	{ id = "field", region = "Oakvale", name = "Wheat Field", level = 1, cost = 400, income = 360 },

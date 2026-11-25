@@ -448,12 +448,13 @@ function HoldingsPage.pop(ui, card, amount: number)
 	label.TextStrokeTransparency = 0.2
 	label.TextStrokeColor3 = Color3.fromRGB(40, 28, 12)
 	label.ZIndex = 80
-	label.Text = `+{Format.short(amount)} {ui.art.Icons.gold}`
+	local shown = if amount < 10 then string.format("%.1f", amount) else Format.short(math.floor(amount))
+	label.Text = `+{shown} {ui.art.Icons.gold}`
 	local scale = Instance.new("UIScale")
 	scale.Scale = 0.6
 	scale.Parent = label
 	TweenService:Create(scale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-	local rise = TweenService:Create(label, TweenInfo.new(1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+	local rise = TweenService:Create(label, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		Position = UDim2.new(0.5, 0, 0.25, 0),
 		TextTransparency = 1,
 		TextStrokeTransparency = 1,
@@ -625,7 +626,7 @@ function HoldingsPage.drawPopup(state, ui)
 	local income = perCopy(state, holding)
 	w.popupName.Text = holding.name
 	w.popupInfo.Text = `<font color="#6ED26E"><b>{Format.short(income)} gold/hr</b></font> each, with your bonuses\n`
-		.. `Pays <b>{Format.short(math.floor(income / 3600 * GameConfig.HoldingCycle))} gold</b> each every {GameConfig.HoldingCycle} s. You have {count}, `
+		.. `Pays <b>{string.format("%.1f", income / 3600)} gold</b> each every second. You have {count}, `
 		.. `<b>{Format.short(income * count)} gold/hr</b> together\n`
 		.. `<font color="#B2A690">{holding.region}, from level {holding.level}</font>`
 	local price = GameConfig.getHoldingCost(holding, count)
