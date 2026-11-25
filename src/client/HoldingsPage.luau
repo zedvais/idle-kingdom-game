@@ -36,7 +36,7 @@ local regionsOpened = false
 local latest = nil
 local shownHolding = nil -- the holding the popup shows
 local drawBonusNow -- set below: fills the income bonus popup
-local timers = {} -- [holding id] = { base = seconds into the cycle, at = os.clock() }
+local timer = { base = 0, at = 0 } -- seconds into the pay cycle at os.clock() `at`
 
 local function holdingById(id: string)
 	for _, holding in GameConfig.Holdings do
@@ -413,28 +413,25 @@ function HoldingsPage.build(ui)
 		if not w.gateLands() then
 			return
 		end
-		local now = os.clock()
+		local share = math.clamp((timer.base + os.clock() - timer.at) / GameConfig.HoldingCycle, 0, 1)
 		for _, card in landCards do
-			if card.frame.Visible and card.id then
-				local holding = holdingById(card.id)
-				local timer = timers[card.id]
-				local cycle = (holding and holding.cycle) or 60
-				local elapsed = if timer then timer.base + (now - timer.at) else 0
-				card.fill.Size = UDim2.fromScale(math.clamp(elapsed / cycle, 0, 1), 1)
+			if card.frame.Visible then
+				card.fill.Size = UDim2.fromScale(share, 1)
 			end
 		end
 	end)
 
-	-- A holding paid: "+gold" rises from each of its cards.
+	-- Holdings paid: "+gold" rises from every card, each its own amount.
 	local Fx = require(script.Parent:WaitForChild("Fx"))
 	Fx.onIncome = function(info)
-		timers[info.id] = { base = 0, at = os.clock() }
+		timer = { base = 0, at = os.clock() }
 		if not w.gateLands() then
 			return
 		end
+		local paid = info.paid or {}
 		for _, card in landCards do
-			if card.frame.Visible and card.id == info.id then
-				HoldingsPage.pop(ui, card, tonumber(info.amount) or 0)
+			if card.frame.Visible and card.id and paid[card.id] then
+				HoldingsPage.pop(ui, card, tonumber(paid[card.id]) or 0)
 			end
 		end
 	end
@@ -628,7 +625,7 @@ function HoldingsPage.drawPopup(state, ui)
 	local income = perCopy(state, holding)
 	w.popupName.Text = holding.name
 	w.popupInfo.Text = `<font color="#6ED26E"><b>{Format.short(income)} gold/hr</b></font> each, with your bonuses\n`
-		.. `Pays <b>{Format.short(math.floor(income / 3600 * (holding.cycle or 60)))} gold</b> each every {holding.cycle or 60} s. You have {count}, `
+		.. `Pays <b>{Format.short(math.floor(income / 3600 * GameConfig.HoldingCycle))} gold</b> each every {GameConfig.HoldingCycle} s. You have {count}, `
 		.. `<b>{Format.short(income * count)} gold/hr</b> together\n`
 		.. `<font color="#B2A690">{holding.region}, from level {holding.level}</font>`
 	local price = GameConfig.getHoldingCost(holding, count)
@@ -667,13 +664,10 @@ function HoldingsPage.draw(state, ui)
 	latest = state
 	-- Where each pay cycle is, from the server.
 	local now = os.clock()
-	for id, seconds in state.holdingTimers or {} do
-		local timer = timers[id]
-		local guess = if timer then timer.base + (now - timer.at) else -1
-		-- Only snap when the bar has drifted (avoids jitter every second).
-		if math.abs(guess - seconds) > 1.5 then
-			timers[id] = { base = seconds, at = now }
-		end
+	local seconds = state.holdingTimer or 0
+	-- Only snap when the bar has drifted (avoids jitter every second).
+	if math.abs(timer.base + (now - timer.at) - seconds) > 1.5 then
+		timer = { base = seconds, at = now }
 	end
 	if not tabChosen then
 		local any = false

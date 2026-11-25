@@ -541,29 +541,30 @@ local function relicState(data)
 	return { count = data.relics.count, items = items, seen = data.relics.seen or {} }
 end
 
--- Holdings pay in lumps: every `cycle` seconds each holding type pays
--- its copies' income for that stretch, and the client shows "+gold" on
--- each card. Called once a second.
+-- Holdings pay in lumps: every HoldingCycle seconds all of them pay
+-- together, each its share of that stretch, and the client shows "+gold"
+-- on each card. Called once a second.
 local function payHoldings(player: Player, session, stats)
 	local data = session.data
-	local timers = session.holdingTimers
+	session.holdingTimer += 1
+	if session.holdingTimer < GameConfig.HoldingCycle then
+		return
+	end
+	session.holdingTimer = 0
+	local paid = {}
 	for _, holding in GameConfig.Holdings do
 		local count = data.holdings[holding.id] or 0
 		if count > 0 then
-			local cycle = holding.cycle or 60
-			timers[holding.id] = (timers[holding.id] or 0) + 1
-			if timers[holding.id] >= cycle then
-				timers[holding.id] -= cycle
-				local each = math.floor(holding.income * stats.incomeFactor / 3600 * cycle)
-				if each > 0 then
-					data.gold += each * count
-					countLifetime(data, "goldEarned", each * count)
-					sendFx(player, "income", { id = holding.id, amount = each, count = count })
-				end
+			local each = math.floor(holding.income * stats.incomeFactor / 3600 * GameConfig.HoldingCycle)
+			if each > 0 then
+				data.gold += each * count
+				countLifetime(data, "goldEarned", each * count)
+				paid[holding.id] = each
 			end
-		else
-			timers[holding.id] = nil
 		end
+	end
+	if next(paid) then
+		sendFx(player, "income", { paid = paid })
 	end
 end
 
@@ -666,7 +667,7 @@ local function refresh(player: Player)
 		autoEquipNew = data.autoEquipNew,
 		market = data.market.items,
 		marketRestock = Market.secondsUntilRestock(),
-		holdingTimers = session.holdingTimers,
+		holdingTimer = session.holdingTimer,
 		marketWindow = data.market.window,
 		tokens = data.tokens,
 		highestStage = data.highestStage,
@@ -3109,7 +3110,7 @@ local function onPlayerAdded(player: Player)
 		actionCount = 0,
 		regen = { energy = 0, stamina = 0, health = 0 },
 		boardSent = {}, -- [board key] = last score written
-		holdingTimers = {}, -- [holding id] = seconds into its pay cycle
+		holdingTimer = 0, -- seconds into the holdings' pay cycle
 	}
 	refresh(player)
 
