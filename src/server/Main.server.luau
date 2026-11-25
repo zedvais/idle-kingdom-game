@@ -550,6 +550,8 @@ local function refresh(player: Player)
 			entry.attack = soldierAttack
 			entry.defense = soldierDefense
 			entry.trainCost = GameConfig.getTrainCost(soldier)
+			entry.trainSeconds = GameConfig.getTrainSeconds(soldier)
+			entry.trainLeft = if type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 then math.max(0, soldier.trainUntil - os.time()) else nil
 			entry.gear = wearing[slot] or {}
 			crew[slot] = entry
 		else
@@ -1281,9 +1283,37 @@ function actions.Train(player: Player, data, id: string)
 		sendToast(player, `{soldier.name} is fully trained.`)
 		return
 	end
+	if type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 then
+		sendToast(player, `{soldier.name} is already training.`)
+		return
+	end
 	if spendGold(player, data, GameConfig.getTrainCost(soldier)) then
-		soldier.train += 1
+		-- Training takes time; the rank goes up when it is done.
+		soldier.trainUntil = os.time() + GameConfig.getTrainSeconds(soldier)
 		track(data, "train", 1)
+		sendToast(player, `{soldier.name} started training for +{soldier.train + 1}.`)
+	end
+end
+
+-- Stops a soldier's training early. No refund. id is the slot.
+function actions.TrainStop(player: Player, data, id: string)
+	local slot = tonumber(id)
+	local soldier = slot and data.crew[slot]
+	if soldier and type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 then
+		soldier.trainUntil = nil
+		sendToast(player, `{soldier.name} stopped training. The gold is not refunded.`)
+	end
+end
+
+-- Finishes soldier training whose time is up.
+local function checkSoldierTraining(player: Player, data)
+	local now = os.time()
+	for _, soldier in data.crew do
+		if soldier and type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 and now >= soldier.trainUntil then
+			soldier.trainUntil = nil
+			soldier.train = math.min(GameConfig.MaxTrainRank, soldier.train + 1)
+			sendToast(player, `{soldier.name} finished training: now +{soldier.train}.`)
+		end
 	end
 end
 
@@ -1578,6 +1608,54 @@ end
 function actions.EquipBest(player: Player, data)
 	Loadout.autoEquip(data)
 	sendToast(player, "Everyone now wears the strongest gear you own. Set bonuses were not considered.")
+end
+
+-- Takes all gear off everyone.
+function actions.UnequipAll(player: Player, data)
+	Loadout.unequipAll(data)
+	sendToast(player, "Everyone's gear is back in your armory.")
+end
+
+-- Moves a soldier up or down one place. id is "<slot>:up" or "<slot>:down".
+function actions.MoveSoldier(player: Player, data, id: string)
+	local slotText, direction = string.match(id or "", "^(%d+):(%a+)$")
+	local slot = tonumber(slotText)
+	if not slot or data.crew[slot] == nil then
+		return
+	end
+	local other = if direction == "up" then slot - 1 elseif direction == "down" then slot + 1 else nil
+	if not other or data.crew[other] == nil then
+		return
+	end
+	Loadout.swapSlots(data, slot, other)
+	data.autoRoll.on = false -- slots moved; auto roll settings no longer match
+end
+
+-- Sorts the warband: strongest soldiers first, empty slots last.
+function actions.SortCrew(player: Player, data)
+	local function power(slot: number): number
+		local soldier = data.crew[slot]
+		if not soldier then
+			return -1
+		end
+		local attack, defense = GameConfig.getSoldierStats(soldier)
+		return attack + defense
+	end
+	-- A simple selection sort with swaps, so worn gear follows its soldier.
+	local count = #data.crew
+	for index = 1, count - 1 do
+		local best = index
+		for other = index + 1, count do
+			if power(other) > power(best) then
+				best = other
+			end
+		end
+		if best ~= index then
+			Loadout.swapSlots(data, index, best)
+		end
+	end
+	data.autoRoll.on = false
+	sendToast(player, "Your warband is sorted, strongest first.")
 end
 
 -- Turns "new gear fills empty slots" on or off.
@@ -3095,6 +3173,7 @@ task.spawn(function()
 			runAutoRoll(player, data)
 			checkResearch(player, data)
 			checkTraining(player, data)
+			checkSoldierTraining(player, data)
 			checkExpedition(player, data)
 			produceEstate(data, 1)
 			checkEstateBuilds(player, data)

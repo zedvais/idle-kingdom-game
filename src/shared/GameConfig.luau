@@ -288,6 +288,15 @@ function GameConfig.getSoldierStats(soldier): (number, number)
 	return math.floor(class.attack * scale + 0.5), math.floor(class.defense * scale + 0.5)
 end
 
+-- Training takes time: short at first, longer each rank, at most 8 hours.
+GameConfig.TrainBaseSeconds = 30
+GameConfig.TrainTimeGrowth = 1.6
+GameConfig.TrainMaxSeconds = 8 * 3600
+
+function GameConfig.getTrainSeconds(soldier): number
+	return math.min(GameConfig.TrainMaxSeconds, math.floor(GameConfig.TrainBaseSeconds * GameConfig.TrainTimeGrowth ^ soldier.train))
+end
+
 function GameConfig.getTrainCost(soldier): number
 	local tier = GameConfig.getRecruitTier(soldier.tier) or GameConfig.RecruitTiers[1]
 	return math.floor(tier.cost * GameConfig.TrainCostShare * GameConfig.TrainCostGrowth ^ soldier.train)

@@ -332,6 +332,28 @@ function Loadout.clearMember(data, member: number)
 	end
 end
 
+-- Takes everything off everyone; all of it goes back to the spare stacks.
+function Loadout.unequipAll(data)
+	for _, item in table.clone(data.gear) do
+		Loadout.unwear(data, item)
+	end
+end
+
+-- Swaps two warband slots: the soldiers and the gear they wear.
+function Loadout.swapSlots(data, a: number, b: number)
+	if a == b or data.crew[a] == nil or data.crew[b] == nil then
+		return
+	end
+	data.crew[a], data.crew[b] = data.crew[b], data.crew[a]
+	for _, item in data.gear do
+		if item.wornBy == a then
+			item.wornBy = b
+		elseif item.wornBy == b then
+			item.wornBy = a
+		end
+	end
+end
+
 -- Equip best: in each slot the strongest piece goes to you, the next to
 -- your strongest soldier, and so on. Set bonuses are not considered, so
 -- players who want sets equip those by hand.

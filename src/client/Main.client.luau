@@ -1123,6 +1123,57 @@ autoRollButton.Activated:Connect(function()
 		ui.offerPass("autoroll")
 	end
 end)
+warbandSummary.Parent.Visible = false -- replaced by the chips below
+
+-- Warband header: four stat chips, then a bar of buttons.
+local warbandChips = {}
+local warbandButtons = {}
+do
+	local chips = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 50), UDim2.fromOffset(0, 0), COLOR_PANEL)
+	chips.BackgroundTransparency = 1
+	chips.LayoutOrder = nextOrder()
+	local glyphs = { "\u{1F465}", Art.Icons.Weapon, Art.Icons.Armor, "\u{2B50}" }
+	for index = 1, 4 do
+		local chip = makeFrame(chips, UDim2.new(0.25, -6, 1, 0), UDim2.new((index - 1) * 0.25, 3, 0, 0), COLOR_ROW)
+		addCorner(chip, 6)
+		Art.card(chip)
+		local icon = Art.icon(chip, glyphs[index] or "", 26, UDim2.fromOffset(10, 12))
+		icon.ZIndex = chip.ZIndex + 1
+		local label = makeText(chip, UDim2.new(1, -48, 1, 0), UDim2.fromOffset(44, 0), COLOR_TEXT, 14)
+		label.Font = Enum.Font.GothamBold
+		label.TextWrapped = true
+		warbandChips[index] = label
+	end
+	local bar = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 46), UDim2.fromOffset(0, 0), COLOR_PANEL)
+	bar.BackgroundTransparency = 1
+	bar.LayoutOrder = nextOrder()
+	local names = { "GEAR SETS", "UNEQUIP ALL", "AUTO SORT", "EQUIP BEST", "NEW GEAR", "AUTO ROLL" }
+	for index, name in names do
+		local count = #names
+		local button = makeButton(bar, UDim2.new(1 / count, -6, 1, 0), UDim2.new((index - 1) / count, 3, 0, 0), COLOR_PANEL)
+		button.TextSize = 13
+		button.TextColor3 = COLOR_GOLD
+		Art.stroke(button, COLOR_GOLD, 1.5, 0.2)
+		button.Text = name
+		warbandButtons[index] = button
+	end
+	warbandButtons[2].Activated:Connect(function()
+		send("UnequipAll")
+	end)
+	warbandButtons[3].Activated:Connect(function()
+		send("SortCrew")
+	end)
+	warbandButtons[4].Activated:Connect(function()
+		send("EquipBest")
+	end)
+	warbandButtons[6].Activated:Connect(function()
+		if ownsAutoRoll then
+			openRecruitWindow(0)
+		else
+			ui.offerPass("autoroll")
+		end
+	end)
+end
 
 -- How many pieces of each set one member wears: { [setId] = count }.
 -- member 0 is you, 1 and up is a warband slot.
@@ -1189,56 +1240,145 @@ local equipNewOn = true
 equipButtons[2].Activated:Connect(function()
 	send("EquipNew", if equipNewOn then "off" else "on")
 end)
+warbandButtons[5].Activated:Connect(function()
+	send("EquipNew", if equipNewOn then "off" else "on")
+end)
+equipButtons[1].Parent.Visible = false -- moved into the header bar
 
+-- A warband card (like a crew card): order arrows, a portrait, name and
+-- rarity, total attack and defense, Train / Auto / Release, and a tile for
+-- each gear slot (press a tile to change that gear).
+local CLASS_GLYPHS = {
+	Militia = "\u{1F6E1}\u{FE0F}",
+	Archer = "\u{1F3F9}",
+	Knight = "\u{2694}\u{FE0F}",
+	["Battle Mage"] = "\u{1F52E}",
+	Ranger = "\u{1F332}",
+}
 local function makeCrewRow(order: number)
-	local row = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 76), UDim2.fromOffset(0, 0), COLOR_ROW)
+	local row = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 160), UDim2.fromOffset(0, 0), COLOR_ROW)
 	row.LayoutOrder = order
-	addCorner(row, 6)
+	addCorner(row, 8)
+	Art.card(row)
+	local edge = Art.stroke(row, COLOR_DIM, 1.5, 0.3)
 
-	local info = makeText(row, UDim2.new(0.3, -10, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 13)
+	local up = makeButton(row, UDim2.fromOffset(30, 28), UDim2.fromOffset(6, 8), COLOR_SELECTED)
+	up.Text = "\u{25B2}"
+	up.TextSize = 12
+	local down = makeButton(row, UDim2.fromOffset(30, 28), UDim2.fromOffset(6, 42), COLOR_SELECTED)
+	down.Text = "\u{25BC}"
+	down.TextSize = 12
+
+	local portrait = makeFrame(row, UDim2.fromOffset(64, 64), UDim2.fromOffset(42, 6), Color3.fromRGB(26, 20, 16))
+	addCorner(portrait, 8)
+	local portraitStroke = Art.stroke(portrait, COLOR_DIM, 2, 0)
+	local glyph = Art.icon(portrait, "", 38, UDim2.fromScale(0.5, 0.5))
+	glyph.AnchorPoint = Vector2.new(0.5, 0.5)
+	glyph.ZIndex = portrait.ZIndex + 1
+
+	local info = makeText(row, UDim2.new(0.42, -118, 0, 66), UDim2.fromOffset(114, 5), COLOR_TEXT, 14)
 	info.RichText = true
-	local gearText = makeText(row, UDim2.new(0.7, -306, 1, -8), UDim2.new(0.3, 0, 0, 4), COLOR_DIM, 12)
-	gearText.RichText = true
+	info.TextYAlignment = Enum.TextYAlignment.Top
+	local statsText = makeText(row, UDim2.new(0.58, -250, 0, 66), UDim2.new(0.42, 0, 0, 5), COLOR_TEXT, 15)
+	statsText.RichText = true
+	statsText.Font = Enum.Font.GothamBold
 
 	local function button(width: number, offset: number): TextButton
-		local b = makeButton(row, UDim2.fromOffset(width, 50), UDim2.new(1, offset, 0.5, 0), COLOR_DISABLED)
-		b.AnchorPoint = Vector2.new(1, 0.5)
+		local b = makeButton(row, UDim2.fromOffset(width, 60), UDim2.new(1, offset, 0, 8), COLOR_DISABLED)
+		b.AnchorPoint = Vector2.new(1, 0)
 		b.TextSize = 13
 		return b
 	end
-	local release = button(60, -6)
-	local roll = button(70, -70)
-	local train = button(98, -144)
-	local gear = button(56, -246)
+	local release = button(50, -6)
+	local roll = button(64, -60)
+	local train = button(118, -128)
 
-	return { frame = row, info = info, gearText = gearText, train = train, roll = roll, release = release, gear = gear }
+	-- Gear tiles.
+	local tiles = {}
+	for index, gearSlot in GameConfig.GearSlots do
+		local tile = makeButton(row, UDim2.new(1 / 3, -8, 0, 78), UDim2.new((index - 1) / 3, 6 - (index - 1) * 2, 0, 76), Color3.fromRGB(26, 30, 30))
+		tile.Text = ""
+		tile.AutoButtonColor = true
+		local tileStroke = Art.stroke(tile, COLOR_DIM, 1.5, 0.3)
+		local picture = makeFrame(tile, UDim2.fromOffset(56, 56), UDim2.fromOffset(8, 11), Color3.fromRGB(14, 12, 10))
+		picture.BackgroundTransparency = 0.3
+		addCorner(picture, 6)
+		local name = makeText(tile, UDim2.new(1, -76, 0, 22), UDim2.fromOffset(70, 6), COLOR_TEXT, 15)
+		name.TextTruncate = Enum.TextTruncate.AtEnd
+		name.TextWrapped = false
+		local rarityLabel = makeText(tile, UDim2.new(1, -76, 0, 16), UDim2.fromOffset(70, 28), COLOR_DIM, 11)
+		rarityLabel.Font = Enum.Font.GothamBold
+		rarityLabel.RichText = true
+		rarityLabel.TextWrapped = false
+		local tileStats = makeText(tile, UDim2.new(1, -76, 0, 22), UDim2.fromOffset(70, 48), COLOR_TEXT, 14)
+		tileStats.RichText = true
+		tileStats.Font = Enum.Font.GothamBold
+		tiles[gearSlot] = { button = tile, stroke = tileStroke, picture = picture, name = name, rarity = rarityLabel, stats = tileStats }
+	end
+	-- gear is kept as a hidden button so older code paths still work.
+	local gear = makeButton(row, UDim2.fromOffset(1, 1), UDim2.fromOffset(0, 0), COLOR_DISABLED)
+	gear.Visible = false
+
+	return {
+		frame = row,
+		edge = edge,
+		up = up,
+		down = down,
+		portrait = portraitStroke,
+		glyph = glyph,
+		info = info,
+		statsText = statsText,
+		gearText = statsText,
+		train = train,
+		roll = roll,
+		release = release,
+		gear = gear,
+		tiles = tiles,
+	}
 end
 
 local youRow = makeCrewRow(nextOrder())
 youRow.train.Visible = false
 youRow.roll.Visible = false
 youRow.release.Visible = false
--- The you row has only the Gear button, so it sits on the right.
-youRow.gear.Position = UDim2.new(1, -6, 0.5, 0)
-youRow.gearText.Size = UDim2.new(0.7, -76, 1, -8)
-youRow.gear.Activated:Connect(function()
-	openEquipWindow(0)
-end)
+youRow.up.Visible = false
+youRow.down.Visible = false
+youRow.glyph.Text = "\u{1F451}"
+for _, tile in youRow.tiles do
+	tile.button.Activated:Connect(function()
+		openEquipWindow(0)
+	end)
+end
 
 local crewRows = {}
 for slot = 1, GameConfig.MaxSoldierSlots do
 	local row = makeCrewRow(nextOrder())
 	crewRows[slot] = row
 	row.train.Activated:Connect(function()
-		send("Train", tostring(slot))
+		if ui and ui.offerTrain then
+			ui.offerTrain(slot)
+		end
 	end)
-	-- One roll for this slot (set up by the draw code below). Auto roll
-	-- lives in its own window.
+	-- Auto: opens the roll window for this slot (with the pass). Without
+	-- the pass it makes one roll, as before.
 	row.roll.Activated:Connect(function()
-		if row.rollId then
+		if ownsAutoRoll then
+			openRecruitWindow(slot)
+		elseif row.rollId then
 			send("Roll", row.rollId)
 		end
 	end)
+	row.up.Activated:Connect(function()
+		send("MoveSoldier", `{slot}:up`)
+	end)
+	row.down.Activated:Connect(function()
+		send("MoveSoldier", `{slot}:down`)
+	end)
+	for _, tile in row.tiles do
+		tile.button.Activated:Connect(function()
+			openEquipWindow(slot)
+		end)
+	end
 	row.release.Activated:Connect(function()
 		send("Release", tostring(slot))
 	end)
@@ -1270,6 +1410,12 @@ for index, tab in INVENTORY_TABS do
 		redraw()
 	end)
 end
+-- Warband header: GEAR SETS opens the Inventory on its Sets tab.
+warbandButtons[1].Activated:Connect(function()
+	inventoryTab = "Sets"
+	showPage("Inventory")
+	redraw()
+end)
 local armorySummary = makeRow(pages.Inventory, nextOrder(), 50, false)
 armorySummary.TextColor3 = COLOR_DIM
 
@@ -1413,6 +1559,7 @@ do
 		{ key = "Skills", title = "Skill points", width = 640, height = 590 },
 		{ key = "Pass", title = "Game pass", width = 520, height = 300 },
 		{ key = "ChestOdds", title = "Chest odds", width = 560, height = 580 },
+		{ key = "Train", title = "Train soldier", width = 520, height = 470 },
 	}
 	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560
 
@@ -1582,7 +1729,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -2393,9 +2540,61 @@ local function draw(state)
 	setButton(equipButtons[1], "Equip best", true, COLOR_BUY)
 	setButton(equipButtons[2], if equipNewOn then "New gear: put on" else "New gear: keep spare", true, COLOR_SELECTED)
 
-	youRow.info.Text = `<b>You</b>, leader\nAttack {GameConfig.BaseAttack + (state.skills.attack or 0)}, defense {GameConfig.BaseDefense + (state.skills.defense or 0)} before gear`
+	-- Header chips and bar.
+	local filled = 0
+	for _, soldier in crew do
+		if soldier then
+			filled += 1
+		end
+	end
+	warbandChips[1].Text = `{filled} OF {#crew} SOLDIERS`
+	warbandChips[2].Text = `+{Format.short(stats.attack)} ATTACK`
+	warbandChips[3].Text = `+{Format.short(stats.defense)} DEFENSE`
+	warbandChips[4].Text = `SIZE BONUS +{math.floor(stats.crewBonus * 100 + 0.5)}%`
+	warbandButtons[5].Text = if equipNewOn then "NEW GEAR: WEAR" else "NEW GEAR: SPARE"
+	warbandButtons[6].Text = if not ownsAutoRoll then "\u{1F512} AUTO ROLL" elseif autoRoll.on then "AUTO ROLL: ON" else "AUTO ROLL"
+
+	-- A card's gear tiles, and its total attack and defense with gear.
+	local function drawTiles(row, wearing, counts): (number, number)
+		local attack, defense = 0, 0
+		for gearSlot, tile in row.tiles do
+			local item = wearing and wearing[gearSlot]
+			if item then
+				local rarity = GameConfig.getRarity(item.rarity)
+				ItemArt.set(tile.picture, item)
+				tile.name.Text = item.name
+				tile.name.TextColor3 = rarity.color
+				tile.rarity.Text = string.upper(item.rarity) .. setTag(item, counts)
+				tile.rarity.TextColor3 = rarity.color
+				tile.stats.Text = `<font color="#F08A6A">+{item.attack}</font>   <font color="#7FB4F0">+{item.defense}</font>`
+				tile.stroke.Color = rarity.color
+				attack += item.attack
+				defense += item.defense
+			else
+				local drawn = tile.picture:FindFirstChild("ItemArt")
+				if drawn then
+					drawn:Destroy()
+				end
+				tile.picture:SetAttribute("ItemArtKey", nil)
+				tile.name.Text = `No {string.lower(gearSlot)}`
+				tile.name.TextColor3 = COLOR_DIM
+				tile.rarity.Text = "TAP TO EQUIP"
+				tile.rarity.TextColor3 = COLOR_DIM
+				tile.stats.Text = ""
+				tile.stroke.Color = COLOR_DIM
+			end
+		end
+		return attack, defense
+	end
+	local function statsLines(attack: number, defense: number): string
+		return `<font color="#F08A6A">+{Format.short(attack)} ATTACK</font>\n<font color="#7FB4F0">+{Format.short(defense)} DEFENSE</font>`
+	end
+
 	local youCounts = memberSetCounts(state, 0)
-	youRow.gearText.Text = `Weapon: {gearLine(state.yourGear.Weapon, youCounts)}\nArmor: {gearLine(state.yourGear.Armor, youCounts)}\nMount: {gearLine(state.yourGear.Mount, youCounts)}`
+	local youGearAttack, youGearDefense = drawTiles(youRow, state.yourGear, youCounts)
+	youRow.info.Text = `<font size="20" color="#F0C450"><b>YOU</b></font>\n<font color="#B2A690">Warband leader</font>`
+	youRow.statsText.Text = statsLines(GameConfig.BaseAttack + (state.skills.attack or 0) + youGearAttack, GameConfig.BaseDefense + (state.skills.defense or 0) + youGearDefense)
+	youRow.edge.Color = COLOR_GOLD
 	setButton(youRow.gear, "Gear", true, COLOR_SELECTED)
 
 	for slot, row in crewRows do
@@ -2404,41 +2603,66 @@ local function draw(state)
 		if soldier == nil then
 			continue
 		end
+		row.up.Visible = slot > 1
+		row.down.Visible = crew[slot + 1] ~= nil
+		local tier = oneRollTier(state)
 		if soldier then
+			local rarity = GameConfig.getRarity(soldier.rarity)
 			local rank = if soldier.train > 0 then ` +{soldier.train}` else ""
-			row.info.Text = `{rarityName({ rarity = soldier.rarity, name = soldier.class })}{rank}\n{soldier.name}, {soldier.tier} recruit\n{statText(soldier.attack, soldier.defense)}`
+			local color = string.format("#%02X%02X%02X", math.floor(rarity.color.R * 255 + 0.5), math.floor(rarity.color.G * 255 + 0.5), math.floor(rarity.color.B * 255 + 0.5))
+			row.info.Text = `<font color="{color}" size="17"><b>{soldier.name}{rank}</b></font>\n`
+				.. `<font color="{color}"><b>{string.upper(soldier.rarity)}</b></font> {soldier.class}\n<font color="#B2A690">{soldier.tier} recruit</font>`
+			row.glyph.Text = CLASS_GLYPHS[soldier.class] or Art.Icons.soldier
+			row.portrait.Color = rarity.color
+			row.edge.Color = rarity.color
 			local counts = memberSetCounts(state, slot)
-			row.gearText.Text = `Weapon: {gearLine(soldier.gear.Weapon, counts)}\nArmor: {gearLine(soldier.gear.Armor, counts)}\nMount: {gearLine(soldier.gear.Mount, counts)}`
-			row.gear.Visible = true
-			setButton(row.gear, "Gear", true, COLOR_SELECTED)
-			row.train.Visible = true
-			if soldier.train >= GameConfig.MaxTrainRank then
-				setButton(row.train, "Fully trained", false, COLOR_BUY)
-			else
-				setButton(row.train, `Train +{soldier.train + 1}\n{Format.short(soldier.trainCost)}`, gold >= soldier.trainCost, COLOR_BUY)
+			local gearAttack, gearDefense = drawTiles(row, soldier.gear, counts)
+			row.statsText.Text = statsLines(soldier.attack + gearAttack, soldier.defense + gearDefense)
+			for _, tile in row.tiles do
+				tile.button.Visible = true
 			end
-			-- A reroll only replaces the soldier with one at least as rare.
-			local tier = oneRollTier(state)
-			local keep = soldier.rarity
-			if GameConfig.getChanceAtLeast(tier, keep) <= 0 then
-				row.rollId = nil
-				setButton(row.roll, `Reroll\n{tier.id} can't beat`, false, COLOR_ACTION)
+			row.train.Visible = true
+			if soldier.trainLeft then
+				setButton(row.train, `TRAINING\n{formatClock(soldier.trainLeft)}`, true, COLOR_SELECTED)
+			elseif soldier.train >= GameConfig.MaxTrainRank then
+				setButton(row.train, "FULLY\nTRAINED", false, COLOR_BUY)
 			else
-				row.rollId = `{slot}:{tier.id}:{keep}:this:once`
-				setButton(row.roll, `Reroll\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
+				setButton(row.train, `TRAIN\n+{soldier.train} to +{soldier.train + 1}`, true, COLOR_BUY)
+			end
+			-- Without the pass the button makes one reroll (only a soldier
+			-- at least as rare replaces this one).
+			if GameConfig.getChanceAtLeast(tier, soldier.rarity) <= 0 then
+				row.rollId = nil
+			else
+				row.rollId = `{slot}:{tier.id}:{soldier.rarity}:this:once`
+			end
+			if ownsAutoRoll then
+				setButton(row.roll, "\u{21BB}\nAUTO", true, COLOR_ACTION)
+			else
+				setButton(row.roll, `REROLL\n{Format.short(oneRollCost(state, tier))}`, row.rollId ~= nil and gold >= oneRollCost(state, tier), COLOR_ACTION)
 			end
 			row.release.Visible = true
-			setButton(row.release, "Release", true, COLOR_DISABLED)
+			setButton(row.release, "\u{1F5D1}\u{FE0F}", true, Color3.fromRGB(120, 40, 36))
 		else
-			row.info.Text = `<b>Empty slot {slot}</b>\nRecruit someone to fill it.`
-			row.gearText.Text = ""
+			row.info.Text = `<font size="17"><b>Empty slot {slot}</b></font>\nRecruit someone to fill it.`
+			row.statsText.Text = ""
+			row.glyph.Text = "?"
+			row.portrait.Color = COLOR_DIM
+			row.edge.Color = COLOR_DIM
+			for _, tile in row.tiles do
+				tile.button.Visible = false
+			end
 			row.train.Visible = false
 			row.release.Visible = false
-			row.gear.Visible = false
-			local tier = oneRollTier(state)
 			row.rollId = `{slot}:{tier.id}:Common:this:once`
-			setButton(row.roll, `Recruit\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
+			if ownsAutoRoll then
+				setButton(row.roll, "\u{21BB}\nAUTO", true, COLOR_ACTION)
+			else
+				setButton(row.roll, `RECRUIT\n{Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
+			end
 		end
+		-- Empty slots are short cards (no gear tiles).
+		row.frame.Size = UDim2.new(1, -10, 0, if soldier then 160 else 76)
 	end
 
 	local nextSlot = #crew + 1

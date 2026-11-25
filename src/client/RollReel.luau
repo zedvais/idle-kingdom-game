@@ -23,7 +23,7 @@ local function build(ui, slot: number, row)
 	local colors = ui.colors
 	local art = ui.art
 	-- The reel sits over the middle of the row (where the gear text is).
-	local panel = ui.makeFrame(row.frame, UDim2.new(0.7, -300, 1, -8), UDim2.new(0.3, -6, 0, 4), Color3.fromRGB(18, 14, 11))
+	local panel = ui.makeFrame(row.frame, UDim2.new(0.58, -244, 0, 66), UDim2.new(0.42, -6, 0, 5), Color3.fromRGB(18, 14, 11))
 	panel.Visible = false
 	panel.ZIndex = 5
 	ui.addCorner(panel, 6)
