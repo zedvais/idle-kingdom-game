@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
 local EstateConfig = require(ReplicatedStorage.Shared.EstateConfig)
+local Loadout = require(script.Parent.Loadout)
 
 local PlayerData = {}
 
@@ -73,6 +74,8 @@ local function newData()
 			spent = 0,
 			whenBroke = "wait", -- out of gold: "wait" for more or "stop"
 			waiting = false,
+			skip = {}, -- ["3"] = true: the player stopped auto roll on that slot
+			shown = {}, -- ["3"] = the soldier last rolled for that slot (STOP keeps it)
 		},
 		autoBuy = {
 			on = false,
@@ -138,6 +141,7 @@ local function newData()
 			endsAt = 0,
 		},
 		-- Profile, mail, Relic Hall and rebirth
+		settings = { effects = true, toasts = true }, -- menu Settings toggles
 		titles = {}, -- [title text] = true for every title earned
 		codes = {}, -- [CODE] = true once redeemed
 		lifetime = {}, -- [stat] = all-time count (quests, foes, attacks, goldEarned, ...)
@@ -147,7 +151,8 @@ local function newData()
 		newsSeen = {}, -- [news id] = true once delivered
 		-- Relic Hall: count = pieces held, items[name|rarity] = { name, slot,
 		-- rarity, set, count, levels = { ["L12"] = copies at level 12 } }
-		relics = { count = 0, auto = false, items = {} },
+		relics = { count = 0, auto = false, items = {}, seen = {} },
+		chests = {}, -- [rarity] = unopened chests in the inventory
 		rebirth = { count = 0, stars = 0 },
 		-- Barracks, expeditions and the War Chronicle
 		troops = {}, -- [troop key] = count at home
@@ -180,7 +185,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate" } do
+	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate", "settings" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default
@@ -188,6 +193,34 @@ local function repair(data)
 		end
 	end
 	data.foes = nil -- replaced by stages
+	-- Gear stats are fixed by name and rarity: bring older items in line,
+	-- then merge identical spare pieces into stacks.
+	for index = #data.gear, 1, -1 do
+		local item = data.gear[index]
+		if type(item) == "table" and type(item.slot) == "string" and type(item.name) == "string" then
+			item.attack, item.defense = GameConfig.getGearStats(item.slot, item.name, item.rarity or "Common")
+		else
+			table.remove(data.gear, index)
+		end
+	end
+	if type(data.nextItemId) ~= "number" then
+		data.nextItemId = 1
+	end
+	-- Training tops out at MaxTrainRank; older saves could go higher.
+	-- Every soldier needs rolled base stats.
+	if type(data.crew) == "table" then
+		for _, soldier in data.crew do
+			if type(soldier) == "table" and type(soldier.train) == "number" and soldier.train > GameConfig.MaxTrainRank then
+				soldier.train = GameConfig.MaxTrainRank
+				soldier.trainUntil = nil
+			end
+			-- Soldiers from before rolled stats get theirs now.
+			if type(soldier) == "table" and (type(soldier.baseAttack) ~= "number" or type(soldier.baseDefense) ~= "number") then
+				soldier.baseAttack, soldier.baseDefense = GameConfig.rollSoldierStats(soldier.rarity or "Common", Random.new())
+			end
+		end
+	end
+	Loadout.restack(data)
 	-- Every castle needs its levels and builder, and the home castle exists.
 	local estate = data.estate
 	for _, resource in EstateConfig.Resources do

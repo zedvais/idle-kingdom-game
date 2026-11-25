@@ -5,6 +5,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GameConfig = require(ReplicatedStorage.Shared.GameConfig)
+local ChestConfig = require(ReplicatedStorage.Shared.ChestConfig)
 
 local Market = {}
 
@@ -45,31 +46,37 @@ end
 
 -- One piece of gear rolled around `playerLevel`. Also used for quest drops
 -- and chests, which pass a minimum rarity.
-function Market.rollGear(random: Random, playerLevel: number, minRank: number?)
+-- `pool` picks the item list: "market" (default), "chest" or "premium".
+function Market.rollGear(random: Random, playerLevel: number, minRank: number?, pool: string?)
 	local slot = GameConfig.GearSlots[random:NextInteger(1, #GameConfig.GearSlots)]
 	local gearType = GameConfig.GearTypes[slot]
+	local names = GameConfig.GearPools[pool or "market"].items[slot].names
 	local rarity = rollRarity(random, minRank or 1)
+	-- The level only sets the price (Market prices follow the player's
+	-- level); stats are fixed by name and rarity.
 	local level = rollLevel(random, playerLevel)
+	local name = names[random:NextInteger(1, #names)]
+	local attack, defense = GameConfig.getGearStats(slot, name, rarity)
 	return {
 		kind = "Gear",
 		slot = slot,
-		name = gearType.names[random:NextInteger(1, #gearType.names)],
+		name = name,
 		rarity = rarity.id,
 		level = level,
-		attack = GameConfig.getItemStat(gearType.attack, level, rarity),
-		defense = GameConfig.getItemStat(gearType.defense, level, rarity),
+		attack = attack,
+		defense = defense,
 		price = GameConfig.getItemPrice(gearType.price, level, rarity),
 	}
 end
 
--- One piece of gear of exactly this rarity (Royal Coffers).
-function Market.rollGearOfRarity(random: Random, playerLevel: number, rarityId: string)
-	local item = Market.rollGear(random, playerLevel, 1)
+-- One piece of gear of exactly this rarity from a pool (Royal Coffers use
+-- the premium pool; chests pass their own).
+function Market.rollGearOfRarity(random: Random, playerLevel: number, rarityId: string, pool: string?)
+	local item = Market.rollGear(random, playerLevel, 1, pool or "premium")
 	local rarity = GameConfig.getRarity(rarityId)
 	local gearType = GameConfig.GearTypes[item.slot]
 	item.rarity = rarity.id
-	item.attack = GameConfig.getItemStat(gearType.attack, item.level, rarity)
-	item.defense = GameConfig.getItemStat(gearType.defense, item.level, rarity)
+	item.attack, item.defense = GameConfig.getGearStats(item.slot, item.name, rarity)
 	item.price = GameConfig.getItemPrice(gearType.price, item.level, rarity)
 	return item
 end
@@ -80,7 +87,28 @@ function Market.rollSetPiece(random: Random, playerLevel: number, set, minRank: 
 	local item = Market.rollGear(random, playerLevel, minRank)
 	item.name = set.pieces[item.slot]
 	item.set = set.id
+	item.attack, item.defense = GameConfig.getGearStats(item.slot, item.name, item.rarity)
 	return item
+end
+
+-- One exact set piece (TOKEN SHOP): fixed slot, name and rarity.
+function Market.makeSetPiece(playerLevel: number, set, slot: string, rarityId: string)
+	local rarity = GameConfig.getRarity(rarityId)
+	local gearType = GameConfig.GearTypes[slot]
+	local name = set.pieces[slot]
+	local level = math.max(1, playerLevel)
+	local attack, defense = GameConfig.getGearStats(slot, name, rarity)
+	return {
+		kind = "Gear",
+		slot = slot,
+		name = name,
+		rarity = rarity.id,
+		level = level,
+		attack = attack,
+		defense = defense,
+		price = GameConfig.getItemPrice(gearType.price, level, rarity),
+		set = set.id,
+	}
 end
 
 -- A fresh stock for one player. Seeded by player and window, so the same
@@ -89,7 +117,21 @@ function Market.roll(userId: number, window: number, playerLevel: number)
 	local random = Random.new(userId * 7919 + window * 104729 + playerLevel)
 	local items = {}
 	for _ = 1, GameConfig.MarketSize do
-		local item = Market.rollGear(random, playerLevel)
+		local item
+		if random:NextNumber() < ChestConfig.MarketChestChance then
+			-- Now and then a row is a chest instead (it goes to the Inventory).
+			local chest = ChestConfig.rollMarketChest(random)
+			item = {
+				kind = "Chest",
+				chest = chest.id,
+				name = chest.name,
+				rarity = ChestConfig.rarityOf(chest),
+				level = 1,
+				price = ChestConfig.goldPrice(chest, playerLevel),
+			}
+		else
+			item = Market.rollGear(random, playerLevel)
+		end
 		item.sold = false
 		table.insert(items, item)
 	end

@@ -59,9 +59,12 @@ function RebirthPage.draw(state, ui)
 		then RebirthConfig.MinLevel
 		else RebirthConfig.MinLevel + (starsNow) * RebirthConfig.LevelsPerStar
 	if starsNow > 0 then
+		local from = nextStarLevel - RebirthConfig.LevelsPerStar
+		ui.art.progress(status, state.level - from, RebirthConfig.LevelsPerStar, colors.gold, true)
 		status.Text = `<b>Reborn {rebirth.count} times, {rebirth.stars} Stars</b>\n`
 			.. `Rebirth now for <font color="#F0C450"><b>{starsNow} Stars</b></font>. At level {nextStarLevel} it would be {starsNow + 1}.`
 	else
+		ui.art.progress(status, state.level, RebirthConfig.MinLevel, colors.gold)
 		status.Text = `<b>Reborn {rebirth.count} times, {rebirth.stars} Stars</b>\n`
 			.. `Rebirth opens at level {RebirthConfig.MinLevel}. You are level {state.level}.`
 	end

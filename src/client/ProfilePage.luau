@@ -1,237 +1,286 @@
--- Profile popup: your Roblox picture, attack, defense and warband size,
--- your all-time numbers, your titles and the promo code box. Opened by
--- pressing your picture in the top bar. Built once by Main with the shared
--- helpers in `ui`.
+-- Profile popup, kept simple:
+--   left   your Roblox picture in a gold frame with your level, your name
+--          and title, and the three pieces you wear yourself,
+--   right  STATS (renown, attack, defense, warband, income; tap attack or
+--          defense to see where it comes from) and ACTIVITY.
+-- All-time numbers live in MENU > Stats; titles and codes in MENU > Settings.
 
 local Players = game:GetService("Players")
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
-local RebirthConfig = require(Shared:WaitForChild("RebirthConfig"))
 local Format = require(Shared:WaitForChild("Format"))
 
 local ProfilePage = {}
 
-local MAX_TITLES = 24
+local SLOTS = { "Weapon", "Armor", "Mount" }
+local ATTACK_COLOR = Color3.fromRGB(255, 140, 110)
+local DEFENSE_COLOR = Color3.fromRGB(140, 190, 255)
 
--- The numbers shown as tiles: { label, function(state) -> text }.
-local function count(key: string)
-	return function(state)
-		return Format.short(math.floor(state.lifetime[key] or 0))
-	end
+local w = {}
+local latest = nil
+local popoverKind = nil -- "attack" / "defense" while the breakdown shows
+
+local function commas(value: number): string
+	local text = tostring(math.floor(value))
+	local result = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	return (result:gsub("^,", ""))
 end
-local TILES = {
-	{ "Quests done", count("quests") },
-	{ "Foes beaten", count("foes") },
-	{ "Attacks made", count("attacks") },
-	{ "Times knocked down", count("knockdowns") },
-	{ "Recruits rolled", count("rolls") },
-	{ "Gear bought", count("market") },
-	{ "Gold earned", count("goldEarned") },
-	{
-		"Time played",
-		function(state)
-			local seconds = math.floor(state.lifetime.playSeconds or 0)
-			return `{math.floor(seconds / 3600)}h {math.floor(seconds / 60) % 60}m`
-		end,
-	},
-	{
-		"Trophies",
-		function(state)
-			local earned = 0
-			for _ in state.trophies do
-				earned += 1
-			end
-			return `{earned} / {#GameConfig.Trophies}`
-		end,
-	},
-	{
-		"Relic pieces",
-		function(state)
-			return Format.short(state.relics.count)
-		end,
-	},
-	{
-		"Rebirths",
-		function(state)
-			return tostring(state.rebirth.count)
-		end,
-	},
-	{
-		"Codes used",
-		count("codes"),
-	},
-}
 
-local nameText, subText, footText
-local statValues = {}
-local tileValues = {}
-local titleCards = {}
-local noTitleInfo, noTitleButton
+local function header(ui, parent: Instance, y: number, text: string)
+	local band = ui.makeFrame(parent, UDim2.new(1, 0, 0, 32), UDim2.fromOffset(0, y), Color3.fromRGB(24, 18, 14))
+	band.BackgroundTransparency = 0.2
+	local label = ui.makeText(band, UDim2.new(1, -20, 1, 0), UDim2.fromOffset(14, 0), ui.colors.gold, 17)
+	label.Font = Enum.Font.GothamBlack
+	label.Text = text
+	return band
+end
+
+local function drawPopover(state, ui)
+	local pop = w.popover
+	pop.frame.Visible = popoverKind ~= nil
+	if not popoverKind or not state then
+		return
+	end
+	local stats = state.stats
+	local attack = popoverKind == "attack"
+	pop.title.Text = if attack then "\u{2694}\u{FE0F} ATTACK" else "\u{1F6E1}\u{FE0F} DEFENSE"
+	pop.title.TextColor3 = if attack then ATTACK_COLOR else DEFENSE_COLOR
+	local lines = {}
+	for index, part in stats.breakdown or {} do
+		local value = math.floor(if attack then part[2] else part[3])
+		local sign = if index == #stats.breakdown then "+" else ""
+		local color = if index == #stats.breakdown then "#F0C450" else "#EDE6D6"
+		table.insert(lines, `<font color="{color}">{part[1]}</font>`)
+		pop.values[index] = `<font color="{color}">{sign}{commas(value)}</font>`
+	end
+	pop.left.Text = table.concat(lines, "\n")
+	local values = {}
+	for index = 1, #(stats.breakdown or {}) do
+		table.insert(values, pop.values[index])
+	end
+	pop.right.Text = table.concat(values, "\n")
+end
 
 function ProfilePage.build(ui)
 	local page = ui.pages.Profile
 	local colors = ui.colors
+	local body = ui.makeFrame(page, UDim2.new(1, -10, 0, 476), UDim2.fromOffset(0, 0), Color3.new(1, 1, 1))
+	body.LayoutOrder = 1
+	ui.addCorner(body, 10)
+	local gradient = Instance.new("UIGradient")
+	gradient.Rotation = 90
+	gradient.Color = ColorSequence.new(Color3.fromRGB(96, 26, 24), Color3.fromRGB(48, 14, 14))
+	gradient.Parent = body
+	ui.art.grain(body)
+	w.body = body
 
-	-- Header card: picture on the left, name and the big three numbers.
-	local header = ui.makeFrame(page, UDim2.new(1, -10, 0, 156), UDim2.fromOffset(0, 0), colors.row)
-	header.LayoutOrder = ui.nextOrder()
-	ui.addCorner(header, 8)
-	ui.addStroke(header)
-
+	-- Picture in a gold frame, level badge in the corner.
+	local frame = ui.makeFrame(body, UDim2.fromOffset(190, 190), UDim2.fromOffset(24, 20), ui.colors.gold)
+	ui.addCorner(frame, 14)
+	ui.art.gloss(frame, 1, 0.55)
+	ui.art.stroke(frame, Color3.fromRGB(110, 70, 20), 3, 0)
+	ui.art.studs(frame, 10)
 	local picture = Instance.new("ImageLabel")
-	picture.Size = UDim2.fromOffset(128, 128)
-	picture.Position = UDim2.fromOffset(14, 14)
-	picture.BackgroundColor3 = colors.panel
+	picture.Size = UDim2.new(1, -24, 1, -24)
+	picture.Position = UDim2.fromOffset(12, 12)
+	picture.BackgroundColor3 = Color3.fromRGB(30, 24, 20)
 	picture.BorderSizePixel = 0
 	picture.ScaleType = Enum.ScaleType.Crop
-	picture.Image = ""
-	picture.Parent = header
-	ui.addCorner(picture, 10)
-	local ring = Instance.new("UIStroke")
-	ring.Color = colors.gold
-	ring.Thickness = 2
-	ring.Parent = picture
+	picture.ZIndex = frame.ZIndex + 3
+	picture.Parent = frame
+	ui.addCorner(picture, 8)
 	task.spawn(function()
-		local player = ui.player
-		local ok, image = pcall(Players.GetUserThumbnailAsync, Players, player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+		local ok, image = pcall(Players.GetUserThumbnailAsync, Players, ui.player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
 		if ok and image then
 			picture.Image = image
 		end
 	end)
+	w.level = ui.makeText(frame, UDim2.fromOffset(64, 44), UDim2.new(1, 8, 1, 8), Color3.fromRGB(40, 26, 8), 28)
+	w.level.AnchorPoint = Vector2.new(1, 1)
+	w.level.BackgroundTransparency = 0
+	w.level.BackgroundColor3 = colors.gold
+	w.level.Font = Enum.Font.GothamBlack
+	w.level.TextXAlignment = Enum.TextXAlignment.Center
+	w.level.ZIndex = frame.ZIndex + 5
+	ui.addCorner(w.level, 6)
+	ui.art.stroke(w.level, Color3.fromRGB(90, 60, 10), 2, 0)
+	w.stars = ui.makeText(frame, UDim2.fromOffset(70, 26), UDim2.fromOffset(-8, -8), colors.gold, 14)
+	w.stars.BackgroundTransparency = 0
+	w.stars.BackgroundColor3 = Color3.fromRGB(24, 18, 14)
+	w.stars.Font = Enum.Font.GothamBlack
+	w.stars.TextXAlignment = Enum.TextXAlignment.Center
+	w.stars.ZIndex = frame.ZIndex + 5
+	ui.addCorner(w.stars, 6)
 
-	nameText = ui.makeText(header, UDim2.new(1, -170, 0, 26), UDim2.fromOffset(156, 12), colors.header, 20)
-	nameText.Font = Enum.Font.GothamBlack
-	nameText.RichText = true
-	nameText.TextWrapped = false
-	nameText.TextTruncate = Enum.TextTruncate.AtEnd
-	subText = ui.makeText(header, UDim2.new(1, -170, 0, 16), UDim2.fromOffset(156, 38), colors.dim, 12)
-	subText.RichText = true
+	-- Name card.
+	local nameCard = ui.makeFrame(body, UDim2.fromOffset(250, 62), UDim2.fromOffset(16, 226), Color3.fromRGB(24, 18, 14))
+	nameCard.BackgroundTransparency = 0.1
+	ui.addCorner(nameCard, 6)
+	w.name = ui.makeText(nameCard, UDim2.new(1, -16, 0, 28), UDim2.fromOffset(8, 6), colors.text, 20)
+	w.name.Font = Enum.Font.GothamBlack
+	w.name.TextXAlignment = Enum.TextXAlignment.Center
+	w.name.TextTruncate = Enum.TextTruncate.AtEnd
+	w.title = ui.makeText(nameCard, UDim2.new(1, -16, 0, 20), UDim2.fromOffset(8, 34), colors.gold, 14)
+	w.title.Font = Enum.Font.GothamBlack
+	w.title.TextXAlignment = Enum.TextXAlignment.Center
 
-	local statRow = ui.makeFrame(header, UDim2.new(1, -170, 0, 56), UDim2.fromOffset(156, 60), colors.row)
-	statRow.BackgroundTransparency = 1
-	local statLayout = Instance.new("UIGridLayout")
-	statLayout.CellSize = UDim2.new(0.25, -6, 1, 0)
-	statLayout.CellPadding = UDim2.fromOffset(6, 0)
-	statLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	statLayout.Parent = statRow
-	for index, label in { "Attack", "Defense", "Warband", "Renown" } do
-		local tile = ui.makeFrame(statRow, UDim2.fromOffset(80, 56), UDim2.fromOffset(0, 0), colors.panel)
-		tile.LayoutOrder = index
+	-- Equipped: your own three slots.
+	header(ui, body, 300, "EQUIPPED")
+	w.slots = {}
+	for index, slot in SLOTS do
+		local tile = ui.makeFrame(body, UDim2.fromOffset(76, 76), UDim2.fromOffset(16 + (index - 1) * 87, 340), Color3.fromRGB(24, 18, 14))
 		ui.addCorner(tile, 6)
-		local name = ui.makeText(tile, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 5), colors.dim, 10)
-		name.Font = Enum.Font.GothamBold
-		name.Text = string.upper(label)
-		local value = ui.makeText(tile, UDim2.new(1, -12, 0, 28), UDim2.fromOffset(8, 22), colors.text, 20)
-		value.Font = Enum.Font.GothamBlack
-		value.TextScaled = true
-		statValues[index] = value
+		local stroke = ui.art.stroke(tile, colors.dim, 2, 0.2)
+		local art = ui.makeFrame(tile, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0))
+		art.BackgroundTransparency = 1
+		local empty = ui.makeText(tile, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), colors.dim, 28)
+		empty.TextXAlignment = Enum.TextXAlignment.Center
+		empty.Text = ui.art.Icons[slot] or "?"
+		empty.TextTransparency = 0.6
+		w.slots[slot] = { tile = tile, stroke = stroke, art = art, empty = empty }
 	end
-
-	footText = ui.makeText(header, UDim2.new(1, -300, 0, 28), UDim2.fromOffset(156, 122), colors.dim, 12)
-	footText.RichText = true
-	local rebirthButton = ui.makeButton(header, UDim2.fromOffset(120, 28), UDim2.new(1, -134, 0, 122), colors.selected)
-	ui.setButton(rebirthButton, "Rebirth", true, colors.selected)
-	rebirthButton.Activated:Connect(function()
+	local rebirth = ui.makeButton(body, UDim2.fromOffset(250, 40), UDim2.fromOffset(16, 424), colors.selected)
+	ui.setButton(rebirth, "\u{1F31F} REBIRTH", true, colors.selected)
+	rebirth.Font = Enum.Font.GothamBlack
+	rebirth.TextSize = 16
+	rebirth.Activated:Connect(function()
 		ui.openModal("Rebirth")
 	end)
 
-	ui.makeHeading(page, ui.nextOrder(), "All-time record")
-	local grid = ui.makeGrid(page, ui.nextOrder(), 58, 4)
-	for index, tile in TILES do
-		local card = ui.makeFrame(grid, UDim2.fromOffset(100, 58), UDim2.fromOffset(0, 0), colors.row)
-		card.LayoutOrder = index
-		ui.addCorner(card, 8)
-		ui.addStroke(card)
-		local label = ui.makeText(card, UDim2.new(1, -16, 0, 16), UDim2.fromOffset(8, 6), colors.dim, 11)
-		label.Font = Enum.Font.GothamBold
-		label.Text = string.upper(tile[1])
-		local value = ui.makeText(card, UDim2.new(1, -16, 0, 26), UDim2.fromOffset(8, 24), colors.text, 20)
-		value.Font = Enum.Font.GothamBold
-		tileValues[index] = value
-	end
-
-	ui.makeHeading(page, ui.nextOrder(), "Titles")
-	noTitleInfo, noTitleButton = ui.makeRow(page, ui.nextOrder(), 44, true)
-	noTitleInfo.TextSize = 13
-	noTitleButton.Activated:Connect(function()
-		ui.send("Title", "")
-	end)
-	local titleGrid = ui.makeGrid(page, ui.nextOrder(), 84, 4)
-	for index = 1, MAX_TITLES do
-		local info, button = ui.makeCard(titleGrid)
-		info.RichText = true
-		local entry = { info = info, button = button, title = nil }
-		titleCards[index] = entry
-		button.Activated:Connect(function()
-			if entry.title then
-				ui.send("Title", entry.title)
-			end
-		end)
-	end
-
-	ui.makeHeading(page, ui.nextOrder(), "Promo code")
-	local codeRow = ui.makeFrame(page, UDim2.new(1, -10, 0, 52), UDim2.fromOffset(0, 0), colors.row)
-	codeRow.LayoutOrder = ui.nextOrder()
-	ui.addCorner(codeRow, 6)
-	local codeBox = ui.makeAmountBox(codeRow, UDim2.new(1, -140, 1, -12), UDim2.fromOffset(8, 6), "Type a code, then press Redeem")
-	local redeem = ui.makeButton(codeRow, UDim2.fromOffset(112, 40), UDim2.new(1, -6, 0.5, 0), colors.buy)
-	redeem.AnchorPoint = Vector2.new(1, 0.5)
-	ui.setButton(redeem, "Redeem", true, colors.buy)
-	redeem.Activated:Connect(function()
-		local text = string.sub(codeBox.Text, 1, 40)
-		if text ~= "" then
-			ui.send("Code", text)
-			codeBox.Text = ""
+	-- Stats.
+	local right = ui.makeFrame(body, UDim2.new(1, -310, 1, -40), UDim2.fromOffset(290, 20), Color3.new(0, 0, 0))
+	right.BackgroundTransparency = 1
+	header(ui, right, 0, "STATS")
+	local statBox = ui.makeFrame(right, UDim2.new(1, 0, 0, 232), UDim2.fromOffset(0, 36), Color3.fromRGB(26, 22, 20))
+	ui.addCorner(statBox, 4)
+	ui.art.stroke(statBox, Color3.new(0, 0, 0), 1, 0.4)
+	w.stats = {}
+	local rows = {
+		{ "renown", "\u{2B50}", "Renown" },
+		{ "attack", "\u{2694}\u{FE0F}", "Attack Power" },
+		{ "defense", "\u{1F6E1}\u{FE0F}", "Defense Power" },
+		{ "crew", "\u{1F465}", "Warband Size" },
+		{ "income", "\u{1F4B0}", "Income / hr" },
+	}
+	for index, info in rows do
+		local y = 6 + (index - 1) * 45
+		local row = ui.makeButton(statBox, UDim2.new(1, -12, 0, 42), UDim2.fromOffset(6, y), Color3.new(0, 0, 0))
+		row.BackgroundTransparency = 1
+		row.Text = ""
+		row:SetAttribute("NoGlow", info[1] ~= "attack" and info[1] ~= "defense")
+		local glyph = ui.makeText(row, UDim2.fromOffset(40, 42), UDim2.fromOffset(8, 0), Color3.new(1, 1, 1), 24)
+		glyph.TextXAlignment = Enum.TextXAlignment.Center
+		glyph.Text = info[2]
+		local label = ui.makeText(row, UDim2.new(0.6, -60, 1, 0), UDim2.fromOffset(58, 0), colors.text, 20)
+		label.Text = `{info[3]}:`
+		local value = ui.makeText(row, UDim2.new(0.4, -10, 1, 0), UDim2.new(0.6, 0, 0, 0), colors.text, 22)
+		value.Font = Enum.Font.GothamBlack
+		value.TextXAlignment = Enum.TextXAlignment.Right
+		w.stats[info[1]] = value
+		if info[1] == "attack" or info[1] == "defense" then
+			local kind = info[1]
+			row.MouseEnter:Connect(function()
+				popoverKind = kind
+				drawPopover(latest, ui)
+			end)
+			row.MouseLeave:Connect(function()
+				if popoverKind == kind then
+					popoverKind = nil
+					drawPopover(latest, ui)
+				end
+			end)
+			row.Activated:Connect(function()
+				popoverKind = if popoverKind == kind then nil else kind
+				drawPopover(latest, ui)
+			end)
 		end
-	end)
+	end
+	w.statColors = { attack = ATTACK_COLOR, defense = DEFENSE_COLOR }
+
+	header(ui, right, 284, "ACTIVITY")
+	local activity = ui.makeFrame(right, UDim2.new(1, 0, 0, 96), UDim2.fromOffset(0, 320), Color3.fromRGB(26, 22, 20))
+	ui.addCorner(activity, 4)
+	w.since = ui.makeText(activity, UDim2.new(1, -28, 0, 44), UDim2.fromOffset(14, 4), colors.text, 18)
+	w.since.RichText = true
+	w.best = ui.makeText(activity, UDim2.new(1, -28, 0, 44), UDim2.fromOffset(14, 48), colors.text, 18)
+	w.best.RichText = true
+
+	-- Breakdown pop-over (hover or tap attack / defense).
+	local pop = ui.makeFrame(body, UDim2.fromOffset(330, 240), UDim2.new(1, -350, 0, 212), Color3.fromRGB(22, 18, 16))
+	pop.ZIndex = 600
+	pop.Visible = false
+	ui.addCorner(pop, 6)
+	ui.art.stroke(pop, colors.gold, 2, 0)
+	local title = ui.makeText(pop, UDim2.new(1, -24, 0, 40), UDim2.fromOffset(16, 8), ATTACK_COLOR, 26)
+	title.Font = Enum.Font.GothamBlack
+	title.ZIndex = 601
+	local left = ui.makeText(pop, UDim2.new(0.6, -16, 1, -60), UDim2.fromOffset(16, 52), colors.text, 18)
+	left.RichText = true
+	left.TextYAlignment = Enum.TextYAlignment.Top
+	left.LineHeight = 1.3
+	left.ZIndex = 601
+	local valuesText = ui.makeText(pop, UDim2.new(0.4, -16, 1, -60), UDim2.new(0.6, 0, 0, 52), colors.text, 18)
+	valuesText.RichText = true
+	valuesText.TextYAlignment = Enum.TextYAlignment.Top
+	valuesText.TextXAlignment = Enum.TextXAlignment.Right
+	valuesText.LineHeight = 1.3
+	valuesText.Font = Enum.Font.GothamBlack
+	valuesText.ZIndex = 601
+	w.popover = { frame = pop, title = title, left = left, right = valuesText, values = {} }
 end
 
 function ProfilePage.draw(state, ui)
+	if not state then
+		return
+	end
+	latest = state
+	if not ui.isOpen("Profile") then
+		popoverKind = nil
+		w.popover.frame.Visible = false
+		return
+	end
 	local colors = ui.colors
 	local stats = state.stats
-	local title = if state.title ~= "" then state.title .. " " else ""
-	local since = if state.firstSeen > 0 then os.date("!%d %b %Y", state.firstSeen) else "today"
+	w.level.Text = tostring(state.level)
 	local stars = state.rebirth.stars
-	local starText = if stars > 0 then `   |   <font color="#F0C450">{stars} rebirth Stars</font>` else ""
-	nameText.Text = `{title}{ui.player.DisplayName}`
-	subText.Text = `@{ui.player.Name}   |   Level {state.level}{starText}`
-	statValues[1].Text = Format.short(stats.attack)
-	statValues[2].Text = Format.short(stats.defense)
-	statValues[3].Text = `{stats.crewSize} / {#state.crew}`
-	statValues[4].Text = Format.short(state.renown)
-	footText.Text = `In the realm since {since}\nIncome {Format.short(stats.incomePerHour)}/hr   |   Best foe stage: {state.highestStage}`
+	w.stars.Visible = stars > 0
+	w.stars.Text = `\u{2B50} {stars}`
+	w.name.Text = string.upper(ui.player.DisplayName)
+	w.title.Text = if state.title ~= "" then string.upper(state.title) else `@{string.upper(ui.player.Name)}`
 
-	for index, tile in TILES do
-		tileValues[index].Text = tile[2](state)
-	end
-
-	ui.setButton(noTitleButton, if state.title == "" then "No title (now)" else "No title", state.title ~= "", colors.selected)
-	local owned = {}
-	for text in state.titles do
-		table.insert(owned, text)
-	end
-	table.sort(owned)
-	for index, card in titleCards do
-		local text = owned[index]
-		card.title = text
-		card.info.Parent.Visible = text ~= nil
-		if text then
-			card.info.Text = `<b>{text}</b>\n{text} {ui.player.DisplayName}`
-			if state.title == text then
-				ui.setButton(card.button, "In use", false, colors.claim)
-			else
-				ui.setButton(card.button, "Use", true, colors.buy)
-			end
+	-- Your own worn pieces.
+	local worn = {}
+	for _, item in state.gear do
+		if item.wornBy == 0 then
+			worn[item.slot] = item
 		end
 	end
-	if #owned == 0 then
-		ui.setButton(noTitleButton, "None yet", false, colors.selected)
-		noTitleInfo.Text = `No titles yet. Your first rebirth gives "{RebirthConfig.getTitle(1)}"; the Relic Hall, packs and codes give others.`
-	else
-		noTitleInfo.Text = "Titles come from packs, rebirths, the Relic Hall and codes. The one you pick shows before your name."
+	for _, slot in SLOTS do
+		local part = w.slots[slot]
+		local item = worn[slot]
+		part.empty.Visible = item == nil
+		part.art.Visible = item ~= nil
+		if item then
+			ui.itemArt.set(part.art, item)
+			part.stroke.Color = GameConfig.getRarity(item.rarity).color
+		else
+			part.stroke.Color = colors.dim
+		end
 	end
+
+	w.stats.renown.Text = commas(state.renown)
+	w.stats.renown.TextColor3 = colors.gold
+	w.stats.attack.Text = commas(stats.attack)
+	w.stats.defense.Text = commas(stats.defense)
+	w.stats.crew.Text = tostring(stats.crewSize)
+	w.stats.income.Text = Format.short(stats.incomePerHour)
+	w.stats.income.TextColor3 = Color3.fromRGB(120, 220, 120)
+
+	local since = if state.firstSeen > 0 then os.date("!%d %b %Y", state.firstSeen) else "today"
+	w.since.Text = `\u{1F4C5}  In the realm since: <b><font color="#F0C450">{since}</font></b>`
+	w.best.Text = `\u{1F409}  Best foe stage: <b><font color="#F0C450">{state.highestStage}</font></b>`
+	drawPopover(state, ui)
 end
 
 return ProfilePage

@@ -15,7 +15,7 @@ GameConfig.BaseMaxStamina = 5
 GameConfig.BaseMaxHealth = 100
 GameConfig.BaseAttack = 3
 GameConfig.BaseDefense = 3
-GameConfig.BaseLots = 4
+GameConfig.BaseLots = 1
 
 -- Seconds to regain one point.
 GameConfig.EnergyRegenSeconds = 12
@@ -48,19 +48,27 @@ GameConfig.MinHealthToFight = 20
 -- Skills: what one skill point buys
 ---------------------------------------------------------------------------
 
--- cost is skill points for the first purchase. With growth, each later
--- purchase of the same skill costs that many times more.
+-- cost is skill points for the first purchase, and every purchase of the
+-- same skill makes the next one cost more:
+--   * step: +1 point every `step` purchases (1, 1, ... 2, 2, ... 3 ...)
+--   * doubleEvery: the price doubles every `doubleEvery` purchases
+--     (lots: 1, 1, 2, 2, 4, 4, 8 ... so lot 18 costs 256)
 GameConfig.Skills = {
-	{ id = "energy", name = "Max Energy", amount = 2, cost = 1, note = "+2 max energy" },
-	{ id = "stamina", name = "Max Stamina", amount = 1, cost = 1, note = "+1 max stamina" },
-	{ id = "health", name = "Max Health", amount = 10, cost = 1, note = "+10 max health" },
-	{ id = "attack", name = "Attack", amount = 1, cost = 1, note = "+1 attack" },
-	{ id = "defense", name = "Defense", amount = 1, cost = 1, note = "+1 defense" },
-	{ id = "lots", name = "Holding Lots", amount = 1, cost = 2, growth = 1.5, note = "+1 lot to build a holding on" },
+	{ id = "energy", name = "Max Energy", amount = 2, cost = 1, step = 10, note = "+2 max energy" },
+	{ id = "stamina", name = "Max Stamina", amount = 1, cost = 1, step = 10, note = "+1 max stamina" },
+	{ id = "health", name = "Max Health", amount = 10, cost = 1, step = 10, note = "+10 max health" },
+	{ id = "attack", name = "Attack", amount = 1, cost = 1, step = 10, note = "+1 attack" },
+	{ id = "defense", name = "Defense", amount = 1, cost = 1, step = 10, note = "+1 defense" },
+	{ id = "lots", name = "Holding Lots", amount = 1, cost = 1, doubleEvery = 2, note = "+1 lot to build a holding on" },
 }
 
 function GameConfig.getSkillCost(skill, bought: number): number
-	return math.floor(skill.cost * (skill.growth or 1) ^ bought + 0.5)
+	if skill.doubleEvery then
+		return skill.cost * 2 ^ (bought // skill.doubleEvery)
+	elseif skill.step then
+		return skill.cost + bought // skill.step
+	end
+	return skill.cost
 end
 
 ---------------------------------------------------------------------------
@@ -78,27 +86,34 @@ GameConfig.Regions = {
 ---------------------------------------------------------------------------
 
 -- drop is the chance (0 to 1) of finding a piece of gear.
+-- Quest tiers inside each region (TIER 1, TIER 2 ...): `tier` on each quest.
+-- A tier shows from the lowest level of its quests.
 GameConfig.Quests = {
-	{ id = "patrol", region = "Oakvale", name = "Patrol the Village Road", level = 1, energy = 1, gold = 40, xp = 2, drop = 0.025 },
-	{ id = "chickens", region = "Oakvale", name = "Chase Off Chicken Thieves", level = 2, energy = 2, gold = 90, xp = 4, drop = 0.025 },
-	{ id = "graincart", region = "Oakvale", name = "Guard the Grain Cart", level = 3, energy = 3, gold = 150, xp = 7, drop = 0.03 },
-	{ id = "cellar", region = "Oakvale", name = "Clear Rats from the Cellar", level = 4, energy = 3, gold = 190, xp = 8, drop = 0.03 },
-	{ id = "taxman", region = "Oakvale", name = "Escort the Tax Collector", level = 5, energy = 4, gold = 270, xp = 11, drop = 0.035 },
-	{ id = "boar", region = "Oakvale", name = "Hunt the Marsh Boar", level = 6, energy = 5, gold = 370, xp = 14, drop = 0.04 },
-	{ id = "fort", region = "Greywatch", name = "Scout the Border Fort", level = 8, energy = 6, gold = 520, xp = 18, drop = 0.04 },
-	{ id = "caravan", region = "Greywatch", name = "Ambush a Smuggler Caravan", level = 10, energy = 7, gold = 700, xp = 23, drop = 0.045 },
-	{ id = "blockade", region = "Greywatch", name = "Break the Toll Blockade", level = 12, energy = 8, gold = 920, xp = 28, drop = 0.045 },
-	{ id = "hideout", region = "Greywatch", name = "Storm the Outlaw Hideout", level = 15, energy = 10, gold = 1400, xp = 38, drop = 0.05 },
-	{ id = "ferry", region = "Emberreach", name = "Seize the Ember Ferry", level = 18, energy = 11, gold = 2100, xp = 46, drop = 0.05 },
-	{ id = "forge", region = "Emberreach", name = "Relight the Old Forge", level = 21, energy = 12, gold = 2900, xp = 55, drop = 0.055 },
-	{ id = "ashwolves", region = "Emberreach", name = "Drive Out the Ash Wolves", level = 24, energy = 14, gold = 4000, xp = 66, drop = 0.06 },
-	{ id = "cinderkeep", region = "Emberreach", name = "Lift the Siege of Cinderkeep", level = 28, energy = 16, gold = 5600, xp = 80, drop = 0.065 },
+	{ id = "patrol", region = "Oakvale", tier = 1, name = "Patrol the Village Road", level = 1, energy = 1, gold = 40, xp = 2, drop = 0.025 },
+	{ id = "chickens", region = "Oakvale", tier = 1, name = "Chase Off Chicken Thieves", level = 2, energy = 2, gold = 90, xp = 4, drop = 0.025 },
+	{ id = "graincart", region = "Oakvale", tier = 1, name = "Guard the Grain Cart", level = 3, energy = 3, gold = 150, xp = 7, drop = 0.03 },
+	{ id = "cellar", region = "Oakvale", tier = 2, name = "Clear Rats from the Cellar", level = 4, energy = 3, gold = 190, xp = 8, drop = 0.03 },
+	{ id = "taxman", region = "Oakvale", tier = 2, name = "Escort the Tax Collector", level = 5, energy = 4, gold = 270, xp = 11, drop = 0.035 },
+	{ id = "boar", region = "Oakvale", tier = 2, name = "Hunt the Marsh Boar", level = 6, energy = 5, gold = 370, xp = 14, drop = 0.04 },
+	{ id = "fort", region = "Greywatch", tier = 3, name = "Scout the Border Fort", level = 8, energy = 6, gold = 520, xp = 18, drop = 0.04 },
+	{ id = "caravan", region = "Greywatch", tier = 3, name = "Ambush a Smuggler Caravan", level = 10, energy = 7, gold = 700, xp = 23, drop = 0.045 },
+	{ id = "blockade", region = "Greywatch", tier = 4, name = "Break the Toll Blockade", level = 12, energy = 8, gold = 920, xp = 28, drop = 0.045 },
+	{ id = "hideout", region = "Greywatch", tier = 4, name = "Storm the Outlaw Hideout", level = 15, energy = 10, gold = 1400, xp = 38, drop = 0.05 },
+	{ id = "ferry", region = "Emberreach", tier = 5, name = "Seize the Ember Ferry", level = 18, energy = 11, gold = 2100, xp = 46, drop = 0.05 },
+	{ id = "forge", region = "Emberreach", tier = 5, name = "Relight the Old Forge", level = 21, energy = 12, gold = 2900, xp = 55, drop = 0.055 },
+	{ id = "ashwolves", region = "Emberreach", tier = 6, name = "Drive Out the Ash Wolves", level = 24, energy = 14, gold = 4000, xp = 66, drop = 0.06 },
+	{ id = "cinderkeep", region = "Emberreach", tier = 6, name = "Lift the Siege of Cinderkeep", level = 28, energy = 16, gold = 5600, xp = 80, drop = 0.065 },
 }
 
 ---------------------------------------------------------------------------
 -- Holdings: each one built takes a lot and earns gold every hour. You can
--- build the same holding many times.
+-- build the same holding many times. income is gold per hour per copy;
+-- every holding pays together, in lumps every HoldingCycle seconds (the
+-- bar on each card), each its own share.
 ---------------------------------------------------------------------------
+
+GameConfig.HoldingCycle = 2.5 -- seconds between payouts
+GameConfig.BuildSeconds = 5 -- a new holding is under construction this long
 
 GameConfig.Holdings = {
 	{ id = "field", region = "Oakvale", name = "Wheat Field", level = 1, cost = 400, income = 360 },
@@ -153,15 +168,18 @@ GameConfig.PlaytimeRewards = {
 -- item's attack and defense, and price multiplies its cost.
 ---------------------------------------------------------------------------
 
+-- crewMin/crewMax: a soldier of this rarity rolls attack and defense,
+-- each between these (fixed once rolled). gear: attack + defense of a
+-- Market item of this rarity (other pools multiply it by their power).
 GameConfig.Rarities = {
-	{ id = "Common", chance = 500, stats = 1, price = 1, color = Color3.fromRGB(190, 190, 185) },
-	{ id = "Uncommon", chance = 280, stats = 1.4, price = 1.6, color = Color3.fromRGB(110, 200, 110) },
-	{ id = "Rare", chance = 140, stats = 2, price = 3, color = Color3.fromRGB(90, 150, 240) },
-	{ id = "Epic", chance = 60, stats = 3, price = 6, color = Color3.fromRGB(180, 100, 230) },
-	{ id = "Legendary", chance = 18, stats = 4.5, price = 12, color = Color3.fromRGB(245, 165, 50) },
-	{ id = "Mythic", chance = 2, stats = 7, price = 30, color = Color3.fromRGB(240, 70, 90) },
+	{ id = "Common", chance = 500, stats = 1, crewMin = 3, crewMax = 6, gear = 4, price = 1, color = Color3.fromRGB(190, 190, 185) },
+	{ id = "Uncommon", chance = 280, stats = 1.4, crewMin = 5, crewMax = 9, gear = 6, price = 1.6, color = Color3.fromRGB(110, 200, 110) },
+	{ id = "Rare", chance = 140, stats = 2, crewMin = 8, crewMax = 14, gear = 10, price = 3, color = Color3.fromRGB(90, 150, 240) },
+	{ id = "Epic", chance = 60, stats = 3, crewMin = 12, crewMax = 20, gear = 15, price = 6, color = Color3.fromRGB(180, 100, 230) },
+	{ id = "Legendary", chance = 18, stats = 4.5, crewMin = 18, crewMax = 30, gear = 22, price = 12, color = Color3.fromRGB(245, 165, 50) },
+	{ id = "Mythic", chance = 2, stats = 7, crewMin = 28, crewMax = 45, gear = 34, price = 30, color = Color3.fromRGB(240, 70, 90) },
 	-- Divine never appears in the Market. Only Royal recruits can roll it.
-	{ id = "Divine", chance = 0, stats = 11, price = 80, color = Color3.fromRGB(255, 240, 150) },
+	{ id = "Divine", chance = 0, stats = 11, crewMin = 45, crewMax = 70, gear = 52, price = 80, color = Color3.fromRGB(255, 240, 150) },
 }
 
 ---------------------------------------------------------------------------
@@ -213,19 +231,18 @@ GameConfig.RecruitTiers = {
 
 -- Auto roll (Recruiting Sergeant pass) makes this many rolls each second
 -- until it hits the chosen rarity, runs out of gold or is stopped.
-GameConfig.AutoRollsPerTick = 1
+GameConfig.AutoRollsPerTick = 1 -- auto roll: rolls per slot each second (all slots roll at once)
 
 -- Training adds this much to a soldier's stats per rank, and costs this
 -- share of their recruit tier's roll cost, growing each rank.
-GameConfig.TrainStatBonus = 0.08
+GameConfig.TrainStatBonus = 0.01 -- +1% attack and defense per rank
 GameConfig.TrainCostShare = 0.5
 GameConfig.TrainCostGrowth = 1.6
-GameConfig.MaxTrainRank = 20
+GameConfig.MaxTrainRank = 10
 
--- Soldier classes. attack and defense are for a Common Village soldier.
--- Across all classes attack and defense add up to the same total, so a
--- warband is as good at holding as at hitting (attack rolls against
--- defense rolls in fights between players).
+-- Soldier classes (name and icon). Stats come from rarity: attack and
+-- defense each roll between the rarity's crewMin and crewMax. The recruit
+-- tier (Village, Mercenary, Royal) only changes the rarity odds.
 GameConfig.SoldierClasses = {
 	{ id = "Militia", attack = 3, defense = 3 },
 	{ id = "Archer", attack = 5, defense = 1 },
@@ -274,7 +291,8 @@ function GameConfig.getChanceAtLeast(tier, rarityId: string): number
 	return if total > 0 then hit / total else 0
 end
 
--- A soldier's own attack and defense, before gear and the crew size bonus.
+-- A soldier's own attack and defense with training, before gear and the
+-- crew size bonus.
 function GameConfig.getSoldierStats(soldier): (number, number)
 	local class = GameConfig.SoldierClasses[1]
 	for _, candidate in GameConfig.SoldierClasses do
@@ -282,10 +300,29 @@ function GameConfig.getSoldierStats(soldier): (number, number)
 			class = candidate
 		end
 	end
-	local tier = GameConfig.getRecruitTier(soldier.tier) or GameConfig.RecruitTiers[1]
+	-- Base stats are rolled once when recruited (GameConfig.rollSoldierStats).
+	-- Soldiers from before that get their rarity's middle value.
 	local rarity = GameConfig.getRarity(soldier.rarity)
-	local scale = rarity.stats * tier.power * (1 + GameConfig.TrainStatBonus * soldier.train)
-	return math.floor(class.attack * scale + 0.5), math.floor(class.defense * scale + 0.5)
+	local middle = (rarity.crewMin + rarity.crewMax) / 2
+	local scale = 1 + GameConfig.TrainStatBonus * (soldier.train or 0)
+	return math.floor((soldier.baseAttack or middle) * scale + 0.5), math.floor((soldier.baseDefense or middle) * scale + 0.5)
+end
+
+-- Rolls a new soldier's base attack and defense for its rarity.
+function GameConfig.rollSoldierStats(rarityId: string, random: Random): (number, number)
+	local rarity = GameConfig.getRarity(rarityId)
+	return random:NextInteger(rarity.crewMin, rarity.crewMax), random:NextInteger(rarity.crewMin, rarity.crewMax)
+end
+
+-- Training takes time: short at first, longer each rank, at most 8 hours.
+-- Minutes each rank takes: +0 to +1 is 5 minutes, then 15, 30, 1 hour,
+-- doubling each rank up to 8 hours (+6 to +7 and every rank after it).
+GameConfig.TrainMinutes = { 5, 15, 30, 60, 120, 240, 480, 480, 480, 480 }
+GameConfig.TrainMaxSeconds = 8 * 3600
+
+function GameConfig.getTrainSeconds(soldier): number
+	local minutes = GameConfig.TrainMinutes[(soldier.train or 0) + 1] or GameConfig.TrainMinutes[#GameConfig.TrainMinutes]
+	return math.min(GameConfig.TrainMaxSeconds, minutes * 60)
 end
 
 function GameConfig.getTrainCost(soldier): number
@@ -477,7 +514,109 @@ function GameConfig.getRarity(id: string)
 	return GameConfig.Rarities[1]
 end
 
--- Attack or defense for an item at `level` with the given rarity.
+-- Every item's stats are fixed by its name and rarity (never random).
+-- Each item has the same stat budget for its rarity; the name decides how
+-- the budget is split between attack and defense, so no item is stronger
+-- overall, only shaped differently.
+
+-- Share of the budget that goes to attack (the rest is defense).
+GameConfig.GearSplits = {
+	-- Weapons: all attack, or mostly attack.
+	["Longbow"] = 1, ["War Axe"] = 1, ["Spear"] = 0.8, ["Mace"] = 0.8, ["Sword"] = 0.6, ["Halberd"] = 0.6,
+	-- Armor: all defense, or mostly defense.
+	["Plate Harness"] = 0, ["Scale Mail"] = 0, ["Chainmail"] = 0.2, ["Brigandine"] = 0.2, ["Jerkin"] = 0.4,
+	-- Mounts: even, or leaning one way.
+	["Warhorse"] = 0.7, ["Griffin"] = 0.7, ["Elk"] = 0.5, ["Pony"] = 0.5, ["Mule"] = 0.3,
+	-- Set pieces.
+	["Briar Shortbow"] = 1, ["Briar Hood"] = 0.4, ["Briar Stag"] = 0.5,
+	["Saltreaver Axe"] = 1, ["Saltreaver Hauberk"] = 0.2, ["Saltreaver Destrier"] = 0.7,
+	["Cinderveil Staff"] = 0.8, ["Cinderveil Robes"] = 0.4, ["Cinderveil Salamander"] = 0.7,
+	["Ironbaron Warhammer"] = 0.6, ["Ironbaron Plate"] = 0, ["Ironbaron Charger"] = 0.3,
+	["Hollow Crown Blade"] = 0.8, ["Hollow Crown Mail"] = 0.2, ["Hollow Crown Nightmare"] = 0.7,
+}
+local DEFAULT_SPLIT = { Weapon = 1, Armor = 0, Mount = 0.5 }
+
+-- Where items come from. Each pool has its own items; the Market sells only
+-- the Market pool. Items from harder or paid sources are stronger than
+-- Market items of the same rarity (`power` scales the stat budget).
+--   market   Market and quest drops
+--   chest    chests (quests, foes, token shop, rewards)
+--   premium  Royal Coffers (bought with Crowns)
+--   set      foe house set pieces (power only; names are in GearSets)
+GameConfig.GearPools = {
+	market = {
+		label = "MARKET \u{00B7} QUESTS",
+		power = 1,
+		items = GameConfig.GearTypes, -- the names listed in GearTypes
+	},
+	chest = {
+		label = "CHESTS",
+		power = 1.15,
+		items = {
+			Weapon = { names = { "Bastard Sword", "Boar Spear", "Bearded Axe", "Flanged Mace", "Recurve Bow", "Oak Staff" } },
+			Armor = { names = { "Gambeson", "Ringmail Hauberk", "Coat of Plates", "Pilgrim's Robe" } },
+			Mount = { names = { "Destrier", "Palfrey", "Pack Mule", "Great Elk" } },
+		},
+	},
+	premium = {
+		label = "ROYAL COFFERS",
+		power = 1.35,
+		items = {
+			Weapon = { names = { "Royal Greatsword", "Dragonbone Spear", "Kingsfall Axe", "Sunforged Hammer", "Starlight Longbow", "Archmage Staff" } },
+			Armor = { names = { "Royal Plate", "Gilded Chainmail", "Dragonscale Mail", "Archmage Robe" } },
+			Mount = { names = { "Royal Griffin", "Silver Warhorse", "White Stag", "Moonlit Nightmare" } },
+		},
+	},
+	set = { label = "FOES", power = 1.25 },
+}
+GameConfig.GearPoolOrder = { "market", "chest", "premium" }
+
+for name, share in {
+	["Bastard Sword"] = 0.6, ["Boar Spear"] = 0.8, ["Bearded Axe"] = 1, ["Flanged Mace"] = 0.8, ["Recurve Bow"] = 1, ["Oak Staff"] = 0.8,
+	["Gambeson"] = 0.4, ["Ringmail Hauberk"] = 0.2, ["Coat of Plates"] = 0, ["Pilgrim's Robe"] = 0.4,
+	["Destrier"] = 0.7, ["Palfrey"] = 0.5, ["Pack Mule"] = 0.3, ["Great Elk"] = 0.5,
+	["Royal Greatsword"] = 0.6, ["Dragonbone Spear"] = 0.8, ["Kingsfall Axe"] = 1, ["Sunforged Hammer"] = 0.6, ["Starlight Longbow"] = 1, ["Archmage Staff"] = 0.8,
+	["Royal Plate"] = 0, ["Gilded Chainmail"] = 0.2, ["Dragonscale Mail"] = 0.2, ["Archmage Robe"] = 0.4,
+	["Royal Griffin"] = 0.7, ["Silver Warhorse"] = 0.7, ["White Stag"] = 0.5, ["Moonlit Nightmare"] = 0.3,
+} do
+	GameConfig.GearSplits[name] = share
+end
+
+-- Which pool each item name belongs to.
+GameConfig.GearPoolOf = {}
+for _, poolId in GameConfig.GearPoolOrder do
+	for _, slotInfo in GameConfig.GearPools[poolId].items do
+		for _, name in slotInfo.names do
+			GameConfig.GearPoolOf[name] = poolId
+		end
+	end
+end
+for _, set in GameConfig.GearSets do
+	for _, name in set.pieces do
+		GameConfig.GearPoolOf[name] = "set"
+	end
+end
+
+function GameConfig.getGearSplit(slot: string, name: string): number
+	return GameConfig.GearSplits[name] or DEFAULT_SPLIT[slot] or 0.5
+end
+
+function GameConfig.getGearPower(name: string): number
+	local pool = GameConfig.GearPools[GameConfig.GearPoolOf[name] or "market"]
+	return pool and pool.power or 1
+end
+
+-- Fixed attack and defense of an item. `rarity` is a rarity table or id.
+function GameConfig.getGearStats(slot: string, name: string, rarity): (number, number)
+	if type(rarity) ~= "table" then
+		rarity = GameConfig.getRarity(rarity)
+	end
+	local budget = rarity.gear * GameConfig.getGearPower(name)
+	local attack = math.floor(budget * GameConfig.getGearSplit(slot, name) + 0.5)
+	return attack, math.floor(budget + 0.5) - attack
+end
+
+-- (Old level-based stat formula, kept for anything that still scales by level.)
 function GameConfig.getItemStat(base: number, level: number, rarity): number
 	if base <= 0 then
 		return 0
@@ -535,10 +674,12 @@ GameConfig.AutoQuestsPerSecond = 3
 --   last     repeat the last quest you did
 --   mastery  the first open quest still short of gold mastery
 --   xp       the open quest with the most XP per energy
+--   gold     the open quest with the most gold per energy
 GameConfig.AutoQuestModes = {
-	{ id = "last", name = "Repeat last quest" },
-	{ id = "mastery", name = "Earn mastery medals" },
-	{ id = "xp", name = "Most XP" },
+	{ id = "last", name = "One quest", note = "Repeats the last quest you did" },
+	{ id = "mastery", name = "Mastery", note = "Earns every medal in order, then most XP" },
+	{ id = "xp", name = "Most XP", note = "Most XP for each energy" },
+	{ id = "gold", name = "Most gold", note = "Most gold for each energy" },
 }
 
 -- The quest auto quests do next, or nil. `done` is { [quest id] = times done }.
@@ -553,6 +694,18 @@ function GameConfig.pickAutoQuest(mode: string, level: number, done, lastId: str
 			end
 		end
 		mode = "xp" -- every open quest has gold mastery
+	end
+	if mode == "gold" then
+		local best, bestRate = nil, 0
+		for _, quest in GameConfig.Quests do
+			if open(quest) then
+				local rate = GameConfig.getQuestGold(quest, done[quest.id] or 0) / quest.energy
+				if not best or rate > bestRate then
+					best, bestRate = quest, rate
+				end
+			end
+		end
+		return best
 	end
 	if mode == "xp" then
 		local best = nil
@@ -624,5 +777,39 @@ local function buildStages()
 	end
 end
 buildStages()
+
+-- Set pieces sold for boss tokens in the TOKEN SHOP. Each house sells its
+-- set at the rarity of its chest. A house's pieces unlock once its last
+-- stage (the house boss) has been beaten for the first time.
+GameConfig.SetShopCost = { Uncommon = 40, Rare = 100, Epic = 250, Legendary = 600, Mythic = 1500 }
+GameConfig.SetShop = {}
+for _, set in GameConfig.GearSets do
+	local house, boss = nil, nil
+	for _, candidate in GameConfig.Houses do
+		if candidate.id == set.house then
+			house = candidate
+		end
+	end
+	for _, stage in GameConfig.Stages do
+		if stage.house == set.house then
+			boss = stage
+		end
+	end
+	if house and boss then
+		set.bossStage = boss.id
+		set.rarity = house.chest
+		for _, slot in { "Weapon", "Armor", "Mount" } do
+			table.insert(GameConfig.SetShop, {
+				id = `{set.id}:{slot}`,
+				set = set.id,
+				slot = slot,
+				name = set.pieces[slot],
+				rarity = house.chest,
+				cost = GameConfig.SetShopCost[house.chest] or 100,
+				bossStage = boss.id,
+			})
+		end
+	end
+end
 
 return GameConfig

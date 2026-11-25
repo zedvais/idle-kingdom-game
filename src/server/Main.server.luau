@@ -21,6 +21,7 @@ local ArmyConfig = require(ReplicatedStorage.Shared.ArmyConfig)
 local EstateConfig = require(ReplicatedStorage.Shared.EstateConfig)
 local Format = require(ReplicatedStorage.Shared.Format)
 local Market = require(script.Parent.Market)
+local ChestConfig = require(ReplicatedStorage.Shared.ChestConfig)
 local Recruit = require(script.Parent.Recruit)
 local Loadout = require(script.Parent.Loadout)
 local PlayerData = require(script.Parent.PlayerData)
@@ -41,6 +42,11 @@ actionRemote.Parent = remotes
 local stateRemote = Instance.new("RemoteEvent")
 stateRemote.Name = "State"
 stateRemote.Parent = remotes
+-- Fx (server to client): one-off effects such as chest reveals, damage
+-- numbers and level ups. Only for show; the state carries the real numbers.
+local fxRemote = Instance.new("RemoteEvent")
+fxRemote.Name = "Fx"
+fxRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
 local sessions = {} -- [Player] = { data, canSave, actionCount, regen }
@@ -71,6 +77,26 @@ local tokenItemById = indexById(GameConfig.TokenShop)
 local function sendToast(player: Player, text: string)
 	player:SetAttribute("ToastText", text)
 	player:SetAttribute("ToastId", (player:GetAttribute("ToastId") or 0) + 1)
+end
+
+-- Plays an effect on the player's screen (see src/client/Fx.luau).
+local function sendFx(player: Player, kind: string, info)
+	fxRemote:FireClient(player, kind, info)
+end
+
+-- One recruit roll for a warband slot, for the slot's rolling animation.
+local function sendRollFx(player: Player, slot: number, soldier, kept: boolean, target: string)
+	local attack, defense = GameConfig.getSoldierStats(soldier)
+	sendFx(player, "roll", {
+		slot = slot,
+		rarity = soldier.rarity,
+		class = soldier.class,
+		name = soldier.name,
+		attack = attack,
+		defense = defense,
+		kept = kept,
+		target = target,
+	})
 end
 
 -- Puts a letter in the player's mail. rewards is a list of rewards to
@@ -125,15 +151,22 @@ local function hasPass(data, key: string): boolean
 	return data.passes[key] == true
 end
 
--- How many pieces of gear the armory holds.
-local function maxGear(data): number
-	return GameConfig.MaxGearOwned + (if hasPass(data, "armory") then StoreConfig.ArmoryExtra else 0)
+-- The armory has no limit: identical spare pieces stack (see Loadout), so
+-- even millions of pieces stay small in the save. These stay so older code
+-- paths read the same.
+local NO_LIMIT = 2 ^ 31
+local function maxGear(_data): number
+	return NO_LIMIT
 end
 
--- True when no more gear fits. With auto deposit on, new gear goes to the
--- Relic Hall, so the armory never counts as full.
-local function armoryFull(data): boolean
-	return #data.gear >= maxGear(data) and not data.relics.auto
+local function armoryFull(_data): boolean
+	return false
+end
+
+-- Marks an item as discovered in the Relic Hall catalog.
+local function markSeen(data, item)
+	data.relics.seen = data.relics.seen or {}
+	data.relics.seen[RelicConfig.getKey(item)] = true
 end
 
 -- Research bonus of one kind ("income", "attack", "energy", ...), added up.
@@ -250,7 +283,27 @@ local function getStats(data)
 		lotsUsed += count
 		incomePerHour += holding.income * count
 	end
-	incomePerHour = math.floor(incomePerHour * (1 + keepBonus + perkBonus.income))
+	-- A holding under construction already takes its lot.
+	if data.construction then
+		lotsUsed += 1
+	end
+	local incomeBonus = keepBonus + perkBonus.income
+	local incomeMultiplier = if hasPass(data, "doubleincome") then StoreConfig.DoubleIncome else 1
+	local incomeFactor = (1 + incomeBonus) * incomeMultiplier
+	incomePerHour = math.floor(incomePerHour * incomeFactor)
+	-- Where the income bonus comes from, for the Holdings page.
+	local incomeParts = {
+		{ "Keep", keepBonus },
+		{ "Rebirth Stars", (RebirthConfig.PerStar.income or 0) * data.rebirth.stars },
+		{ "Royal Charter", if hasPass(data, "charter") then StoreConfig.CharterIncome else 0 },
+		{ "Research", researchTotal(data, "income") },
+		{ "Festival", festivalBonus("income") },
+	}
+	local listed = 0
+	for _, part in incomeParts do
+		listed += part[2]
+	end
+	table.insert(incomeParts, { "Gear sets", math.max(0, incomeBonus - listed) })
 
 	return {
 		maxEnergy = GameConfig.BaseMaxEnergy + skillTotal(data, "energy") + researchTotal(data, "energy"),
@@ -265,6 +318,10 @@ local function getStats(data)
 		setBonus = gear.perks,
 		lots = GameConfig.BaseLots + skillTotal(data, "lots") + researchTotal(data, "lots"),
 		lotsUsed = lotsUsed,
+		incomeBonus = incomeBonus,
+		incomeMultiplier = incomeMultiplier,
+		incomeFactor = incomeFactor,
+		incomeParts = incomeParts,
 		incomePerHour = incomePerHour,
 		-- Where attack and defense come from, for the Keep page.
 		breakdown = {
@@ -323,7 +380,17 @@ end
 local function addPassPoints(data, points: number)
 	checkPassSeason(data)
 	local cap = StoreConfig.PassTiers * StoreConfig.PointsPerTier
-	data.pass.points = math.min(cap, data.pass.points + points)
+	local total = data.pass.points + points
+	data.pass.points = math.min(cap, total)
+	-- Points past the last tier fill the bonus rewards.
+	if total > cap then
+		data.pass.bonus = (data.pass.bonus or 0) + (total - cap)
+	end
+end
+
+-- Bonus rewards (past tier 50) ready to claim.
+local function passBonusReady(pass): number
+	return math.max(0, math.floor((pass.bonus or 0) / StoreConfig.BonusPoints) - (pass.bonusClaimed or 0))
 end
 
 -- Quest energy feeds the Royal Pass, the Tithe Chest and the weekly challenge.
@@ -485,7 +552,34 @@ local function relicState(data)
 	for key, entry in data.relics.items do
 		items[key] = { name = entry.name, slot = entry.slot, rarity = entry.rarity, set = entry.set, count = entry.count }
 	end
-	return { count = data.relics.count, auto = data.relics.auto, items = items }
+	return { count = data.relics.count, items = items, seen = data.relics.seen or {} }
+end
+
+-- Holdings pay in lumps: every HoldingCycle seconds all of them pay
+-- together, each its share of that stretch, and the client shows "+gold"
+-- on each card. Called by its own loop at the bottom.
+local function payHoldings(player: Player, session, stats)
+	local data = session.data
+	session.holdingPaidAt = os.clock()
+	local paid = {}
+	for _, holding in GameConfig.Holdings do
+		local count = data.holdings[holding.id] or 0
+		if count > 0 then
+			-- Whole gold only: the fraction carries over to the next payout.
+			local carry = session.holdingCarry[holding.id] or 0
+			local exact = holding.income * stats.incomeFactor / 3600 * GameConfig.HoldingCycle + carry
+			local each = math.floor(exact)
+			session.holdingCarry[holding.id] = exact - each
+			if each > 0 then
+				data.gold += each * count
+				countLifetime(data, "goldEarned", each * count)
+				paid[holding.id] = each
+			end
+		end
+	end
+	if next(paid) then
+		sendFx(player, "income", { paid = paid })
+	end
 end
 
 local function refresh(player: Player)
@@ -517,6 +611,8 @@ local function refresh(player: Player)
 			entry.attack = soldierAttack
 			entry.defense = soldierDefense
 			entry.trainCost = GameConfig.getTrainCost(soldier)
+			entry.trainSeconds = GameConfig.getTrainSeconds(soldier)
+			entry.trainLeft = if type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 then math.max(0, soldier.trainUntil - os.time()) else nil
 			entry.gear = wearing[slot] or {}
 			crew[slot] = entry
 		else
@@ -541,7 +637,23 @@ local function refresh(player: Player)
 		estateLeft[key] = math.max(0, castle.build.endsAt - now)
 	end
 
+	-- Seconds until each bar gains its next point (0 when full).
+	local regenIn = {}
+	do
+		local speed = if hasPass(data, "couriers") then StoreConfig.CouriersSpeed else 1
+		for _, pair in {
+			{ "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy },
+			{ "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina },
+			{ "health", GameConfig.HealthRegenSeconds, stats.maxHealth },
+		} do
+			local key = pair[1]
+			regenIn[key] = if data[key] >= pair[3] then 0 else math.max(1, math.ceil((pair[2] - (session.regen[key] or 0)) / speed))
+		end
+	end
+
 	stateRemote:FireClient(player, {
+		regenIn = regenIn,
+		chests = data.chests,
 		gold = data.gold,
 		level = data.level,
 		xp = data.xp,
@@ -569,6 +681,14 @@ local function refresh(player: Player)
 		autoEquipNew = data.autoEquipNew,
 		market = data.market.items,
 		marketRestock = Market.secondsUntilRestock(),
+		holdingTimer = os.clock() - (session.holdingPaidAt or os.clock()),
+		construction = if data.construction
+			then {
+				id = data.construction.id,
+				left = math.max(0, data.construction.endsAt - workspace:GetServerTimeNow()),
+				total = GameConfig.BuildSeconds,
+			}
+			else nil,
 		marketWindow = data.market.window,
 		tokens = data.tokens,
 		highestStage = data.highestStage,
@@ -580,6 +700,7 @@ local function refresh(player: Player)
 		autoQuest = data.autoQuest,
 		autoQuestOn = data.autoQuestOn,
 		autoQuestMode = data.autoQuestMode,
+		autoRun = session.autoRun,
 		autoRoll = data.autoRoll,
 		autoBuy = data.autoBuy,
 		maxGear = maxGear(data),
@@ -606,6 +727,7 @@ local function refresh(player: Player)
 		firstSeen = data.firstSeen,
 		lifetime = data.lifetime,
 		titles = data.titles,
+		settings = data.settings,
 		firstClears = data.firstClears,
 		mail = data.mail,
 		relics = relicState(data),
@@ -657,6 +779,7 @@ local function addXp(player: Player, data, amount: number)
 		data.stamina = math.max(data.stamina, stats.maxStamina)
 		data.health = math.max(data.health, stats.maxHealth)
 		sendToast(player, `Level {data.level}! You gained {GameConfig.SkillPointsPerLevel} skill points and a full refill.`)
+		sendFx(player, "levelup", { level = data.level })
 	end
 end
 
@@ -770,18 +893,21 @@ end
 -- with how many of each level, so they can be taken back out.
 ---------------------------------------------------------------------------
 
-local function relicDeposit(data, item)
+local function relicDeposit(data, item, count: number?)
+	local amount = count or 1
+	markSeen(data, item)
 	local key = RelicConfig.getKey(item)
 	local entry = data.relics.items[key]
 	if not entry then
-		entry = { name = item.name, slot = item.slot, rarity = item.rarity, set = item.set, count = 0, levels = {} }
+		entry = { name = item.name, slot = item.slot, rarity = item.rarity, set = item.set, count = 0, price = item.price or 0 }
 		data.relics.items[key] = entry
 	end
-	entry.count += 1
-	local levelKey = "L" .. item.level
-	entry.levels[levelKey] = (entry.levels[levelKey] or 0) + 1
+	local had = entry.count
+	entry.price = math.floor(((entry.price or item.price or 0) * had + (item.price or 0) * amount) / (had + amount))
+	entry.count += amount
+	entry.levels = nil -- older saves kept copies by level; stats no longer depend on it
 	local before = data.relics.count
-	data.relics.count += 1
+	data.relics.count += amount
 	for _, milestone in RelicConfig.Milestones do
 		if before < milestone.pieces and data.relics.count >= milestone.pieces then
 			data.titles[milestone.title] = true
@@ -790,76 +916,58 @@ local function relicDeposit(data, item)
 	end
 end
 
--- Takes one copy out of the hall, highest level first, as a new item
--- without a uid. Returns nil when there is none.
-local function relicTake(data, key: string)
+-- Takes up to `amount` copies out of the hall. Returns an item (one copy's
+-- details) and how many were taken, or nil and 0.
+local function relicTake(data, key: string, amount: number)
 	local entry = data.relics.items[key]
-	if not entry or entry.count <= 0 then
-		return nil
+	if not entry or entry.count <= 0 or amount <= 0 then
+		return nil, 0
 	end
-	local best = nil
-	for levelKey, copies in entry.levels do
-		local level = tonumber(string.sub(levelKey, 2))
-		if level and copies > 0 and (not best or level > best) then
-			best = level
-		end
-	end
-	best = best or 1
-	local levelKey = "L" .. best
-	entry.levels[levelKey] = (entry.levels[levelKey] or 1) - 1
-	if entry.levels[levelKey] <= 0 then
-		entry.levels[levelKey] = nil
-	end
-	entry.count -= 1
-	data.relics.count -= 1
+	local taken = math.min(entry.count, math.floor(amount))
+	entry.count -= taken
+	data.relics.count -= taken
 	if entry.count <= 0 then
 		data.relics.items[key] = nil
 	end
 	local gearType = GameConfig.GearTypes[entry.slot]
 	local rarity = GameConfig.getRarity(entry.rarity)
+	local attack, defense = GameConfig.getGearStats(entry.slot, entry.name, rarity)
 	return {
 		kind = "Gear",
 		slot = entry.slot,
 		name = entry.name,
 		rarity = rarity.id,
-		level = best,
+		level = 1,
 		set = entry.set,
-		attack = GameConfig.getItemStat(gearType.attack, best, rarity),
-		defense = GameConfig.getItemStat(gearType.defense, best, rarity),
-		price = GameConfig.getItemPrice(gearType.price, best, rarity),
-	}
+		attack = attack,
+		defense = defense,
+		price = entry.price or GameConfig.getItemPrice(gearType.price, 1, rarity),
+	}, taken
 end
 
 -- Adds a new item to the armory. If "New gear fills empty slots" is on, it
--- goes straight onto the first person with that slot empty. With Relic
--- Hall auto deposit on, anything nobody puts on goes to the hall.
+-- goes straight onto the first person with that slot empty.
 -- Returns a short note about who wears it, for the toast.
 local function addGear(data, item): string
-	if data.relics.auto and #data.gear >= maxGear(data) then
-		relicDeposit(data, item)
-		return " It went to the Relic Hall."
-	end
-	item.uid = "i" .. data.nextItemId
-	data.nextItemId += 1
-	table.insert(data.gear, item)
+	markSeen(data, item)
+	item.sold = nil
 	if data.autoEquipNew then
 		local member = Loadout.fillEmpty(data, item)
 		if member ~= nil then
+			item.uid = Loadout.newUid(data)
+			table.insert(data.gear, item)
 			return if member == 0 then " You put it on." else ` {memberName(data, member)} put it on.`
 		end
 	end
-	if data.relics.auto then
-		table.remove(data.gear)
-		relicDeposit(data, item)
-		return " It went to the Relic Hall."
-	end
+	Loadout.addSpare(data, item, 1)
 	return ""
 end
 
 -- Gives the player a rolled piece of gear (quest drops and chests).
 -- Pass `set` for a piece of a gear set. `paid` lets bought rewards go past
 -- the armory limit, so nothing paid for is ever lost.
-local function giveGear(player: Player, data, minRank: number?, source: string, set: any?, paid: boolean?)
+-- `crate` plays the chest opening on the player's screen.
+local function giveGear(player: Player, data, minRank: number?, source: string, set: any?, paid: boolean?, crate: boolean?)
 	if not paid and armoryFull(data) then
 		sendToast(player, `{source}, but your armory is full. Sell some gear to make room.`)
 		return
@@ -869,6 +977,18 @@ local function giveGear(player: Player, data, minRank: number?, source: string, 
 		else Market.rollGear(random, data.level, minRank)
 	local note = addGear(data, item)
 	sendToast(player, `{source}: {item.rarity} {item.name}!{note}`)
+	sendFx(player, "gear", { rarity = item.rarity, name = item.name, slot = item.slot, source = source, crate = crate == true })
+end
+
+-- Puts a chest in the player's inventory, to open later (Open 1 / Open 10).
+-- Chests are kept by rarity: an "Epic" chest holds Epic or better gear.
+local function giveChest(player: Player, data, rarity: string, source: string)
+	if GameConfig.getRarity(rarity).id ~= rarity then
+		return
+	end
+	data.chests[rarity] = (data.chests[rarity] or 0) + 1
+	sendToast(player, `{source}: a {rarity} chest! Open it in your Inventory.`)
+	sendFx(player, "chestGot", { rarity = rarity })
 end
 
 ---------------------------------------------------------------------------
@@ -904,13 +1024,23 @@ function actions.Quest(player: Player, data, id: string)
 	if rankAfter > rankBefore then
 		sendToast(player, `{GameConfig.MasteryMedals[rankAfter]} mastery! {quest.name} now pays more gold.`)
 	end
-	if random:NextNumber() < quest.drop then
+	local dropped = random:NextNumber() < quest.drop
+	if dropped then
 		giveGear(player, data, nil, "You found gear")
 	end
-	addXp(player, data, math.floor(quest.xp * (1 + trophyBonus.xp)))
+	local xpBefore = data.xp
+	local levelBefore = data.level
+	local questXp = math.floor(quest.xp * (1 + trophyBonus.xp))
+	addXp(player, data, questXp)
+	-- Double XP and the like: what was really added.
+	local gainedXp = if data.level == levelBefore then data.xp - xpBefore else questXp
+	sendFx(player, "quest", { id = id, gold = questGold, xp = gainedXp, drop = dropped })
+	return questGold, gainedXp, dropped
 end
 
 -- Builds one more copy of a holding on a free lot.
+local checkConstruction -- defined below actions.Holding
+
 function actions.Holding(player: Player, data, id: string)
 	local holding = holdingById[id]
 	if not holding or data.level < holding.level then
@@ -921,10 +1051,38 @@ function actions.Holding(player: Player, data, id: string)
 		sendToast(player, "Every lot is built on. Demolish one, or buy Holding Lots in the Keep.")
 		return
 	end
+	if data.construction then
+		local busy = holdingById[data.construction.id]
+		sendToast(player, `Your {if busy then busy.name else "holding"} is still being built.`)
+		return
+	end
 	local count = data.holdings[id] or 0
 	if spendGold(player, data, GameConfig.getHoldingCost(holding, count)) then
-		data.holdings[id] = count + 1
+		-- It stands after BuildSeconds (checkConstruction), one at a time.
+		local endsAt = workspace:GetServerTimeNow() + GameConfig.BuildSeconds
+		data.construction = { id = id, endsAt = endsAt }
+		task.delay(GameConfig.BuildSeconds, function()
+			if sessions[player] and data.construction and data.construction.endsAt == endsAt then
+				checkConstruction(player, data)
+				refresh(player)
+			end
+		end)
+	end
+end
+
+-- Finishes a holding under construction once its time is up.
+function checkConstruction(player: Player, data)
+	local building = data.construction
+	if not building or workspace:GetServerTimeNow() < building.endsAt then
+		return
+	end
+	data.construction = nil
+	local holding = holdingById[building.id]
+	if holding then
+		data.holdings[holding.id] = (data.holdings[holding.id] or 0) + 1
 		track(data, "holdings", 1)
+		sendToast(player, `Your {holding.name} is built!`)
+		sendFx(player, "built", { id = holding.id })
 	end
 end
 
@@ -983,7 +1141,7 @@ function actions.Claim(player: Player, data, id: string)
 		data.stamina = math.max(data.stamina, stats.maxStamina)
 		sendToast(player, "Stamina refilled.")
 	elseif reward.kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{reward.label} opened`)
+		giveChest(player, data, reward.rarity, reward.label)
 	elseif reward.kind == "xpBoost" then
 		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.amount * 60
 		sendToast(player, `Double experience for {reward.amount} minutes!`)
@@ -1044,6 +1202,45 @@ function actions.Skill(player: Player, data, id: string)
 	if id == "energy" or id == "stamina" or id == "health" then
 		data[id] += skill.amount
 	end
+end
+
+-- Spends several skill points at once, from the Skill points window.
+-- id is "<skill>:<count>" pairs joined by commas, for example
+-- "energy:3,attack:2". Nothing is bought unless all of it is affordable.
+function actions.SkillMany(player: Player, data, id: string)
+	if type(id) ~= "string" or #id > 200 then
+		return
+	end
+	local plan = {}
+	local total = 0
+	for key, countText in string.gmatch(id, "(%a+):(%d+)") do
+		local skill = skillById[key]
+		local count = tonumber(countText)
+		if not skill or not count or count < 1 or count > 1000 or plan[key] then
+			return
+		end
+		local bought = data.skills[key] or 0
+		for step = 0, count - 1 do
+			total += GameConfig.getSkillCost(skill, bought + step)
+		end
+		plan[key] = count
+	end
+	if next(plan) == nil then
+		return
+	end
+	if data.skillPoints < total then
+		sendToast(player, "Not enough skill points for all of that.")
+		return
+	end
+	data.skillPoints -= total
+	for key, count in plan do
+		local skill = skillById[key]
+		data.skills[key] = (data.skills[key] or 0) + count
+		if key == "energy" or key == "stamina" or key == "health" then
+			data[key] += skill.amount * count
+		end
+	end
+	sendToast(player, `Skill points spent: {total}.`)
 end
 
 function actions.Slot(player: Player, data)
@@ -1121,7 +1318,12 @@ function actions.Roll(player: Player, data, id: string)
 		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
 		data.nextItemId += 1
 		track(data, "rolls", 1)
-		if not data.crew[slot] or GameConfig.getRarityRank(soldier.rarity) >= targetRank then
+		local kept = not data.crew[slot] or GameConfig.getRarityRank(soldier.rarity) >= targetRank
+		sendRollFx(player, slot, soldier, kept, rarityId)
+		if kept and GameConfig.getRarityRank(soldier.rarity) >= GameConfig.getRarityRank("Legendary") then
+			sendFx(player, "soldier", { rarity = soldier.rarity, name = `{soldier.class} {soldier.name}`, tier = tier.id, kept = kept })
+		end
+		if kept then
 			data.crew[slot] = soldier
 			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {slot}.`)
 		else
@@ -1142,7 +1344,34 @@ function actions.Roll(player: Player, data, id: string)
 	auto.spent = 0
 	auto.whenBroke = if once == "stop" then "stop" else "wait"
 	auto.waiting = false
+	auto.skip = {}
+	auto.shown = {}
 	sendToast(player, `Auto roll started: {tier.id} recruits until {rarityId} or better.`)
+end
+
+-- Stops auto roll on one slot (it keeps whoever is there); the others go on.
+function actions.AutoRollSkip(player: Player, data, id: string)
+	local slot = tonumber(id)
+	local auto = data.autoRoll
+	if not slot or data.crew[slot] == nil or not auto.on then
+		return
+	end
+	auto.skip = auto.skip or {}
+	auto.skip[tostring(slot)] = true
+	-- Keep the soldier shown on the slot right now (already paid for).
+	local shown = auto.shown and auto.shown[tostring(slot)]
+	local kept = "its soldier"
+	if type(shown) == "table" and shown.rarity then
+		data.crew[slot] = shown
+		auto.shown[tostring(slot)] = nil
+		kept = `the {shown.rarity} {shown.class} {shown.name}`
+	end
+	if auto.scope == "this" and auto.slot == slot then
+		auto.on = false
+		sendToast(player, `Slot {slot} keeps {kept}. Auto roll stopped after {auto.rolls} rolls.`)
+	else
+		sendToast(player, `Slot {slot} keeps {kept}. Auto roll goes on for the other slots.`)
+	end
 end
 
 -- Stops auto roll. id is ignored.
@@ -1163,9 +1392,37 @@ function actions.Train(player: Player, data, id: string)
 		sendToast(player, `{soldier.name} is fully trained.`)
 		return
 	end
+	if type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 then
+		sendToast(player, `{soldier.name} is already training.`)
+		return
+	end
 	if spendGold(player, data, GameConfig.getTrainCost(soldier)) then
-		soldier.train += 1
+		-- Training takes time; the rank goes up when it is done.
+		soldier.trainUntil = os.time() + GameConfig.getTrainSeconds(soldier)
 		track(data, "train", 1)
+		sendToast(player, `{soldier.name} started training for +{soldier.train + 1}.`)
+	end
+end
+
+-- Stops a soldier's training early. No refund. id is the slot.
+function actions.TrainStop(player: Player, data, id: string)
+	local slot = tonumber(id)
+	local soldier = slot and data.crew[slot]
+	if soldier and type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 then
+		soldier.trainUntil = nil
+		sendToast(player, `{soldier.name} stopped training. The gold is not refunded.`)
+	end
+end
+
+-- Finishes soldier training whose time is up.
+local function checkSoldierTraining(player: Player, data)
+	local now = os.time()
+	for _, soldier in data.crew do
+		if soldier and type(soldier.trainUntil) == "number" and soldier.trainUntil > 0 and now >= soldier.trainUntil then
+			soldier.trainUntil = nil
+			soldier.train = math.min(GameConfig.MaxTrainRank, soldier.train + 1)
+			sendToast(player, `{soldier.name} finished training: now +{soldier.train}.`)
+		end
 	end
 end
 
@@ -1183,13 +1440,18 @@ end
 -- Buys a Market item. `auto` is true when auto-buy does it, which keeps
 -- its messages short.
 local function buyItem(player: Player, data, item, auto: boolean): boolean
-	if data.level < item.level then
+	-- Market items have a level requirement (stats don't scale with it).
+	if data.level < (item.level or 1) then
 		if not auto then
 			sendToast(player, `You need level {item.level} to buy this.`)
 		end
 		return false
 	end
-	if armoryFull(data) then
+	local isChest = item.kind == "Chest"
+	if isChest and (auto or not ChestConfig.get(item.chest or "")) then
+		return false -- auto-buy never buys chests
+	end
+	if not isChest and armoryFull(data) then
 		sendToast(player, "Your armory is full. Sell some gear first.")
 		return false
 	end
@@ -1203,6 +1465,15 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 	data.gold -= price
 
 	item.sold = true
+	if isChest then
+		data.chests[item.chest] = (data.chests[item.chest] or 0) + 1
+		checkWeek(data)
+		data.weekly.market += 1
+		track(data, "market", 1)
+		sendToast(player, `You bought a {item.name}. Open it in your Inventory.`)
+		sendFx(player, "chestGot", { rarity = item.rarity, name = item.name })
+		return true
+	end
 	local owned = table.clone(item)
 	owned.sold = nil
 	local note = addGear(data, owned)
@@ -1236,21 +1507,33 @@ function actions.Buy(player: Player, data, id: string)
 	end
 end
 
--- Sells a piece of gear for part of its price.
+-- Sells spare gear for part of its price. id is "<uid>" (one piece),
+-- "<uid>:all" or "<uid>:<amount>".
 function actions.Sell(player: Player, data, id: string)
-	for index, item in data.gear do
-		if item.uid == id then
-			if item.wornBy ~= nil then
-				sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} before selling it.`)
-				return
-			end
-			table.remove(data.gear, index)
-			local refund = math.floor(item.price * GameConfig.SellShare)
-			data.gold += refund
-			sendToast(player, `Sold {item.rarity} {item.name} for {Format.short(refund)} gold.`)
-			return
-		end
+	local uid, amountText = string.match(id or "", "^(i%d+):?(%w*)$")
+	if not uid then
+		return
 	end
+	local item = Loadout.findItem(data, uid)
+	if not item then
+		return
+	end
+	if item.wornBy ~= nil then
+		sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} before selling it.`)
+		return
+	end
+	local want = if amountText == "all" then Loadout.count(item) elseif amountText == "" then 1 else tonumber(amountText)
+	if not want or want < 1 then
+		return
+	end
+	local sold = Loadout.takeSpare(data, item, want)
+	if sold <= 0 then
+		return
+	end
+	local refund = math.floor((item.price or 0) * GameConfig.SellShare) * sold
+	data.gold += refund
+	local what = if sold > 1 then `{sold} x {item.rarity} {item.name}` else `{item.rarity} {item.name}`
+	sendToast(player, `Sold {what} for {Format.short(refund)} gold.`)
 end
 
 -- One attack on a foe stage. Returns "cleared", "down" or "hit" with the
@@ -1314,7 +1597,7 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 		)
 		addXp(player, data, stage.xp)
 		if stage.chest then
-			giveGear(player, data, GameConfig.getRarityRank(stage.chest), `{stage.chest} chest from {stage.name}`)
+			giveChest(player, data, stage.chest, stage.name)
 		end
 		local set = GameConfig.getHouseSet(stage.house)
 		if set and random:NextNumber() < GameConfig.SetDropChance then
@@ -1328,6 +1611,7 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 			local minRank = math.max(1, GameConfig.getRarityRank(house and house.chest or "Common") - 1)
 			giveGear(player, data, minRank, `{set.name} set piece from {stage.name}`, set)
 		end
+		sendFx(player, "hit", { damage = damage, hurt = 0, result = "cleared" })
 		return "cleared", damage, 0
 	end
 	data.stageHealth[id] = health
@@ -1345,11 +1629,13 @@ local function attackStage(player: Player, data, stage, quiet: boolean): (string
 			win = false,
 		})
 		sendToast(player, `{stage.name} knocked you down and recovered. Rest, grow stronger and try again.`)
+		sendFx(player, "hit", { damage = damage, hurt = hurt, result = "down" })
 		return "down", damage, hurt
 	end
 	if not quiet then
 		sendToast(player, `You hit for {Format.short(damage)}. {stage.name} hits back for {Format.short(hurt)}.`)
 	end
+	sendFx(player, "hit", { damage = damage, hurt = hurt, result = "hit" })
 	return "hit", damage, hurt
 end
 
@@ -1371,10 +1657,6 @@ function actions.TokenBuy(player: Player, data, id: string)
 		sendToast(player, `Not enough boss tokens. You need {item.cost}.`)
 		return
 	end
-	if item.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
-		return
-	end
 	data.tokens -= item.cost
 
 	local stats = getStats(data)
@@ -1394,8 +1676,32 @@ function actions.TokenBuy(player: Player, data, id: string)
 		data.skillPoints += 1
 		sendToast(player, "+1 skill point. Spend it in the Keep.")
 	elseif item.kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(item.rarity), `{item.name} opened`)
+		giveChest(player, data, item.rarity, "Token shop")
 	end
+end
+
+-- Buys a set piece from the TOKEN SHOP. id is "<set id>:<slot>".
+local setShopById = indexById(GameConfig.SetShop)
+function actions.TokenSet(player: Player, data, id: string)
+	local entry = setShopById[id]
+	local set = entry and GameConfig.getGearSet(entry.set)
+	if not entry or not set then
+		return
+	end
+	if not data.firstClears[entry.bossStage] then
+		local boss = stageById[entry.bossStage]
+		sendToast(player, `Beat {boss and boss.name or "the house boss"} once to unlock the {set.name} set.`)
+		return
+	end
+	if data.tokens < entry.cost then
+		sendToast(player, `Not enough boss tokens. You need {entry.cost}.`)
+		return
+	end
+	data.tokens -= entry.cost
+	local item = Market.makeSetPiece(data.level, set, entry.slot, entry.rarity)
+	local note = addGear(data, item)
+	sendToast(player, `Token shop: {item.rarity} {item.name}!{note}`)
+	sendFx(player, "gear", { rarity = item.rarity, name = item.name, slot = item.slot, source = "Token shop", crate = false })
 end
 
 -- Puts a piece of gear on someone. id is "<item uid>:<member>", where
@@ -1437,6 +1743,54 @@ function actions.EquipBest(player: Player, data)
 	sendToast(player, "Everyone now wears the strongest gear you own. Set bonuses were not considered.")
 end
 
+-- Takes all gear off everyone.
+function actions.UnequipAll(player: Player, data)
+	Loadout.unequipAll(data)
+	sendToast(player, "Everyone's gear is back in your armory.")
+end
+
+-- Moves a soldier up or down one place. id is "<slot>:up" or "<slot>:down".
+function actions.MoveSoldier(player: Player, data, id: string)
+	local slotText, direction = string.match(id or "", "^(%d+):(%a+)$")
+	local slot = tonumber(slotText)
+	if not slot or data.crew[slot] == nil then
+		return
+	end
+	local other = if direction == "up" then slot - 1 elseif direction == "down" then slot + 1 else nil
+	if not other or data.crew[other] == nil then
+		return
+	end
+	Loadout.swapSlots(data, slot, other)
+	data.autoRoll.on = false -- slots moved; auto roll settings no longer match
+end
+
+-- Sorts the warband: strongest soldiers first, empty slots last.
+function actions.SortCrew(player: Player, data)
+	local function power(slot: number): number
+		local soldier = data.crew[slot]
+		if not soldier then
+			return -1
+		end
+		local attack, defense = GameConfig.getSoldierStats(soldier)
+		return attack + defense
+	end
+	-- A simple selection sort with swaps, so worn gear follows its soldier.
+	local count = #data.crew
+	for index = 1, count - 1 do
+		local best = index
+		for other = index + 1, count do
+			if power(other) > power(best) then
+				best = other
+			end
+		end
+		if best ~= index then
+			Loadout.swapSlots(data, index, best)
+		end
+	end
+	data.autoRoll.on = false
+	sendToast(player, "Your warband is sorted, strongest first.")
+end
+
 -- Turns "new gear fills empty slots" on or off.
 function actions.EquipNew(player: Player, data, id: string)
 	data.autoEquipNew = id == "on"
@@ -1469,6 +1823,11 @@ function actions.AutoQuest(player: Player, data, id: string)
 	if not GameConfig.pickAutoQuest(mode, data.level, data.quests, data.autoQuest) then
 		sendToast(player, "Do a quest once first. This mode repeats the last quest you did.")
 		return
+	end
+	-- A new run starts its totals from zero.
+	local session = sessions[player]
+	if session and not data.autoQuestOn then
+		session.autoRun = { quests = 0, gold = 0, xp = 0, items = 0 }
 	end
 	data.autoQuestOn = true
 end
@@ -1551,7 +1910,7 @@ local function grantReward(player: Player, data, reward, source: string): string
 		data.gold += amount
 		return `{Format.short(amount)} gold`
 	elseif kind == "chest" then
-		giveGear(player, data, GameConfig.getRarityRank(reward.rarity), `{source}: {reward.rarity} chest`, nil, true)
+		giveChest(player, data, reward.rarity, source)
 	elseif kind == "xpBoost" then
 		data.xpBoostUntil = math.max(data.xpBoostUntil, os.time()) + reward.minutes * 60
 	elseif kind == "skill" then
@@ -1569,6 +1928,22 @@ local function grantReward(player: Player, data, reward, source: string): string
 		data.titles[reward.text] = true
 	elseif kind == "seals" then
 		data.seals += reward.amount
+	elseif kind == "toLevel" then
+		-- XP for reaching that level (testing codes). Nothing if already there.
+		local need = -data.xp
+		for level = data.level, (reward.level or 1) - 1 do
+			need += GameConfig.getXpNeeded(level)
+		end
+		if need > 0 then
+			local boostUntil = data.xpBoostUntil
+			data.xpBoostUntil = 0 -- exact amount, no XP boost doubling
+			addXp(player, data, need)
+			data.xpBoostUntil = boostUntil
+		end
+	elseif kind == "allPasses" then
+		for _, pass in StoreConfig.Passes do
+			data.passes[pass.key] = true
+		end
 	end
 	return StoreConfig.describe(reward)
 end
@@ -1592,6 +1967,15 @@ function actions.Title(player: Player, data, id: string)
 	elseif data.titles[id] then
 		data.title = id
 		sendToast(player, `You are now known as {id} {player.DisplayName}.`)
+	end
+end
+
+-- Menu Settings toggles. id is "<key>:on" or "<key>:off".
+local SETTING_KEYS = { effects = true, toasts = true }
+function actions.Setting(player: Player, data, id: string)
+	local key, value = string.match(id or "", "^(%a+):(%a+)$")
+	if key and SETTING_KEYS[key] and (value == "on" or value == "off") then
+		data.settings[key] = value == "on"
 	end
 end
 
@@ -1659,17 +2043,17 @@ end
 
 -- Puts one spare piece in the Relic Hall. id is its uid.
 function actions.RelicDeposit(player: Player, data, id: string)
-	for index, item in data.gear do
-		if item.uid == id then
-			if item.wornBy ~= nil then
-				sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} first.`)
-				return
-			end
-			table.remove(data.gear, index)
-			relicDeposit(data, item)
-			sendToast(player, `The {item.rarity} {item.name} is now in the Relic Hall.`)
-			return
-		end
+	local item = Loadout.findItem(data, id or "")
+	if not item then
+		return
+	end
+	if item.wornBy ~= nil then
+		sendToast(player, `Take the {item.name} off {memberName(data, item.wornBy)} first.`)
+		return
+	end
+	if Loadout.takeSpare(data, item, 1) > 0 then
+		relicDeposit(data, item, 1)
+		sendToast(player, `The {item.rarity} {item.name} is now in the Relic Hall.`)
 	end
 end
 
@@ -1682,71 +2066,135 @@ function actions.RelicDepositMany(player: Player, data, id: string)
 		return
 	end
 	local moved = 0
-	for index = #data.gear, 1, -1 do
-		local item = data.gear[index]
+	for _, item in table.clone(data.gear) do
 		if moved < amount and item.wornBy == nil and RelicConfig.getKey(item) == key then
-			table.remove(data.gear, index)
-			relicDeposit(data, item)
-			moved += 1
+			local taken = Loadout.takeSpare(data, item, amount - moved)
+			if taken > 0 then
+				relicDeposit(data, item, taken)
+				moved += taken
+			end
 		end
 	end
 	if moved > 0 then
-		sendToast(player, `{moved} pieces went to the Relic Hall.`)
+		sendToast(player, `{Format.short(moved)} pieces went to the Relic Hall.`)
 	else
 		sendToast(player, "No spare copies of that item. Worn gear stays out.")
 	end
 end
 
--- "<amount>:<key>": takes up to that many copies back out, as far as the
--- armory has room. The highest levels come out first.
+-- "<amount>:<key>": takes up to that many copies back out.
 function actions.RelicWithdraw(player: Player, data, id: string)
 	local amountText, key = string.match(id, "^(%d+):(.+)$")
 	local amount = tonumber(amountText)
 	if not amount or amount < 1 or not data.relics.items[key] then
 		return
 	end
-	local room = maxGear(data) - #data.gear
-	if room <= 0 then
-		sendToast(player, "Your armory is full. Make room before taking pieces out.")
-		return
+	local item, moved = relicTake(data, key, amount)
+	if item and moved > 0 then
+		Loadout.addSpare(data, item, moved)
 	end
-	local moved = 0
-	while moved < math.min(amount, room) do
-		local item = relicTake(data, key)
-		if not item then
-			break
-		end
-		item.uid = "i" .. data.nextItemId
-		data.nextItemId += 1
-		table.insert(data.gear, item)
-		moved += 1
-	end
-	local note = if moved < amount and moved == room then " The armory is full now." else ""
-	sendToast(player, `{moved} pieces are back in your armory.{note}`)
+	sendToast(player, `{Format.short(moved)} pieces are back in your armory.`)
 end
 
--- Auto deposit "on" or "off". Turning it on also puts every spare piece in
--- the hall; from then on, new gear nobody puts on goes there too.
-function actions.RelicAuto(player: Player, data, id: string)
-	if id == "off" then
-		data.relics.auto = false
-		sendToast(player, "Relic Hall auto deposit is off. New gear stays in your armory.")
-		return
+-- Deposit all / withdraw all match an optional filter "<slot>:<rarity>",
+-- where slot is "All", "Weapon", "Armor", "Mount" or "Set" and rarity is
+-- "All" or a rarity id (that rarity only).
+local function relicFilter(id: string)
+	local slot, rarity = string.match(id or "", "^(%a+):(%a+)$")
+	slot = slot or "All"
+	rarity = rarity or "All"
+	return function(entry)
+		local slotOk = slot == "All" or (slot == "Set" and entry.set ~= nil) or (entry.slot == slot and entry.set == nil)
+		return slotOk and (rarity == "All" or entry.rarity == rarity)
 	end
-	if id ~= "on" then
-		return
-	end
-	data.relics.auto = true
+end
+
+-- Puts every spare (unworn) piece that matches the filter in the hall.
+function actions.RelicDepositAll(player: Player, data, id: string)
+	local matches = relicFilter(id)
 	local moved = 0
-	for index = #data.gear, 1, -1 do
-		local item = data.gear[index]
-		if item.wornBy == nil then
-			table.remove(data.gear, index)
-			relicDeposit(data, item)
-			moved += 1
+	for _, item in table.clone(data.gear) do
+		if item.wornBy == nil and matches(item) then
+			local taken = Loadout.takeSpare(data, item, Loadout.count(item))
+			relicDeposit(data, item, taken)
+			moved += taken
 		end
 	end
-	sendToast(player, `Auto deposit is on. {moved} spare pieces went to the Relic Hall, and new gear nobody wears will follow.`)
+	sendToast(player, if moved > 0 then `{Format.short(moved)} pieces went to the Relic Hall.` else "No spare gear to deposit. Worn gear stays out.")
+end
+
+-- Takes every piece that matches the filter back out.
+function actions.RelicWithdrawAll(player: Player, data, id: string)
+	local matches = relicFilter(id)
+	local keys = {}
+	for key, entry in data.relics.items do
+		if matches(entry) then
+			table.insert(keys, key)
+		end
+	end
+	local moved = 0
+	for _, key in keys do
+		local item, taken = relicTake(data, key, math.huge)
+		if item and taken > 0 then
+			Loadout.addSpare(data, item, taken)
+			moved += taken
+		end
+	end
+	sendToast(player, `{Format.short(moved)} pieces are back in your armory.`)
+end
+
+-- Opens chests from the inventory. id is "<chest id>:<count>", count 1 or
+-- 10 (fewer if fewer are owned or the armory has less room). Chest ids are
+-- rarities (won chests) or Market chest ids (ChestConfig).
+function actions.ChestOpen(player: Player, data, id: string)
+	local chestId, countText = string.match(id or "", "^(%a+):(%d+)$")
+	local want = tonumber(countText)
+	if not chestId or not want or (want ~= 1 and want ~= 10) then
+		return
+	end
+	local chest = ChestConfig.get(chestId)
+	if not chest or type(data.chests[chestId]) ~= "number" then
+		return
+	end
+	local have = data.chests[chestId] or 0
+	if have <= 0 then
+		return
+	end
+	local count = math.min(want, have)
+	local items = {}
+	for _ = 1, count do
+		local rarityId = ChestConfig.rollRarity(chest, random)
+		local coffer = chest.coffer
+		if coffer then
+			-- Royal Coffers keep their pity counter.
+			local opens = (data.pity[coffer.key] or 0) + 1
+			if opens >= coffer.pityEvery then
+				rarityId = coffer.pityRarity
+			end
+			local pityRank = GameConfig.getRarityRank(coffer.pityRarity)
+			data.pity[coffer.key] = if GameConfig.getRarityRank(rarityId) >= pityRank then 0 else opens
+		end
+		local item = Market.rollGearOfRarity(random, data.level, rarityId, chest.pool)
+		addGear(data, item)
+		table.insert(items, { rarity = item.rarity, name = item.name, slot = item.slot })
+	end
+	data.chests[chestId] = have - count
+	if data.chests[chestId] <= 0 then
+		data.chests[chestId] = nil
+	end
+	local best = items[1]
+	for _, item in items do
+		if GameConfig.getRarityRank(item.rarity) > GameConfig.getRarityRank(best.rarity) then
+			best = item
+		end
+	end
+	sendToast(player, if count == 1 then `{chest.name}: {best.rarity} {best.name}!` else `Opened {count} {chest.name}s. Best: {best.rarity} {best.name}!`)
+	sendFx(player, "chestOpen", { rarity = ChestConfig.rarityOf(chest), name = chest.name, items = items, chest = chestId, left = data.chests[chestId] or 0 })
+end
+
+-- Auto deposit was removed; any old setting is switched off.
+function actions.RelicAuto(_player: Player, data, _id: string)
+	data.relics.auto = false
 end
 
 -- Starts a new life for Stars. id must be "confirm".
@@ -2080,41 +2528,22 @@ function actions.CrownBuy(player: Player, data, id: string)
 	end
 end
 
--- Opens a Royal Coffer. id is its key.
+-- Buys Royal Coffers for Crowns. id is "<key>:<count>", count 1, 5 or 10
+-- (bundles cost less each). They go to the Inventory to open later.
 function actions.Coffer(player: Player, data, id: string)
-	local coffer = StoreConfig.getCoffer(id)
-	if not coffer then
+	local key, countText = string.match(id or "", "^(%a+):(%d+)$")
+	local coffer = key and StoreConfig.getCoffer(key)
+	local count = tonumber(countText)
+	if not coffer or not count then
 		return
 	end
-	if armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
+	local cost = StoreConfig.bundleCost(coffer, count)
+	if not cost or not spendCrowns(player, data, cost) then
 		return
 	end
-	if not spendCrowns(player, data, coffer.cost) then
-		return
-	end
-
-	local pityRank = GameConfig.getRarityRank(coffer.pityRarity)
-	local opens = (data.pity[id] or 0) + 1
-	local rarityId
-	if opens >= coffer.pityEvery then
-		rarityId = coffer.pityRarity
-	else
-		local roll = random:NextNumber(0, 100)
-		rarityId = coffer.odds[#coffer.odds][1]
-		for _, pair in coffer.odds do
-			roll -= pair[2]
-			if roll <= 0 then
-				rarityId = pair[1]
-				break
-			end
-		end
-	end
-	data.pity[id] = if GameConfig.getRarityRank(rarityId) >= pityRank then 0 else opens
-
-	local item = Market.rollGearOfRarity(random, data.level, rarityId)
-	local note = addGear(data, item)
-	sendToast(player, `{coffer.name}: {item.rarity} {item.name}!{note}`)
+	data.chests[coffer.key] = (data.chests[coffer.key] or 0) + count
+	sendToast(player, `{count} x {coffer.name} added to your Inventory.`)
+	sendFx(player, "chestGot", { rarity = coffer.odds[1][1], name = if count > 1 then `{count} x {coffer.name}` else coffer.name })
 end
 
 -- Claims Royal Pass rewards. id is a tier number, or "all".
@@ -2123,7 +2552,9 @@ function actions.PassClaim(player: Player, data, id: string)
 	local pass = data.pass
 	local reached = StoreConfig.getTier(pass.points)
 	local first, last = 1, reached
-	if id ~= "all" then
+	if id == "bonus" then
+		first, last = 1, 0
+	elseif id ~= "all" then
 		local tier = tonumber(id)
 		if not tier or tier < 1 or tier > reached then
 			return
@@ -2136,20 +2567,19 @@ function actions.PassClaim(player: Player, data, id: string)
 		local key = tostring(tier)
 		local rewards = StoreConfig.PassRewards[tier]
 		if not pass.claimedFree[key] then
-			if rewards.free.kind == "chest" and armoryFull(data) then
-				sendToast(player, "Your armory is full. Sell some gear, then claim again.")
-				break
-			end
 			pass.claimedFree[key] = true
 			table.insert(got, grantReward(player, data, rewards.free, `Royal Pass tier {tier}`))
 		end
 		if pass.noble and not pass.claimedNoble[key] then
-			if rewards.noble.kind == "chest" and armoryFull(data) then
-				sendToast(player, "Your armory is full. Sell some gear, then claim again.")
-				break
-			end
 			pass.claimedNoble[key] = true
 			table.insert(got, grantReward(player, data, rewards.noble, `Royal Pass tier {tier}`))
+		end
+	end
+	if id == "all" or id == "bonus" then
+		local ready = passBonusReady(pass)
+		for _ = 1, ready do
+			pass.bonusClaimed = (pass.bonusClaimed or 0) + 1
+			table.insert(got, grantReward(player, data, StoreConfig.BonusReward, "Royal Pass bonus"))
 		end
 	end
 	if #got > 0 then
@@ -2224,10 +2654,6 @@ function actions.SealBuy(player: Player, data, id: string)
 		sendToast(player, `Not enough Seals. You need {item.cost}. Finish bounties to earn more.`)
 		return
 	end
-	if item.reward.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
-		return
-	end
 	data.seals -= item.cost
 	data.bounty.bought[id] = bought + 1
 	local got = grantReward(player, data, item.reward, item.name)
@@ -2240,10 +2666,6 @@ function actions.StreakClaim(player: Player, data)
 		return
 	end
 	local reward = BountyConfig.Streak[day]
-	if reward.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear, then claim your streak reward.")
-		return
-	end
 	data.streak.count = day
 	data.streak.lastDay = GameConfig.getDay()
 	local got = grantReward(player, data, reward, `Day {day} reward`)
@@ -2256,10 +2678,6 @@ function actions.FestivalMilestone(player: Player, data, id: string)
 	local index = tonumber(id)
 	local milestone = index and FestivalConfig.Milestones[index]
 	if not milestone or data.festival.milestones[id] or data.festival.points < milestone.points then
-		return
-	end
-	if milestone.reward.kind == "chest" and armoryFull(data) then
-		sendToast(player, "Your armory is full. Sell some gear first.")
 		return
 	end
 	data.festival.milestones[id] = true
@@ -2551,13 +2969,22 @@ local function runAutoQuests(player: Player, data)
 	if not data.autoQuestOn or not hasPass(data, "autoquest") then
 		return
 	end
+	local session = sessions[player]
 	for _ = 1, GameConfig.AutoQuestsPerSecond do
 		-- Picked again each time: mastery moves on once a quest has gold.
 		local quest = GameConfig.pickAutoQuest(data.autoQuestMode, data.level, data.quests, data.autoQuest)
 		if not quest or data.energy < quest.energy then
 			return
 		end
-		actions.Quest(player, data, quest.id)
+		local gold, xp, dropped = actions.Quest(player, data, quest.id)
+		-- This run's totals, for the Activity tab.
+		if session and gold then
+			local run = session.autoRun
+			run.quests += 1
+			run.gold += gold
+			run.xp += xp or 0
+			run.items += if dropped then 1 else 0
+		end
 	end
 end
 
@@ -2575,56 +3002,65 @@ local function runAutoRoll(player: Player, data)
 	end
 	local targetRank = GameConfig.getRarityRank(auto.rarity)
 	local rollCost = math.floor(tier.cost * (1 - festivalBonus("rollCost")))
-	for _ = 1, GameConfig.AutoRollsPerTick do
-		-- The next slot to roll for.
-		local target = nil
-		if auto.scope == "this" then
-			-- Rolls until a hit replaces whoever is in the slot.
-			if data.crew[auto.slot] ~= nil then
-				target = auto.slot
+	-- Every slot auto roll is working on rolls at the same time: one roll
+	-- per slot each second (the server tick), each paid for on its own.
+	local skip = auto.skip or {}
+	local targets = {}
+	if auto.scope == "this" then
+		-- Rolls until a hit replaces whoever is in the slot.
+		if data.crew[auto.slot] ~= nil and not skip[tostring(auto.slot)] then
+			table.insert(targets, auto.slot)
+		end
+	else
+		for slot, soldier in data.crew do
+			if not skip[tostring(slot)] and (not soldier or (auto.scope == "below" and GameConfig.getRarityRank(soldier.rarity) < targetRank)) then
+				table.insert(targets, slot)
 			end
-		else
-			for slot, soldier in data.crew do
-				if not soldier or (auto.scope == "below" and GameConfig.getRarityRank(soldier.rarity) < targetRank) then
-					target = slot
-					break
+		end
+	end
+	if #targets == 0 then
+		auto.on = false
+		sendToast(player, `Auto roll done: every slot is filled. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
+		return
+	end
+	for _, target in targets do
+		for _ = 1, GameConfig.AutoRollsPerTick do
+			-- Hard check on the gold left before every single roll.
+			if not canAfford(data, rollCost) then
+				if auto.whenBroke == "stop" then
+					auto.on = false
+					sendToast(player, `Auto roll stopped: not enough gold. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
+				elseif not auto.waiting then
+					auto.waiting = true
+					sendToast(player, "Auto roll is waiting for more gold.")
 				end
+				return
 			end
-		end
-		if not target then
-			auto.on = false
-			sendToast(player, `Auto roll done: every slot is filled. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
-			return
-		end
-		-- Hard check on the gold left before every single roll.
-		if not canAfford(data, rollCost) then
-			if auto.whenBroke == "stop" then
-				auto.on = false
-				sendToast(player, `Auto roll stopped: not enough gold. {auto.rolls} rolls, {Format.short(auto.spent)} gold.`)
-			elseif not auto.waiting then
-				auto.waiting = true
-				sendToast(player, "Auto roll is waiting for more gold.")
-			end
-			return
-		end
-		auto.waiting = false
-		data.gold -= rollCost
-		if data.gold < 0 then -- never expected; undo and stop to be safe
-			data.gold += rollCost
-			auto.on = false
-			return
-		end
-		auto.rolls += 1
-		auto.spent += rollCost
-		track(data, "rolls", 1)
-		local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
-		data.nextItemId += 1
-		if GameConfig.getRarityRank(soldier.rarity) >= targetRank then
-			data.crew[target] = soldier
-			sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {target} after {auto.rolls} rolls.`)
-			if auto.scope == "this" then
+			auto.waiting = false
+			data.gold -= rollCost
+			if data.gold < 0 then -- never expected; undo and stop to be safe
+				data.gold += rollCost
 				auto.on = false
 				return
+			end
+			auto.rolls += 1
+			auto.spent += rollCost
+			track(data, "rolls", 1)
+			local soldier = Recruit.roll(tier, "s" .. data.nextItemId)
+			data.nextItemId += 1
+			local hit = GameConfig.getRarityRank(soldier.rarity) >= targetRank
+			sendRollFx(player, target, soldier, hit, auto.rarity)
+			-- The soldier on screen for this slot, so STOP can keep it.
+			auto.shown = auto.shown or {}
+			auto.shown[tostring(target)] = if hit then nil else soldier
+			if hit then
+				data.crew[target] = soldier
+				sendToast(player, `{soldier.rarity} {soldier.class} {soldier.name} joined slot {target}.`)
+				if auto.scope == "this" then
+					auto.on = false
+					return
+				end
+				break -- this slot is done; the others keep rolling
 			end
 		end
 	end
@@ -2643,7 +3079,7 @@ local function runAutoBuy(player: Player, data)
 			and GameConfig.getRarityRank(item.rarity) >= minRank
 			and marketPrice(item) >= rule.minPrice
 			and (rule.maxPrice <= 0 or marketPrice(item) <= rule.maxPrice)
-			and data.level >= item.level
+			and data.level >= (item.level or 1)
 		if not wanted then
 			continue
 		end
@@ -2663,7 +3099,7 @@ local function runAutoBuy(player: Player, data)
 		if buyItem(player, data, item, true) then
 			rule.bought += 1
 			rule.spent += marketPrice(item)
-			table.insert(rule.recent, 1, { name = item.name, rarity = item.rarity, price = marketPrice(item) })
+			table.insert(rule.recent, 1, { name = item.name, rarity = item.rarity, slot = item.slot, price = marketPrice(item) })
 			while #rule.recent > GameConfig.AutoBuyRecent do
 				table.remove(rule.recent)
 			end
@@ -2791,6 +3227,9 @@ local function onPlayerAdded(player: Player)
 		actionCount = 0,
 		regen = { energy = 0, stamina = 0, health = 0 },
 		boardSent = {}, -- [board key] = last score written
+		holdingPaidAt = os.clock(), -- when holdings last paid
+		autoRun = { quests = 0, gold = 0, xp = 0, items = 0 }, -- this auto quest run
+		holdingCarry = {}, -- [holding id] = fraction of a gold not paid yet
 	}
 	refresh(player)
 
@@ -2891,8 +3330,7 @@ task.spawn(function()
 			data.playSeconds += 1
 			checkWeek(data)
 			data.weekly.play += 1
-			data.gold += stats.incomePerHour / 3600
-			countLifetime(data, "goldEarned", stats.incomePerHour / 3600)
+			checkConstruction(player, data)
 			countLifetime(data, "playSeconds", 1)
 			regenerate(session, "energy", GameConfig.EnergyRegenSeconds, stats.maxEnergy)
 			regenerate(session, "stamina", GameConfig.StaminaRegenSeconds, stats.maxStamina)
@@ -2902,10 +3340,22 @@ task.spawn(function()
 			runAutoRoll(player, data)
 			checkResearch(player, data)
 			checkTraining(player, data)
+			checkSoldierTraining(player, data)
 			checkExpedition(player, data)
 			produceEstate(data, 1)
 			checkEstateBuilds(player, data)
 
+			refresh(player)
+		end
+	end
+end)
+
+-- Holdings pay every HoldingCycle seconds.
+task.spawn(function()
+	while true do
+		task.wait(GameConfig.HoldingCycle)
+		for player, session in sessions do
+			payHoldings(player, session, getStats(session.data))
 			refresh(player)
 		end
 	end

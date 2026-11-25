@@ -6,11 +6,12 @@
 --   max        the most allowed (at least 1)
 --   confirm    text on the Confirm button, e.g. "Train"
 --   onConfirm  function(amount) called with the chosen amount
+--   preview    optional function(amount) -> text shown under the amount
 
 local AmountPopup = {}
 
-local note, box
-local current = { max = 1, amount = 1, onConfirm = nil }
+local note, box, previewText
+local current = { max = 1, amount = 1, onConfirm = nil, preview = nil }
 
 local function clamp(value: number): number
 	return math.clamp(math.floor(value), 1, math.max(1, current.max))
@@ -18,6 +19,8 @@ end
 
 local function show()
 	box.Text = tostring(current.amount)
+	previewText.Text = if current.preview then current.preview(current.amount) else ""
+	previewText.Visible = current.preview ~= nil
 end
 
 function AmountPopup.build(ui)
@@ -60,6 +63,13 @@ function AmountPopup.build(ui)
 	stepButton(5, "+10", 10)
 	stepButton(6, "Max", nil)
 
+	-- Optional line that shows what the amount would do (options.preview).
+	previewText = ui.makeText(page, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(0, 0), colors.gold, 14)
+	previewText.LayoutOrder = ui.nextOrder()
+	previewText.Font = Enum.Font.GothamBold
+	previewText.RichText = true
+	previewText.TextXAlignment = Enum.TextXAlignment.Center
+
 	local actions = ui.makeFrame(page, UDim2.new(1, -10, 0, 46), UDim2.fromOffset(0, 0), colors.panel)
 	actions.LayoutOrder = ui.nextOrder()
 	actions.BackgroundTransparency = 1
@@ -85,6 +95,7 @@ function AmountPopup.build(ui)
 		current.max = math.max(1, math.floor(options.max or 1))
 		current.amount = 1
 		current.onConfirm = options.onConfirm
+		current.preview = options.preview
 		note.Text = `{options.note or ""}\n<font color="#B2A690">Up to {current.max}.</font>`
 		ui.setButton(confirm, options.confirm or "Confirm", true, colors.buy)
 		show()

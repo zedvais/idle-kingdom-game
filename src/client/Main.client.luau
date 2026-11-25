@@ -14,6 +14,9 @@ local FestivalConfig = require(Shared:WaitForChild("FestivalConfig"))
 local ResearchConfig = require(Shared:WaitForChild("ResearchConfig"))
 local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local Format = require(Shared:WaitForChild("Format"))
+local Art = require(script.Parent:WaitForChild("Art")) -- colors, icons and styling, all drawn in code
+local ItemArt = require(script.Parent:WaitForChild("ItemArt")) -- item pictures with rarity glows
+local ChestConfig = require(Shared:WaitForChild("ChestConfig")) -- chests (Market chest rows)
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local actionRemote = remotes:WaitForChild("Action")
@@ -60,9 +63,35 @@ do
 
 	local backdrop = Instance.new("Frame")
 	backdrop.Size = UDim2.fromScale(1, 1)
-	backdrop.BackgroundColor3 = COLOR_BACKGROUND
+	backdrop.BackgroundColor3 = Color3.new(1, 1, 1)
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = backdropGui
+	-- Night sky fading to a warm glow at the horizon.
+	local sky = Instance.new("UIGradient")
+	sky.Rotation = 90
+	sky.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(12, 12, 26)),
+		ColorSequenceKeypoint.new(0.6, COLOR_BACKGROUND),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 30, 18)),
+	})
+	sky.Parent = backdrop
+	for _ = 1, 40 do
+		local star = Instance.new("Frame")
+		local size = math.random(1, 3)
+		star.Size = UDim2.fromOffset(size, size)
+		star.Position = UDim2.fromScale(math.random(), math.random() * 0.6)
+		star.BackgroundColor3 = Color3.fromRGB(255, 240, 200)
+		star.BackgroundTransparency = 0.2 + math.random() * 0.6
+		star.BorderSizePixel = 0
+		star.Parent = backdrop
+	end
+	local skyline = Instance.new("Frame")
+	skyline.Size = UDim2.new(1, 0, 0, 70)
+	skyline.Position = UDim2.fromScale(0, 1)
+	skyline.AnchorPoint = Vector2.new(0, 1)
+	skyline.BackgroundTransparency = 1
+	skyline.Parent = backdrop
+	Art.skyline(skyline, Color3.fromRGB(10, 7, 6), 0)
 end
 
 local gui = Instance.new("ScreenGui")
@@ -127,6 +156,7 @@ local function makeButton(parent: Instance, size: UDim2, position: UDim2, color:
 	button.Text = ""
 	button.Parent = parent
 	addCorner(button, 6)
+	Art.button(button)
 	return button
 end
 
@@ -152,6 +182,8 @@ local function makeBar(parent: Instance, size: UDim2, position: UDim2, color: Co
 	local label = makeText(back, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(1, 1, 1), 12)
 	label.TextXAlignment = Enum.TextXAlignment.Center
 	label.Font = Enum.Font.GothamBold
+	label.TextStrokeTransparency = 0.5
+	Art.bar(back, fill)
 	return { fill = fill, label = label }
 end
 
@@ -165,9 +197,9 @@ end
 -- Top bar: you on the left, resources in the middle, bars on the right
 ---------------------------------------------------------------------------
 
-local topBar = makeFrame(gui, UDim2.new(1, -12, 0, TOP_HEIGHT), UDim2.fromOffset(6, 4), COLOR_PANEL)
+local topBar = makeFrame(gui, UDim2.new(1, -12, 0, TOP_HEIGHT), UDim2.fromOffset(6, 4), Art.Colors.wood)
 addCorner(topBar, 8)
-addStroke(topBar)
+Art.panel(topBar)
 
 -- Popups (Profile, Mail, Rankings...) open over the menus. Defined with
 -- the popup window further down.
@@ -209,11 +241,14 @@ do
 	levelBadge.TextXAlignment = Enum.TextXAlignment.Center
 	levelBadge.ZIndex = 2
 	addCorner(levelBadge, 9)
+	Art.gloss(levelBadge, 1, 0.7)
+	Art.stroke(levelBadge, Art.Colors.woodDark, 1.5, 0)
 
 	-- The name and XP bar are under this clear button, so they open the
 	-- Profile too.
 	local nameHit = makeButton(topBar, UDim2.fromOffset(190, 26), UDim2.fromOffset(70, 8), COLOR_PANEL)
 	nameHit.BackgroundTransparency = 1
+	nameHit:SetAttribute("NoGlow", true)
 	nameHit.Text = ""
 	nameHit.ZIndex = 3
 	for _, button in { avatar, nameHit } do
@@ -223,11 +258,25 @@ do
 	end
 end
 
-local nameLabel = makeText(topBar, UDim2.fromOffset(190, 24), UDim2.fromOffset(70, 10), COLOR_HEADER, 16)
-nameLabel.Font = Enum.Font.GothamBold
+local nameLabel = makeText(topBar, UDim2.fromOffset(190, 24), UDim2.fromOffset(70, 10), COLOR_HEADER, 20)
+nameLabel.Font = Art.Fonts.heading
+nameLabel.TextStrokeTransparency = 0.6
 nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 nameLabel.TextWrapped = false
 local xpBar = makeBar(topBar, UDim2.fromOffset(190, 16), UDim2.fromOffset(70, 40), COLOR_XP)
+-- "+N POINTS" next to the XP bar while you have unspent skill points;
+-- it opens the Skills popup. The XP bar is shorter while it shows.
+local pointsButton = makeButton(topBar, UDim2.fromOffset(84, 20), UDim2.fromOffset(186, 38), COLOR_GOLD)
+pointsButton.TextSize = 11
+pointsButton.Font = Enum.Font.GothamBlack
+pointsButton.Visible = false
+pointsButton.Activated:Connect(function()
+	if ui and ui.openSkills then
+		ui.openSkills()
+	else
+		openModal("Skills")
+	end
+end)
 
 -- Resource chips: a big number with a small line under it.
 local chips = {}
@@ -242,19 +291,25 @@ do
 	chipLayout.Parent = chipRow
 
 	local function makeChip(key: string, label: string, color: Color3)
-		local chip = makeFrame(chipRow, UDim2.new(0.5, -6, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
+		local chip = makeFrame(chipRow, UDim2.new(0.5, -6, 1, 0), UDim2.fromOffset(0, 0), Art.Colors.woodDark)
 		chip.LayoutOrder = #chipRow:GetChildren()
-		addCorner(chip, 6)
+		addCorner(chip, 8)
+		Art.card(chip)
+		Art.stroke(chip, color, 1.5, 0.35)
 		local sizeLimit = Instance.new("UISizeConstraint")
-		sizeLimit.MaxSize = Vector2.new(190, 100)
+		sizeLimit.MaxSize = Vector2.new(200, 100)
 		sizeLimit.Parent = chip
-		local name = makeText(chip, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 3), color, 11)
+		local icon = Art.icon(chip, Art.Icons[key] or "", 30, UDim2.new(0, 6, 0.5, 0))
+		Art.setIcon(icon, key)
+		icon.AnchorPoint = Vector2.new(0, 0.5)
+		local name = makeText(chip, UDim2.new(1, -46, 0, 14), UDim2.fromOffset(42, 3), color, 11)
 		name.Font = Enum.Font.GothamBold
 		name.Text = string.upper(label)
-		local value = makeText(chip, UDim2.new(1, -12, 0, 22), UDim2.fromOffset(8, 16), COLOR_TEXT, 18)
+		local value = makeText(chip, UDim2.new(1, -46, 0, 22), UDim2.fromOffset(42, 16), COLOR_TEXT, 18)
 		value.Font = Enum.Font.GothamBold
 		value.TextScaled = true
-		local sub = makeText(chip, UDim2.new(1, -12, 0, 14), UDim2.fromOffset(8, 38), COLOR_DIM, 11)
+		value.TextStrokeTransparency = 0.6
+		local sub = makeText(chip, UDim2.new(1, -46, 0, 14), UDim2.fromOffset(42, 38), COLOR_DIM, 11)
 		sub.TextTruncate = Enum.TextTruncate.AtEnd
 		sub.TextWrapped = false
 		chips[key] = { value = value, sub = sub }
@@ -265,7 +320,7 @@ end
 
 -- Square buttons that open popups, between the chips and the bars.
 do
-	local iconRow = makeFrame(topBar, UDim2.new(0, ICON_BLOCK - 10, 1, -12), UDim2.new(1, -(RIGHT_BLOCK + ICON_BLOCK - 4), 0, 6), COLOR_PANEL)
+	local iconRow = makeFrame(topBar, UDim2.new(0, ICON_BLOCK - 10, 1, -12), UDim2.new(1, -(ICON_BLOCK - 4), 0, 6), COLOR_PANEL)
 	iconRow.BackgroundTransparency = 1
 	local iconLayout = Instance.new("UIListLayout")
 	iconLayout.FillDirection = Enum.FillDirection.Horizontal
@@ -273,14 +328,18 @@ do
 	iconLayout.Padding = UDim.new(0, 6)
 	iconLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	iconLayout.Parent = iconRow
-	for index, entry in { { "Mail", "\u{2709}", "Mail" } } do
+	-- One MENU button: a drop-down with Mail, Settings, Stats, Rankings
+	-- and Updates. The Mail count shows on it.
+	for index, entry in { { "Mail", "", "Menu" } } do
 		local button = makeButton(iconRow, UDim2.new(0, 56, 1, 0), UDim2.fromOffset(0, 0), COLOR_ROW)
 		button.LayoutOrder = index
 		button.Text = ""
-		addStroke(button)
-		local icon = makeText(button, UDim2.new(1, 0, 0, 28), UDim2.fromOffset(0, 4), COLOR_HEADER, 22)
-		icon.TextXAlignment = Enum.TextXAlignment.Center
-		icon.Text = entry[2]
+		addStroke(button).Color = COLOR_GOLD
+		-- Three drawn gold bars (the font has no hamburger glyph).
+		for line = 0, 2 do
+			local strip = makeFrame(button, UDim2.fromOffset(28, 4), UDim2.new(0.5, -14, 0, 9 + line * 8), COLOR_GOLD)
+			addCorner(strip, 2)
+		end
 		local label = makeText(button, UDim2.new(1, 0, 0, 14), UDim2.new(0, 0, 1, -18), COLOR_TEXT, 11)
 		label.TextXAlignment = Enum.TextXAlignment.Center
 		label.Font = Enum.Font.GothamBold
@@ -295,18 +354,97 @@ do
 		badge.ZIndex = 2
 		addCorner(badge, 8)
 		railBadges[entry[1]] = badge
+
+		local menu = makeFrame(gui, UDim2.fromOffset(300, 0), UDim2.new(1, -10, 0, TOP_HEIGHT + 6), COLOR_PANEL)
+		menu.AnchorPoint = Vector2.new(1, 0)
+		menu.AutomaticSize = Enum.AutomaticSize.Y
+		menu.Visible = false
+		menu.ZIndex = 800
+		addCorner(menu, 8)
+		Art.stroke(menu, COLOR_GOLD, 2, 0)
+		local menuList = Instance.new("UIListLayout")
+		menuList.Padding = UDim.new(0, 6)
+		menuList.SortOrder = Enum.SortOrder.LayoutOrder
+		menuList.Parent = menu
+		local menuPad = Instance.new("UIPadding")
+		for _, side in { "PaddingTop", "PaddingBottom", "PaddingLeft", "PaddingRight" } do
+			menuPad[side] = UDim.new(0, 8)
+		end
+		menuPad.Parent = menu
+		local mailCount = nil
+		local items = {
+			{ Art.Icons.Mail, "MAIL", function() openModal("Mail") end },
+			{ "\u{2699}\u{FE0F}", "SETTINGS", function() openModal("Settings") end },
+			{ Art.Icons.Rankings, "STATS", function() openModal("Stats") end },
+			{ "\u{1F3C5}", "RANKINGS", function() if ui then ui.showPage("Rankings") end end },
+			{ "\u{1F4F0}", "UPDATES", function() openModal("Updates") end },
+		}
+		for order, item in items do
+			local row = makeButton(menu, UDim2.new(1, 0, 0, 58), UDim2.fromOffset(0, 0), COLOR_ROW)
+			row.LayoutOrder = order
+			row.Text = ""
+			row.ZIndex = 801
+			local glyph = makeText(row, UDim2.fromOffset(60, 58), UDim2.fromOffset(14, 0), COLOR_GOLD, 30)
+			glyph.TextXAlignment = Enum.TextXAlignment.Center
+			glyph.Text = item[1]
+			glyph.ZIndex = 802
+			local label = makeText(row, UDim2.new(1, -90, 1, 0), UDim2.fromOffset(86, 0), COLOR_HEADER, 24)
+			label.Font = Enum.Font.GothamBlack
+			label.Text = item[2]
+			label.ZIndex = 802
+			if order == 1 then
+				mailCount = makeText(row, UDim2.fromOffset(34, 24), UDim2.new(1, -44, 0.5, -12), Color3.new(1, 1, 1), 13)
+				mailCount.BackgroundTransparency = 0
+				mailCount.BackgroundColor3 = COLOR_ACTION
+				mailCount.Font = Enum.Font.GothamBlack
+				mailCount.TextXAlignment = Enum.TextXAlignment.Center
+				mailCount.ZIndex = 803
+				addCorner(mailCount, 12)
+			end
+			row.Activated:Connect(function()
+				menu.Visible = false
+				item[3]()
+			end)
+		end
 		button.Activated:Connect(function()
-			openModal(entry[1])
+			menu.Visible = not menu.Visible
+			if mailCount then
+				mailCount.Visible = badge.Visible
+				mailCount.Text = badge.Text
+			end
+			if menu.Visible then
+				local scale = menu:FindFirstChild("Pop") or Instance.new("UIScale")
+				scale.Name = "Pop"
+				scale.Parent = menu
+				scale.Scale = 0.85
+				Art.tween(scale, 0.18, { Scale = 1 }, Enum.EasingStyle.Back)
+			end
+		end)
+		-- Pressing anywhere else closes it (a clear layer behind the menu).
+		local catcher = makeButton(gui, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), Color3.new(0, 0, 0))
+		catcher.BackgroundTransparency = 1
+		catcher.Text = ""
+		catcher.AutoButtonColor = false
+		catcher:SetAttribute("NoGlow", true)
+		catcher.ZIndex = 790
+		catcher.Visible = false
+		catcher.Activated:Connect(function()
+			menu.Visible = false
+		end)
+		menu:GetPropertyChangedSignal("Visible"):Connect(function()
+			catcher.Visible = menu.Visible
 		end)
 	end
 end
 
 -- Energy, stamina and health, each with a + that opens the Shop's refills.
-local barBlock = makeFrame(topBar, UDim2.new(0, RIGHT_BLOCK - 10, 1, 0), UDim2.new(1, -(RIGHT_BLOCK - 4), 0, 0), COLOR_PANEL)
+local barBlock = makeFrame(topBar, UDim2.new(0, RIGHT_BLOCK - 10, 1, 0), UDim2.new(1, -(RIGHT_BLOCK + ICON_BLOCK - 4), 0, 0), COLOR_PANEL)
 barBlock.BackgroundTransparency = 1
 local showPage -- defined with the pages below
-local function makeTopBar(y: number, color: Color3)
+local function makeTopBar(y: number, color: Color3, glyph: string)
 	local bar = makeBar(barBlock, UDim2.new(1, -30, 0, 18), UDim2.fromOffset(0, y), color)
+	local icon = Art.icon(bar.fill.Parent, glyph, 18, UDim2.fromOffset(-4, 0))
+	icon.ZIndex = 2
 	local plus = makeButton(barBlock, UDim2.fromOffset(22, 18), UDim2.new(1, -24, 0, y), COLOR_SELECTED)
 	plus.Text = "+"
 	plus.TextSize = 14
@@ -315,9 +453,9 @@ local function makeTopBar(y: number, color: Color3)
 	end)
 	return bar
 end
-local energyBar = makeTopBar(8, COLOR_ENERGY)
-local staminaBar = makeTopBar(29, COLOR_STAMINA)
-local healthBar = makeTopBar(50, COLOR_HEALTH)
+local energyBar = makeTopBar(8, COLOR_ENERGY, Art.Icons.energy)
+local staminaBar = makeTopBar(29, COLOR_STAMINA, Art.Icons.stamina)
+local healthBar = makeTopBar(50, COLOR_HEALTH, Art.Icons.health)
 
 ---------------------------------------------------------------------------
 -- Left menu: pages grouped under small headings, with red count badges
@@ -332,8 +470,9 @@ rail.ScrollBarThickness = 4
 rail.CanvasSize = UDim2.new(0, 0, 0, 0)
 rail.AutomaticCanvasSize = Enum.AutomaticSize.Y
 rail.Parent = gui
+rail.ScrollBarImageColor3 = COLOR_GOLD
 addCorner(rail, 8)
-addStroke(rail)
+Art.panel(rail, false)
 
 do
 	local railLayout = Instance.new("UIListLayout")
@@ -350,7 +489,7 @@ end
 
 local main = makeFrame(gui, UDim2.new(1, -(RAIL_WIDTH + 18), 1, -(TOP_HEIGHT + 16)), UDim2.fromOffset(RAIL_WIDTH + 12, TOP_HEIGHT + 10), COLOR_PANEL)
 addCorner(main, 8)
-addStroke(main)
+Art.panel(main)
 
 -- Every page: its group, a one line description, and a tip shown until
 -- the player presses Got it.
@@ -393,7 +532,7 @@ local PAGE_INFO = {
 	},
 	Holdings = {
 		about = "Lands that pay gold every hour, even while you are away.",
-		tip = "Each holding uses one lot. Build more copies to earn more; demolish one to free its lot.",
+		tip = "Each holding uses one lot. Build more copies on the BUILD tab; press one of your lands to build another or demolish it.",
 	},
 	Bank = {
 		about = "Gold in the bank is safe. Gold on hand is what you spend.",
@@ -413,7 +552,7 @@ local PAGE_INFO = {
 	},
 	Quests = {
 		about = "Spend energy for gold, experience and the odd piece of gear.",
-		tip = "Repeat a quest to earn bronze, silver and gold mastery. The Auto quests button opens the settings: repeat your last quest, earn mastery, or go for the most XP.",
+		tip = "Repeat a quest to earn bronze, silver and gold mastery medals; each one raises its gold. AUTO QUESTS works on one quest, mastery, most XP or most gold for you.",
 	},
 	Foes = {
 		about = "Bring down each foe once a day for gold, tokens and set gear.",
@@ -452,11 +591,38 @@ end
 
 -- Page header: small group label, big title, description, boost chips.
 local HEADER_HEIGHT = 64
-local eyebrow = makeText(main, UDim2.new(0.5, 0, 0, 14), UDim2.fromOffset(14, 8), COLOR_DIM, 11)
+-- A banner in the group's color behind the header, with a castle skyline
+-- and a round emblem showing the page's icon.
+local headerArt = {}
+do
+	local banner = makeFrame(main, UDim2.new(1, -12, 0, HEADER_HEIGHT - 6), UDim2.fromOffset(6, 4), COLOR_SELECTED)
+	banner.ZIndex = 0
+	addCorner(banner, 8)
+	local fade = Instance.new("UIGradient")
+	fade.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.1),
+		NumberSequenceKeypoint.new(0.6, 0.55),
+		NumberSequenceKeypoint.new(1, 0.85),
+	})
+	fade.Parent = banner
+	local skyline = Art.skyline(banner, Color3.new(0, 0, 0), 0.55)
+	skyline.ZIndex = 0
+	for _, part in skyline:GetDescendants() do
+		if part:IsA("GuiObject") then
+			part.ZIndex = 0
+		end
+	end
+	local emblem, glyph = Art.emblem(main, "", 48, UDim2.fromOffset(14, 8), COLOR_SELECTED)
+	headerArt.banner = banner
+	headerArt.emblem = emblem
+	headerArt.glyph = glyph
+end
+local eyebrow = makeText(main, UDim2.new(0.5, 0, 0, 14), UDim2.fromOffset(72, 8), COLOR_DIM, 11)
 eyebrow.Font = Enum.Font.GothamBold
-local pageTitle = makeText(main, UDim2.new(0.5, 0, 0, 26), UDim2.fromOffset(14, 20), COLOR_HEADER, 24)
-pageTitle.Font = Enum.Font.GothamBlack
-local pageAbout = makeText(main, UDim2.new(0.55, 0, 0, 16), UDim2.fromOffset(14, 45), COLOR_DIM, 12)
+local pageTitle = makeText(main, UDim2.new(0.5, 0, 0, 30), UDim2.fromOffset(72, 18), COLOR_HEADER, 32)
+pageTitle.Font = Art.Fonts.title
+pageTitle.TextStrokeTransparency = 0.5
+local pageAbout = makeText(main, UDim2.new(0.55, -58, 0, 16), UDim2.fromOffset(72, 45), COLOR_TEXT, 12)
 pageAbout.TextTruncate = Enum.TextTruncate.AtEnd
 pageAbout.TextWrapped = false
 
@@ -527,17 +693,38 @@ local function placePage()
 end
 
 showPage = function(name: string)
+	local changed = currentPage ~= name
 	currentPage = name
 	eyebrow.Text = string.upper(pageGroup[name] or "")
-	pageTitle.Text = string.upper(name)
+	pageTitle.Text = name
 	pageAbout.Text = if PAGE_INFO[name] then PAGE_INFO[name].about else ""
+	local groupColor = Art.GroupColors[pageGroup[name] or ""] or COLOR_SELECTED
+	headerArt.banner.BackgroundColor3 = groupColor
+	headerArt.emblem.BackgroundColor3 = groupColor
+	Art.setIcon(headerArt.glyph, name)
 	for _, pageName in PAGE_NAMES do
 		pages[pageName].Visible = pageName == name
 		local selected = pageName == name
-		railButtons[pageName].BackgroundColor3 = if selected then COLOR_SELECTED else COLOR_PANEL
-		railButtons[pageName].TextColor3 = if selected then COLOR_GOLD else COLOR_TEXT
+		local button = railButtons[pageName]
+		button.BackgroundColor3 = if selected then COLOR_SELECTED else COLOR_PANEL
+		button.BackgroundTransparency = if selected then 0 else 1
+		button.TextColor3 = if selected then COLOR_GOLD else COLOR_TEXT
+		local accent = button:FindFirstChild("Accent")
+		if accent then
+			accent.Visible = selected
+		end
 	end
 	placePage()
+	-- Slide the new page in.
+	local page = pages[name]
+	if page and changed then
+		local target = page.Position
+		page.Position = target + UDim2.fromOffset(0, 14)
+		Art.tween(page, 0.2, { Position = target })
+		Art.tween(headerArt.emblem, 0.08, { Rotation = -12 }).Completed:Connect(function()
+			Art.tween(headerArt.emblem, 0.35, { Rotation = 0 }, Enum.EasingStyle.Back)
+		end)
+	end
 end
 
 tipButton.Activated:Connect(function()
@@ -559,11 +746,18 @@ end
 local railOrder = 0
 for _, group in PAGE_GROUPS do
 	railOrder += 1
-	local heading = makeText(rail, UDim2.new(1, -16, 0, 18), UDim2.fromOffset(0, 0), COLOR_DIM, 10)
-	heading.Font = Enum.Font.GothamBold
-	heading.Text = string.upper(group.name)
+	local heading = makeText(rail, UDim2.new(1, -16, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 15)
+	heading.Font = Art.Fonts.heading
+	heading.Text = group.name
 	heading.LayoutOrder = railOrder
 	heading.TextYAlignment = Enum.TextYAlignment.Bottom
+	do
+		-- A thin line in the group's color under the heading.
+		local line = makeFrame(heading, UDim2.new(1, 0, 0, 2), UDim2.new(0, 0, 1, 1), Art.GroupColors[group.name] or COLOR_EDGE)
+		local fade = Instance.new("UIGradient")
+		fade.Transparency = NumberSequence.new(0, 1)
+		fade.Parent = line
+	end
 
 	for _, name in group.pages do
 		railOrder += 1
@@ -572,10 +766,22 @@ for _, group in PAGE_GROUPS do
 		button.Text = name
 		button.TextXAlignment = Enum.TextXAlignment.Left
 		button.TextSize = 13
+		button.BackgroundTransparency = 1
 		local padding = Instance.new("UIPadding")
-		padding.PaddingLeft = UDim.new(0, 10)
+		padding.PaddingLeft = UDim.new(0, 32)
 		padding.Parent = button
 		railButtons[name] = button
+		do
+			local icon = Art.icon(button, Art.Icons[name] or "", 20, UDim2.new(0, -27, 0.5, 0))
+			Art.setIcon(icon, name)
+			icon.AnchorPoint = Vector2.new(0, 0.5)
+			-- A gold edge on the left of the open page's button.
+			local accent = makeFrame(button, UDim2.new(0, 4, 1, -8), UDim2.new(0, -32, 0.5, 0), COLOR_GOLD)
+			accent.Name = "Accent"
+			accent.AnchorPoint = Vector2.new(0, 0.5)
+			accent.Visible = false
+			addCorner(accent, 2)
+		end
 
 		local badge = makeText(button, UDim2.fromOffset(24, 18), UDim2.new(1, -4, 0.5, 0), Color3.new(1, 1, 1), 11)
 		badge.AnchorPoint = Vector2.new(1, 0.5)
@@ -618,6 +824,7 @@ local function makeRow(page: Instance, order: number, height: number, hasButton:
 	row.LayoutOrder = order
 	addCorner(row, 6)
 	addStroke(row)
+	Art.card(row)
 
 	local textWidthOffset = if hasButton then -(BUTTON_WIDTH + 26) else -20
 	local info = makeText(row, UDim2.new(1, textWidthOffset, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 14)
@@ -653,6 +860,7 @@ local function makeCard(grid: Instance)
 	card.LayoutOrder = cardCount
 	addCorner(card, 8)
 	addStroke(card)
+	Art.card(card)
 	local info = makeText(card, UDim2.new(1, -16, 1, -52), UDim2.fromOffset(8, 6), COLOR_TEXT, 13)
 	info.TextYAlignment = Enum.TextYAlignment.Top
 	local button = makeButton(card, UDim2.new(1, -16, 0, 36), UDim2.new(0, 8, 1, -42), COLOR_DISABLED)
@@ -662,10 +870,17 @@ end
 
 -- A small heading between groups of rows.
 local function makeHeading(page: Instance, order: number, text: string)
-	local label = makeText(page, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 14)
+	local label = makeText(page, UDim2.new(1, -10, 0, 28), UDim2.fromOffset(0, 0), COLOR_HEADER, 20)
 	label.LayoutOrder = order
-	label.Font = Enum.Font.GothamBold
-	label.Text = string.upper(text)
+	label.Font = Art.Fonts.heading
+	label.TextYAlignment = Enum.TextYAlignment.Bottom
+	label.TextStrokeTransparency = 0.6
+	label.Text = text
+	-- A gold rule under the heading that fades out to the right.
+	local line = makeFrame(label, UDim2.new(1, 0, 0, 1), UDim2.new(0, 0, 1, 1), COLOR_GOLD)
+	local fade = Instance.new("UIGradient")
+	fade.Transparency = NumberSequence.new(0.2, 1)
+	fade.Parent = line
 end
 
 -- A row with a label on the left and several buttons sharing the rest.
@@ -673,6 +888,7 @@ local function makeButtonRow(page: Instance, order: number, labelText: string, n
 	local row = makeFrame(page, UDim2.new(1, -10, 0, 44), UDim2.fromOffset(0, 0), COLOR_ROW)
 	row.LayoutOrder = order
 	addCorner(row, 6)
+	Art.card(row)
 	local width = if labelText == "" then 0 else (labelWidth or 130)
 	local label = makeText(row, UDim2.new(0, width - 10, 1, 0), UDim2.fromOffset(10, 0), COLOR_TEXT, 13)
 	label.Text = labelText
@@ -759,148 +975,19 @@ local function makeRegionHeader(page: Instance, order: number, region)
 	end
 end
 
--- Keep: your home, your numbers, daily rewards and skills.
-local keepInfo, keepButton = makeRow(pages.Keep, nextOrder(), 74, true)
-keepButton.Activated:Connect(function()
-	send("Keep")
-end)
-local keepSummary = makeRow(pages.Keep, nextOrder(), 74, false)
-local breakdownText = makeRow(pages.Keep, nextOrder(), 96, false)
-breakdownText.TextColor3 = COLOR_DIM
+-- Keep: the picture, numbers and skills are in KeepPage.luau; the daily
+-- playtime rewards are here.
 
-makeHeading(pages.Keep, nextOrder(), "Daily playtime rewards")
-local playtimeSummary = makeRow(pages.Keep, nextOrder(), 32, false)
-local rewardRows = {}
-do
-	local rewardGrid = makeGrid(pages.Keep, nextOrder(), 92, 4)
-	for index, reward in GameConfig.PlaytimeRewards do
-		local info, button = makeCard(rewardGrid)
-		rewardRows[index] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("Claim", tostring(index))
-		end)
-		info.RichText = true
-		info.Text = `<b>{reward.label}</b>\nAfter {reward.minutes} min`
-	end
-end
+-- Three LayoutOrder slots for the playtime rewards (PlaytimeRewards.luau).
+local playtimeOrder = nextOrder()
+nextOrder()
+nextOrder()
 
-makeHeading(pages.Keep, nextOrder(), "Skills")
-local skillRows = {}
-do
-	local skillGrid = makeGrid(pages.Keep, nextOrder(), 104, 3)
-	for _, skill in GameConfig.Skills do
-		local info, button = makeCard(skillGrid)
-		skillRows[skill.id] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("Skill", skill.id)
-		end)
-	end
-end
+-- Quests: the page is built in QuestsPage.luau.
 
--- Quests, in folding regions.
-local questRows = {}
-local autoQuestInfo, autoQuestButton = makeRow(pages.Quests, nextOrder(), 50, true)
-autoQuestInfo.RichText = true
-local autoQuestOn = false
-local ownsAutoQuest = false
-autoQuestButton.Activated:Connect(function()
-	ui.openAutoQuest()
-end)
-local questBoost = makeRow(pages.Quests, nextOrder(), 30, false)
-questBoost.TextColor3 = COLOR_XP
-for _, region in GameConfig.Regions do
-	local addRow = makeRegionHeader(pages.Quests, nextOrder(), region)
-	for _, quest in GameConfig.Quests do
-		if quest.region == region.id then
-			local info, button = makeRow(pages.Quests, nextOrder(), 56, true)
-			info.RichText = true
-			addRow(info.Parent)
-			questRows[quest.id] = { info = info, button = button }
-			button.Activated:Connect(function()
-				send("Quest", quest.id)
-			end)
-		end
-	end
-end
+-- Holdings: the page is built in HoldingsPage.luau.
 
--- Holdings: what you have built, then what you can build, by region.
-local holdingSummary = makeRow(pages.Holdings, nextOrder(), 50, false)
-makeHeading(pages.Holdings, nextOrder(), "Your lands")
-local ownedEmpty = makeRow(pages.Holdings, nextOrder(), 34, false)
-ownedEmpty.TextColor3 = COLOR_DIM
-ownedEmpty.Text = "Nothing built yet. Build a holding below."
-local ownedRows = {}
-for _, holding in GameConfig.Holdings do
-	local info, button = makeRow(pages.Holdings, nextOrder(), 46, true)
-	ownedRows[holding.id] = { info = info, button = button }
-	button.Activated:Connect(function()
-		send("Demolish", holding.id)
-	end)
-end
-makeHeading(pages.Holdings, nextOrder(), "Build")
-local holdingRows = {}
-for _, region in GameConfig.Regions do
-	local addRow = makeRegionHeader(pages.Holdings, nextOrder(), region)
-	local grid = makeGrid(pages.Holdings, nextOrder(), 112, 3)
-	addRow(grid)
-	for _, holding in GameConfig.Holdings do
-		if holding.region == region.id then
-			local info, button = makeCard(grid)
-			holdingRows[holding.id] = { info = info, button = button }
-			button.Activated:Connect(function()
-				send("Holding", holding.id)
-			end)
-		end
-	end
-end
-
--- Bank: move gold in and out. Gold in the bank is safe from raids.
-local bankSummary = makeRow(pages.Bank, nextOrder(), 74, false)
-do
-	local bankInputRow = makeFrame(pages.Bank, UDim2.new(1, -10, 0, 56), UDim2.fromOffset(0, 0), COLOR_ROW)
-	bankInputRow.LayoutOrder = nextOrder()
-	addCorner(bankInputRow, 6)
-	local bankInput = Instance.new("TextBox")
-	bankInput.Size = UDim2.new(1, -20, 1, -16)
-	bankInput.Position = UDim2.fromOffset(10, 8)
-	bankInput.BackgroundColor3 = Color3.fromRGB(20, 24, 22)
-	bankInput.TextColor3 = COLOR_TEXT
-	bankInput.PlaceholderText = "Amount, like 5000 or 2.5m"
-	bankInput.PlaceholderColor3 = COLOR_DIM
-	bankInput.Font = Enum.Font.GothamBold
-	bankInput.TextSize = 20
-	bankInput.Text = ""
-	bankInput.ClearTextOnFocus = false
-	bankInput.Parent = bankInputRow
-	addCorner(bankInput, 6)
-
-	local bankButtons = makeFrame(pages.Bank, UDim2.new(1, -10, 0, 96), UDim2.fromOffset(0, 0), COLOR_ROW)
-	bankButtons.LayoutOrder = nextOrder()
-	bankButtons.BackgroundTransparency = 1
-	local function bankButton(text: string, x: number, y: number, color: Color3, callback)
-		local b = makeButton(bankButtons, UDim2.new(0.5, -5, 0, 44), UDim2.new(x, if x > 0 then 5 else 0, 0, y), color)
-		b.Text = text
-		b.TextSize = 16
-		b.Activated:Connect(callback)
-		return b
-	end
-	bankButton("Deposit", 0, 0, COLOR_GOLD, function()
-		send("Deposit", bankInput.Text)
-	end).TextColor3 = Color3.fromRGB(35, 28, 10)
-	bankButton("Withdraw", 0.5, 0, COLOR_SELECTED, function()
-		send("Withdraw", bankInput.Text)
-	end)
-	bankButton("Deposit all", 0, 50, COLOR_ROW, function()
-		send("Deposit", "all")
-	end)
-	bankButton("Withdraw all", 0.5, 50, COLOR_ROW, function()
-		send("Withdraw", "all")
-	end)
-	local bankNote = makeRow(pages.Bank, nextOrder(), 50, false)
-	bankNote.TextColor3 = COLOR_DIM
-	bankNote.Text = `Depositing costs a {math.floor(GameConfig.BankFee * 100)}% fee. You spend gold on hand, so withdraw before buying. `
-		.. "Once raids arrive, only gold on hand can be stolen."
-end
+-- Bank: the page is built in BankPage.luau.
 
 -- This week's festival bonus of one kind ("marketPrice", "rollCost"), or 0.
 local function festivalDiscount(state, kind: string): number
@@ -945,38 +1032,16 @@ end
 local function makeItemRow(page: Instance, order: number)
 	local info, button = makeRow(page, order, 52, true)
 	info.RichText = true
-	return { info = info, button = button }
+	-- The item's picture on the left, with its rarity glow.
+	local picture = makeFrame(info.Parent, UDim2.fromOffset(44, 44), UDim2.fromOffset(6, 4), COLOR_PANEL)
+	picture.BackgroundTransparency = 0.4
+	addCorner(picture, 6)
+	info.Position = info.Position + UDim2.fromOffset(48, 0)
+	info.Size = info.Size - UDim2.fromOffset(48, 0)
+	return { info = info, button = button, picture = picture }
 end
 
--- Market: a fixed number of rows that are refilled each restock.
-local marketSummary = makeRow(pages.Market, nextOrder(), 50, false)
-local marketRows = {}
--- The restock window of the stock on screen, set each time the Market is drawn.
-local marketWindowShown: number? = nil
-for index = 1, GameConfig.MarketSize do
-	local row = makeItemRow(pages.Market, nextOrder())
-	marketRows[index] = row
-	row.button.Activated:Connect(function()
-		-- Send which stock the player is looking at with the row, so a click
-		-- that reaches the server after a restock can't buy the new item.
-		if marketWindowShown then
-			send("Buy", `{marketWindowShown}:{index}`)
-		end
-	end)
-end
-
-makeHeading(pages.Market, nextOrder(), "Auto-buy")
-local autoBuyInfo, autoBuyButton = makeRow(pages.Market, nextOrder(), 56, true)
-autoBuyInfo.RichText = true
-local autoBuyRunning = false
-local ownsAutoBuy = false
-autoBuyButton.Activated:Connect(function()
-	ui.openAutoBuy()
-end)
-
-local recentBuys = makeRow(pages.Market, nextOrder(), 110, false)
-recentBuys.RichText = true
-recentBuys.TextYAlignment = Enum.TextYAlignment.Top
+-- Market: the page is built in MarketPage.luau.
 
 -- Warband: one row for you, one per unlocked slot, and the next locked slot.
 local openRecruitWindow -- defined further down, with the recruit window
@@ -998,9 +1063,65 @@ end
 
 local warbandSummary, autoRollButton = makeRow(pages.Warband, nextOrder(), 56, true)
 setButton(autoRollButton, "Recruit", true, COLOR_ACTION)
+local ownsAutoRoll = false
 autoRollButton.Activated:Connect(function()
-	openRecruitWindow(0)
+	if ownsAutoRoll then
+		openRecruitWindow(0)
+	else
+		ui.offerPass("autoroll")
+	end
 end)
+warbandSummary.Parent.Visible = false -- replaced by the chips below
+
+-- Warband header: four stat chips, then a bar of buttons.
+local warbandChips = {}
+local warbandButtons = {}
+do
+	local chips = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 50), UDim2.fromOffset(0, 0), COLOR_PANEL)
+	chips.BackgroundTransparency = 1
+	chips.LayoutOrder = nextOrder()
+	local glyphs = { "\u{1F465}", Art.Icons.Weapon, Art.Icons.Armor, "\u{2B50}" }
+	for index = 1, 4 do
+		local chip = makeFrame(chips, UDim2.new(0.25, -6, 1, 0), UDim2.new((index - 1) * 0.25, 3, 0, 0), COLOR_ROW)
+		addCorner(chip, 6)
+		Art.card(chip)
+		local icon = Art.icon(chip, glyphs[index] or "", 26, UDim2.fromOffset(10, 12))
+		icon.ZIndex = chip.ZIndex + 1
+		local label = makeText(chip, UDim2.new(1, -48, 1, 0), UDim2.fromOffset(44, 0), COLOR_TEXT, 14)
+		label.Font = Enum.Font.GothamBold
+		label.TextWrapped = true
+		warbandChips[index] = label
+	end
+	local bar = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 46), UDim2.fromOffset(0, 0), COLOR_PANEL)
+	bar.BackgroundTransparency = 1
+	bar.LayoutOrder = nextOrder()
+	local names = { "GEAR SETS", "UNEQUIP ALL", "AUTO SORT", "EQUIP BEST", "NEW GEAR", "AUTO ROLL" }
+	for index, name in names do
+		local count = #names
+		local button = makeButton(bar, UDim2.new(1 / count, -6, 1, 0), UDim2.new((index - 1) / count, 3, 0, 0), COLOR_PANEL)
+		button.TextSize = 13
+		button.TextColor3 = COLOR_GOLD
+		Art.stroke(button, COLOR_GOLD, 1.5, 0.2)
+		button.Text = name
+		warbandButtons[index] = button
+	end
+	warbandButtons[2].Activated:Connect(function()
+		send("UnequipAll")
+	end)
+	warbandButtons[3].Activated:Connect(function()
+		send("SortCrew")
+	end)
+	warbandButtons[4].Activated:Connect(function()
+		send("EquipBest")
+	end)
+	warbandButtons[6].Activated:Connect(function()
+		if ownsAutoRoll then
+			openRecruitWindow(0)
+		else
+			ui.offerPass("autoroll")
+		end
+	end)
+end
 
 -- How many pieces of each set one member wears: { [setId] = count }.
 -- member 0 is you, 1 and up is a warband slot.
@@ -1054,7 +1175,7 @@ local function gearLine(item, counts): string
 	if not item then
 		return `<font color="#7F847E">empty</font>`
 	end
-	return `{rarityName(item)} Lv {item.level}{setTag(item, counts)}`
+	return `{rarityName(item)}{setTag(item, counts)}`
 end
 
 local openEquipWindow -- defined further down, with the equip window
@@ -1067,56 +1188,151 @@ local equipNewOn = true
 equipButtons[2].Activated:Connect(function()
 	send("EquipNew", if equipNewOn then "off" else "on")
 end)
+warbandButtons[5].Activated:Connect(function()
+	send("EquipNew", if equipNewOn then "off" else "on")
+end)
+equipButtons[1].Parent.Visible = false -- moved into the header bar
 
+-- A warband card (like a crew card): order arrows, a portrait, name and
+-- rarity, total attack and defense, Train / Auto / Release, and a tile for
+-- each gear slot (press a tile to change that gear).
+local CLASS_GLYPHS = {
+	Militia = "\u{1F6E1}\u{FE0F}",
+	Archer = "\u{1F3F9}",
+	Knight = "\u{2694}\u{FE0F}",
+	["Battle Mage"] = "\u{1F52E}",
+	Ranger = "\u{1F332}",
+}
 local function makeCrewRow(order: number)
-	local row = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 76), UDim2.fromOffset(0, 0), COLOR_ROW)
+	local row = makeFrame(pages.Warband, UDim2.new(1, -10, 0, 160), UDim2.fromOffset(0, 0), COLOR_ROW)
 	row.LayoutOrder = order
-	addCorner(row, 6)
+	addCorner(row, 8)
+	Art.card(row)
+	local edge = Art.stroke(row, COLOR_DIM, 1.5, 0.3)
 
-	local info = makeText(row, UDim2.new(0.3, -10, 1, -8), UDim2.fromOffset(10, 4), COLOR_TEXT, 13)
+	local up = makeButton(row, UDim2.fromOffset(30, 28), UDim2.fromOffset(6, 8), COLOR_SELECTED)
+	up.Text = "\u{25B2}"
+	up.TextSize = 12
+	local down = makeButton(row, UDim2.fromOffset(30, 28), UDim2.fromOffset(6, 42), COLOR_SELECTED)
+	down.Text = "\u{25BC}"
+	down.TextSize = 12
+
+	local portrait = makeFrame(row, UDim2.fromOffset(64, 64), UDim2.fromOffset(42, 6), Color3.fromRGB(26, 20, 16))
+	addCorner(portrait, 8)
+	local portraitStroke = Art.stroke(portrait, COLOR_DIM, 2, 0)
+	local glyph = Art.icon(portrait, "", 38, UDim2.fromScale(0.5, 0.5))
+	glyph.AnchorPoint = Vector2.new(0.5, 0.5)
+	glyph.ZIndex = portrait.ZIndex + 1
+
+	local info = makeText(row, UDim2.new(0.42, -118, 0, 66), UDim2.fromOffset(114, 5), COLOR_TEXT, 14)
 	info.RichText = true
-	local gearText = makeText(row, UDim2.new(0.7, -306, 1, -8), UDim2.new(0.3, 0, 0, 4), COLOR_DIM, 12)
-	gearText.RichText = true
+	info.TextYAlignment = Enum.TextYAlignment.Top
+	local statsText = makeText(row, UDim2.new(0.58, -250, 0, 66), UDim2.new(0.42, 0, 0, 5), COLOR_TEXT, 15)
+	statsText.RichText = true
+	statsText.Font = Enum.Font.GothamBold
 
 	local function button(width: number, offset: number): TextButton
-		local b = makeButton(row, UDim2.fromOffset(width, 50), UDim2.new(1, offset, 0.5, 0), COLOR_DISABLED)
-		b.AnchorPoint = Vector2.new(1, 0.5)
+		local b = makeButton(row, UDim2.fromOffset(width, 60), UDim2.new(1, offset, 0, 8), COLOR_DISABLED)
+		b.AnchorPoint = Vector2.new(1, 0)
 		b.TextSize = 13
 		return b
 	end
-	local release = button(60, -6)
-	local roll = button(70, -70)
-	local train = button(98, -144)
-	local gear = button(56, -246)
+	local release = button(50, -6)
+	local roll = button(64, -60)
+	roll.RichText = true
+	local train = button(118, -128)
 
-	return { frame = row, info = info, gearText = gearText, train = train, roll = roll, release = release, gear = gear }
+	-- Gear tiles.
+	local tiles = {}
+	for index, gearSlot in GameConfig.GearSlots do
+		local tile = makeButton(row, UDim2.new(1 / 3, -8, 0, 78), UDim2.new((index - 1) / 3, 6 - (index - 1) * 2, 0, 76), Color3.fromRGB(26, 30, 30))
+		tile.Text = ""
+		tile.AutoButtonColor = true
+		local tileStroke = Art.stroke(tile, COLOR_DIM, 1.5, 0.3)
+		local picture = makeFrame(tile, UDim2.fromOffset(56, 56), UDim2.fromOffset(8, 11), Color3.fromRGB(14, 12, 10))
+		picture.BackgroundTransparency = 0.3
+		addCorner(picture, 6)
+		local name = makeText(tile, UDim2.new(1, -76, 0, 22), UDim2.fromOffset(70, 6), COLOR_TEXT, 15)
+		name.TextTruncate = Enum.TextTruncate.AtEnd
+		name.TextWrapped = false
+		local rarityLabel = makeText(tile, UDim2.new(1, -76, 0, 16), UDim2.fromOffset(70, 28), COLOR_DIM, 11)
+		rarityLabel.Font = Enum.Font.GothamBold
+		rarityLabel.RichText = true
+		rarityLabel.TextWrapped = false
+		local tileStats = makeText(tile, UDim2.new(1, -76, 0, 22), UDim2.fromOffset(70, 48), COLOR_TEXT, 14)
+		tileStats.RichText = true
+		tileStats.Font = Enum.Font.GothamBold
+		tiles[gearSlot] = { button = tile, stroke = tileStroke, picture = picture, name = name, rarity = rarityLabel, stats = tileStats }
+	end
+	-- gear is kept as a hidden button so older code paths still work.
+	local gear = makeButton(row, UDim2.fromOffset(1, 1), UDim2.fromOffset(0, 0), COLOR_DISABLED)
+	gear.Visible = false
+
+	return {
+		frame = row,
+		edge = edge,
+		up = up,
+		down = down,
+		portrait = portraitStroke,
+		glyph = glyph,
+		info = info,
+		statsText = statsText,
+		gearText = statsText,
+		train = train,
+		roll = roll,
+		release = release,
+		gear = gear,
+		tiles = tiles,
+	}
 end
 
 local youRow = makeCrewRow(nextOrder())
 youRow.train.Visible = false
 youRow.roll.Visible = false
 youRow.release.Visible = false
--- The you row has only the Gear button, so it sits on the right.
-youRow.gear.Position = UDim2.new(1, -6, 0.5, 0)
-youRow.gearText.Size = UDim2.new(0.7, -76, 1, -8)
-youRow.gear.Activated:Connect(function()
-	openEquipWindow(0)
-end)
+youRow.up.Visible = false
+youRow.down.Visible = false
+youRow.glyph.Text = "\u{1F451}"
+for _, tile in youRow.tiles do
+	tile.button.Activated:Connect(function()
+		openEquipWindow(0)
+	end)
+end
 
 local crewRows = {}
 for slot = 1, GameConfig.MaxSoldierSlots do
 	local row = makeCrewRow(nextOrder())
 	crewRows[slot] = row
+	-- On an empty slot this button is RECRUIT: one roll for the slot.
 	row.train.Activated:Connect(function()
-		send("Train", tostring(slot))
-	end)
-	-- One roll for this slot (set up by the draw code below). Auto roll
-	-- lives in its own window.
-	row.roll.Activated:Connect(function()
-		if row.rollId then
-			send("Roll", row.rollId)
+		if row.empty then
+			if row.rollId then
+				send("Roll", row.rollId)
+			end
+		elseif ui and ui.offerTrain then
+			ui.offerTrain(slot)
 		end
 	end)
+	-- Auto: opens the auto roll window for this slot. Without the pass it
+	-- shows as disabled and opens the pass popup instead.
+	row.roll.Activated:Connect(function()
+		if ownsAutoRoll then
+			openRecruitWindow(slot)
+		elseif ui and ui.offerPass then
+			ui.offerPass("autoroll")
+		end
+	end)
+	row.up.Activated:Connect(function()
+		send("MoveSoldier", `{slot}:up`)
+	end)
+	row.down.Activated:Connect(function()
+		send("MoveSoldier", `{slot}:down`)
+	end)
+	for _, tile in row.tiles do
+		tile.button.Activated:Connect(function()
+			openEquipWindow(slot)
+		end)
+	end
 	row.release.Activated:Connect(function()
 		send("Release", tostring(slot))
 	end)
@@ -1130,106 +1346,13 @@ unlockButton.Activated:Connect(function()
 	send("Slot")
 end)
 
--- Inventory: tabs for gear by slot and for trophies, and a rarity filter.
-local INVENTORY_TABS = { "All", "Weapon", "Armor", "Mount", "Sets", "Trophies" }
-local inventoryTab = "All"
-local inventoryRarity = 0 -- 0 shows every rarity, otherwise the lowest rank shown
 local redraw -- draws the last state again; defined after draw()
-local tabButtons = makeButtonRow(pages.Inventory, nextOrder(), "", INVENTORY_TABS)
-local filterInfo, filterButton = makeRow(pages.Inventory, nextOrder(), 44, true)
-filterInfo.TextColor3 = COLOR_DIM
-filterButton.Activated:Connect(function()
-	inventoryRarity = (inventoryRarity + 1) % (#GameConfig.Rarities + 1)
-	redraw()
-end)
-for index, tab in INVENTORY_TABS do
-	tabButtons[index].Activated:Connect(function()
-		inventoryTab = tab
-		redraw()
-	end)
-end
-local armorySummary = makeRow(pages.Inventory, nextOrder(), 50, false)
-armorySummary.TextColor3 = COLOR_DIM
-
-local trophyRows = {}
-for _, trophy in GameConfig.Trophies do
-	local info, button = makeRow(pages.Inventory, nextOrder(), 52, true)
-	info.RichText = true
-	button.AutoButtonColor = false
-	trophyRows[trophy.id] = { info = info, button = button }
-end
-local setRows = {}
-for _, set in GameConfig.GearSets do
-	local info, button = makeRow(pages.Inventory, nextOrder(), 70, true)
-	info.RichText = true
-	info.TextSize = 13
-	button.AutoButtonColor = false
-	setRows[set.id] = { info = info, button = button }
-end
-local gearRows = {}
-for index = 1, GameConfig.MaxGearOwned + StoreConfig.ArmoryExtra do
-	local row = makeItemRow(pages.Inventory, nextOrder())
-	row.uid = nil
-	gearRows[index] = row
-	row.button.Activated:Connect(function()
-		if row.uid then
-			send("Sell", row.uid)
-		end
-	end)
-end
-
--- Foes: a fight panel for the chosen stage, then every stage by house,
--- then the token shop.
-local foeSummary = makeRow(pages.Foes, nextOrder(), 50, false)
-foeSummary.RichText = true
-
-local fightInfo, fightButton = makeRow(pages.Foes, nextOrder(), 132, true)
-fightInfo.RichText = true
-fightInfo.Size = UDim2.new(1, -(BUTTON_WIDTH + 26), 0, 74)
-local fightPanel = fightInfo.Parent
-fightPanel.BackgroundColor3 = Color3.fromRGB(58, 44, 40)
-local yourFightBar = makeBar(fightPanel, UDim2.new(0.5, -(BUTTON_WIDTH / 2 + 22), 0, 18), UDim2.new(0, 10, 1, -48), COLOR_HEALTH)
-local foeFightBar = makeBar(fightPanel, UDim2.new(0.5, -(BUTTON_WIDTH / 2 + 22), 0, 18), UDim2.new(0.5, -(BUTTON_WIDTH / 2 - 6), 1, -48), COLOR_ACTION)
-
-local selectedStage = nil -- stage id the fight panel shows
-fightButton.Activated:Connect(function()
-	if selectedStage then
-		send("Fight", selectedStage)
+-- Warband header: GEAR SETS opens the Inventory on its Sets tab.
+warbandButtons[1].Activated:Connect(function()
+	if ui and ui.openInventory then
+		ui.openInventory("Sets")
 	end
 end)
-
-local stageRows = {}
-do
-	local lastHouse = nil
-	for _, stage in GameConfig.Stages do
-		if stage.houseName ~= lastHouse then
-			lastHouse = stage.houseName
-			makeHeading(pages.Foes, nextOrder(), stage.houseName)
-		end
-		local info, button = makeRow(pages.Foes, nextOrder(), 56, true)
-		info.RichText = true
-		stageRows[stage.id] = { info = info, button = button }
-		button.Activated:Connect(function()
-			selectedStage = stage.id
-			pages.Foes.CanvasPosition = Vector2.new(0, 0)
-		end)
-	end
-end
-
-makeHeading(pages.Foes, nextOrder(), "Token shop")
-local tokenRows = {}
-do
-	local tokenGrid = makeGrid(pages.Foes, nextOrder(), 96, 3)
-	for _, item in GameConfig.TokenShop do
-		local info, button = makeCard(tokenGrid)
-		info.Text = `<b>{item.name}</b>\n{item.note}`
-		info.RichText = true
-		tokenRows[item.id] = button
-		button.Activated:Connect(function()
-			send("TokenBuy", item.id)
-		end)
-	end
-end
 
 -- Shop: Robux items at the top, then things bought with Crowns.
 local function robuxText(price: number): string
@@ -1247,12 +1370,22 @@ local isModalOpen, closeModal
 do
 	-- width and height are optional; the default is 680 x 560.
 	local MODALS = {
-		{ key = "Profile", title = "Profile" },
+		{ key = "Profile", title = "Profile", width = 900, height = 560 },
+		{ key = "Settings", title = "Settings", width = 620, height = 560 },
+		{ key = "Stats", title = "Stats", width = 720, height = 560 },
+		{ key = "Updates", title = "Updates", width = 640, height = 560 },
+		{ key = "Item", title = "Item", width = 560, height = 520 },
 		{ key = "Rebirth", title = "Rebirth" },
 		{ key = "Mail", title = "Mail" },
-		{ key = "AutoQuest", title = "Auto quests", width = 520, height = 400 },
+		{ key = "AutoQuest", title = "Auto quests", width = 760, height = 560 },
 		{ key = "AutoBuy", title = "Auto-buy", width = 600, height = 560 },
-		{ key = "Amount", title = "How many?", width = 440, height = 300 },
+		{ key = "Amount", title = "How many?", width = 440, height = 330 },
+		{ key = "Skills", title = "Skill points", width = 640, height = 590 },
+		{ key = "Pass", title = "Game pass", width = 520, height = 300 },
+		{ key = "ChestOdds", title = "Chest odds", width = 560, height = 580 },
+		{ key = "Train", title = "Train soldier", width = 520, height = 470 },
+		{ key = "Holding", title = "Holding", width = 520, height = 470 },
+		{ key = "IncomeBonus", title = "Income bonus", width = 460, height = 420 },
 	}
 	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560
 
@@ -1267,22 +1400,27 @@ do
 	local shade = makeButton(popupGui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), Color3.new(0, 0, 0))
 	shade.BackgroundTransparency = 0.45
 	shade.AutoButtonColor = false
+	shade:SetAttribute("NoGlow", true)
 	shade.Text = ""
 
 	local window = makeFrame(popupGui, UDim2.fromOffset(DEFAULT_WIDTH, DEFAULT_HEIGHT), UDim2.fromScale(0.5, 0.5), COLOR_PANEL)
 	window.AnchorPoint = Vector2.new(0.5, 0.5)
 	window.Active = true
 	addCorner(window, 10)
-	local windowStroke = Instance.new("UIStroke")
-	windowStroke.Color = COLOR_HEADER
-	windowStroke.Thickness = 1.5
-	windowStroke.Parent = window
+	Art.panel(window)
 	local windowScale = Instance.new("UIScale")
 	windowScale.Parent = window
 
-	local titleLabel = makeText(window, UDim2.new(1, -80, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
-	titleLabel.Font = Enum.Font.GothamBlack
-	local closeButton = makeButton(window, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
+	-- A red ribbon across the top for the title.
+	local ribbon = makeFrame(window, UDim2.new(1, -40, 0, 40), UDim2.fromOffset(20, 8), Art.Colors.blood)
+	addCorner(ribbon, 8)
+	Art.gloss(ribbon, 1, 0.65)
+	Art.stroke(ribbon, COLOR_GOLD, 1.5, 0.2)
+	local titleIcon = Art.icon(window, "", 28, UDim2.fromOffset(30, 14))
+	local titleLabel = makeText(window, UDim2.new(1, -130, 0, 34), UDim2.fromOffset(66, 11), Art.Colors.goldLight, 30)
+	titleLabel.Font = Art.Fonts.title
+	titleLabel.TextStrokeTransparency = 0.4
+	local closeButton = makeButton(window, UDim2.fromOffset(32, 32), UDim2.new(1, -58, 0, 12), COLOR_ACTION)
 	closeButton.Text = "X"
 	closeButton.TextSize = 18
 
@@ -1328,7 +1466,8 @@ do
 		local width, height = DEFAULT_WIDTH, DEFAULT_HEIGHT
 		for _, modal in MODALS do
 			if modal.key == key then
-				titleLabel.Text = string.upper(title or modal.title)
+				titleLabel.Text = title or modal.title
+				Art.setIcon(titleIcon, if Art.Icons[key] then key else "scroll")
 				width = modal.width or DEFAULT_WIDTH
 				height = modal.height or DEFAULT_HEIGHT
 			end
@@ -1337,7 +1476,14 @@ do
 		-- Shrink the window on small screens so it always fits.
 		local camera = workspace.CurrentCamera
 		local view = if camera then camera.ViewportSize else Vector2.new(1280, 720)
-		windowScale.Scale = math.clamp(math.min((view.X - 20) / width, (view.Y - 40) / height), 0.5, 1)
+		local fit = math.clamp(math.min((view.X - 20) / width, (view.Y - 40) / height), 0.5, 1)
+		if not popupGui.Enabled then
+			-- Pop in when the window opens.
+			windowScale.Scale = fit * 0.85
+			Art.tween(windowScale, 0.22, { Scale = fit }, Enum.EasingStyle.Back)
+		else
+			windowScale.Scale = fit
+		end
 		popupGui.Enabled = true
 		redraw()
 	end
@@ -1353,6 +1499,10 @@ end
 -- Pages that live in their own modules. Each gets the shared helpers in
 -- `ui`, builds its widgets once and draws every state.
 ui = {
+	art = Art,
+	itemArt = ItemArt,
+	crewRows = crewRows,
+	classGlyphs = CLASS_GLYPHS,
 	pages = pages,
 	player = player,
 	colors = {
@@ -1384,6 +1534,7 @@ ui = {
 	setBadge = setBadge,
 	send = send,
 	nextOrder = nextOrder,
+	playtimeOrder = playtimeOrder,
 	formatLong = formatLong,
 	formatClock = formatClock,
 	rarityName = rarityName,
@@ -1395,6 +1546,9 @@ ui = {
 	openModal = function(key: string, title: string?)
 		openModal(key, title)
 	end,
+	showPage = function(name: string)
+		showPage(name)
+	end,
 	closeModal = function()
 		closeModal()
 	end,
@@ -1403,7 +1557,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -1418,526 +1572,12 @@ showPage("Quests")
 local lastState = nil
 local refreshRecruitWindow -- defined further down, with the recruit window
 
--- Shop and Royal Pass pages, built and drawn inside one block so their
--- widgets do not count toward the main chunk's limit of 200 locals.
-local drawStore
-do
-	local shopSummary = makeRow(pages.Shop, nextOrder(), 50, false)
-	shopSummary.RichText = true
-
-	local productRows = {}
-	local function makeProductRow(product, grid: Instance?)
-		local info, button
-		if grid then
-			info, button = makeCard(grid)
-		else
-			info, button = makeRow(pages.Shop, nextOrder(), 60, true)
-		end
-		info.RichText = true
-		productRows[product.key] = { info = info, button = button, frame = info.Parent }
-		button.Activated:Connect(function()
-			send("Robux", "product:" .. product.key)
-		end)
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Crowns")
-	local crownGrid = makeGrid(pages.Shop, nextOrder(), 96, 4)
-	for _, product in StoreConfig.Products do
-		if product.group == "crowns" then
-			makeProductRow(product, crownGrid)
-		end
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Special offers")
-	local packGrid = makeGrid(pages.Shop, nextOrder(), 136, 3)
-	for _, product in StoreConfig.Products do
-		if product.group == "pack" then
-			makeProductRow(product, packGrid)
-		end
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Tithe Chest")
-	for _, product in StoreConfig.Products do
-		if product.group == "tithe" then
-			makeProductRow(product, nil)
-		end
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Game passes (yours forever)")
-	local passRows = {}
-	local passGrid = makeGrid(pages.Shop, nextOrder(), 124, 3)
-	for _, pass in StoreConfig.Passes do
-		local info, button = makeCard(passGrid)
-		info.RichText = true
-		info.Text = `<b>{pass.name}</b>\n{pass.note}`
-		passRows[pass.key] = button
-		button.Activated:Connect(function()
-			send("Robux", "pass:" .. pass.key)
-		end)
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Crown shop")
-	local crownRows = {}
-	local crownShopGrid = makeGrid(pages.Shop, nextOrder(), 96, 3)
-	for _, item in StoreConfig.CrownShop do
-		local info, button = makeCard(crownShopGrid)
-		info.RichText = true
-		info.Text = `<b>{item.name}</b>\n{item.note}`
-		crownRows[item.key] = button
-		button.Activated:Connect(function()
-			send("CrownBuy", item.key)
-		end)
-	end
-
-	makeHeading(pages.Shop, nextOrder(), "Royal Coffers (random gear, odds shown)")
-	local cofferRows = {}
-	local cofferGrid = makeGrid(pages.Shop, nextOrder(), 124, 2)
-	for _, coffer in StoreConfig.Coffers do
-		local info, button = makeCard(cofferGrid)
-		info.RichText = true
-		cofferRows[coffer.key] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("Coffer", coffer.key)
-		end)
-	end
-
-	-- Royal Pass: progress, weekly challenges, then every tier.
-	local passInfo, nobleButton = makeRow(pages["Royal Pass"], nextOrder(), 74, true)
-	passInfo.RichText = true
-	nobleButton.Activated:Connect(function()
-		send("Robux", "product:passPremium")
-	end)
-
-	local passBarRow = makeFrame(pages["Royal Pass"], UDim2.new(1, -10, 0, 30), UDim2.fromOffset(0, 0), COLOR_ROW)
-	passBarRow.LayoutOrder = nextOrder()
-	addCorner(passBarRow, 6)
-	local passBar = makeBar(passBarRow, UDim2.new(1, -20, 0, 18), UDim2.fromOffset(10, 6), COLOR_GOLD)
-
-	local passButtons = makeButtonRow(pages["Royal Pass"], nextOrder(), "", { "Claim all", "Buy a tier" })
-	passButtons[1].Activated:Connect(function()
-		send("PassClaim", "all")
-	end)
-	passButtons[2].Activated:Connect(function()
-		send("PassSkip")
-	end)
-
-	makeHeading(pages["Royal Pass"], nextOrder(), "Weekly challenges")
-	local challengeRows = {}
-	for _, challenge in StoreConfig.WeeklyChallenges do
-		local info, button = makeRow(pages["Royal Pass"], nextOrder(), 46, true)
-		info.RichText = true
-		challengeRows[challenge.key] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("WeeklyClaim", challenge.key)
-		end)
-	end
-
-	makeHeading(pages["Royal Pass"], nextOrder(), "Rewards")
-	local tierRows = {}
-	for tier = 1, StoreConfig.PassTiers do
-		local info, button = makeRow(pages["Royal Pass"], nextOrder(), 46, true)
-		info.RichText = true
-		tierRows[tier] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("PassClaim", tostring(tier))
-		end)
-	end
-
-	drawStore = function(state)
-		local crowns = state.crowns
-		local ownedPasses = 0
-		for _ in state.passes do
-			ownedPasses += 1
-		end
-		shopSummary.Text = `<b>{crowns} Crowns</b>   |   {ownedPasses} of {#StoreConfig.Passes} game passes owned\n`
-			.. "Crowns buy refills, boosts, coffers and Royal Pass tiers. Robux buttons open the Roblox purchase window."
-
-		for _, product in StoreConfig.Products do
-			local row = productRows[product.key]
-			if not row then
-				continue
-			end
-			if product.group == "crowns" then
-				local tag = if product.tag then `   <font color="#F0C85A">{product.tag}</font>` else ""
-				row.info.Text = `<b>{product.name}</b>{tag}\n{product.crowns} Crowns`
-				setButton(row.button, robuxText(product.price), true, COLOR_BUY)
-			elseif product.group == "pack" then
-				local bought = state.packsBought[product.key] == true
-				local secondsLeft = if product.hours then product.hours * 3600 - state.secondsSinceFirstVisit else 0
-				local expired = product.hours ~= nil and secondsLeft <= 0
-				row.frame.Visible = bought or not expired
-				local when = product.note
-				if product.hours and not bought then
-					when = `Ends in {formatLong(secondsLeft)}`
-				end
-				row.info.Text = `<b>{product.name}</b>   {when}\n{StoreConfig.describeList(product.rewards)}`
-				if bought then
-					setButton(row.button, "Owned", false, COLOR_BUY)
-				elseif product.level and state.level < product.level then
-					setButton(row.button, `Level {product.level}`, false, COLOR_BUY)
-				else
-					setButton(row.button, robuxText(product.price), true, COLOR_BUY)
-				end
-			elseif product.group == "tithe" then
-				row.info.Text = `<b>Tithe Chest: {state.tithe} / {StoreConfig.TitheMax} Crowns</b>\n`
-					.. `Fills as you play: 1 Crown per {StoreConfig.TitheEnergyPerCrown} quest energy and {StoreConfig.TitheCrownsPerFoe} per foe beaten. `
-					.. `Break it once it holds {StoreConfig.TitheMinToBreak}.`
-				setButton(row.button, `Break\n{robuxText(product.price)}`, state.tithe >= StoreConfig.TitheMinToBreak, COLOR_BUY)
-			end
-		end
-
-		for _, pass in StoreConfig.Passes do
-			local owned = state.passes[pass.key] == true
-			setButton(passRows[pass.key], if owned then "Owned" else robuxText(pass.price), not owned, COLOR_BUY)
-		end
-
-		for _, item in StoreConfig.CrownShop do
-			setButton(crownRows[item.key], `Buy\n{item.cost} Crowns`, crowns >= item.cost, COLOR_BUY)
-		end
-
-		for _, coffer in StoreConfig.Coffers do
-			local row = cofferRows[coffer.key]
-			local odds = {}
-			for _, pair in coffer.odds do
-				local label = rarityName({ rarity = pair[1], name = "" })
-				table.insert(odds, `{label}{pair[2]}%`)
-			end
-			local left = coffer.pityEvery - (state.pity[coffer.key] or 0)
-			row.info.Text = `<b>{coffer.name}</b>: one piece of gear at your level\n{table.concat(odds, "   ")}\n`
-				.. `{coffer.pityRarity} or better guaranteed within {left} opens`
-			setButton(row.button, `Open\n{coffer.cost} Crowns`, crowns >= coffer.cost, COLOR_BUY)
-		end
-
-		-- Royal Pass
-		local pass = state.pass
-		local tier = StoreConfig.getTier(pass.points)
-		local maxTier = StoreConfig.PassTiers
-		local season = pass.season + 1
-		passInfo.Text = `<b>ROYAL PASS, SEASON {season}</b>   Ends in {formatLong(state.passSecondsLeft)}\n`
-			.. `Tier {tier} of {maxTier}. Earn points from quests, foes, playtime rewards and weekly challenges. `
-			.. (if pass.noble then "<font color=\"#F0C85A\">Noble track unlocked.</font>" else "The Noble track adds a second reward to every tier.")
-		if pass.noble then
-			setButton(nobleButton, "Noble\nunlocked", false, COLOR_GOLD)
-		else
-			local product = StoreConfig.getProduct("passPremium")
-			setButton(nobleButton, `Unlock Noble\n{robuxText(product and product.price or 0)}`, true, COLOR_SELECTED)
-		end
-		if tier >= maxTier then
-			setBar(passBar, 1, 1, "Every tier reached")
-		else
-			local into = pass.points - tier * StoreConfig.PointsPerTier
-			setBar(passBar, into, StoreConfig.PointsPerTier, `{into} / {StoreConfig.PointsPerTier} points to tier {tier + 1}`)
-		end
-
-		local claimable = 0
-		for index = 1, maxTier do
-			local key = tostring(index)
-			local rewards = StoreConfig.PassRewards[index]
-			local freeDone = pass.claimedFree[key] == true
-			local nobleDone = pass.claimedNoble[key] == true
-			local reached = index <= tier
-			local function part(label: string, reward, done: boolean, locked: boolean): string
-				local text = `{label}: {StoreConfig.describe(reward)}`
-				if done then
-					return `<font color="#9FD49A">{text} (claimed)</font>`
-				elseif locked then
-					return `<font color="#8C918A">{text}</font>`
-				end
-				return text
-			end
-			local row = tierRows[index]
-			row.info.Text = `<b>Tier {index}</b>\n{part("Free", rewards.free, freeDone, false)}   |   {part("Noble", rewards.noble, nobleDone, not pass.noble)}`
-			local open = reached and (not freeDone or (pass.noble and not nobleDone))
-			if open then
-				claimable += 1
-				setButton(row.button, "Claim", true, COLOR_CLAIM)
-			elseif reached then
-				setButton(row.button, "Claimed", false, COLOR_BUY)
-			else
-				setButton(row.button, "Locked", false, COLOR_BUY)
-			end
-		end
-		setButton(passButtons[1], if claimable > 0 then `Claim all ({claimable})` else "Claim all", claimable > 0, COLOR_CLAIM)
-		setButton(passButtons[2], `Buy a tier ({StoreConfig.TierSkipCost} Crowns)`, tier < maxTier and crowns >= StoreConfig.TierSkipCost, COLOR_SELECTED)
-
-		local weekly = state.weekly
-		for _, challenge in StoreConfig.WeeklyChallenges do
-			local row = challengeRows[challenge.key]
-			local value = math.min(challenge.goal, weekly[challenge.stat] or 0)
-			local shown = if challenge.stat == "play"
-				then `{math.floor(value / 60)} / {math.floor(challenge.goal / 60)} min`
-				else `{value} / {challenge.goal}`
-			row.info.Text = `<b>{challenge.name}</b>   +{challenge.points} points\n{shown}   |   New challenges in {formatLong(state.weekSecondsLeft)}`
-			if weekly.claimed[challenge.key] then
-				setButton(row.button, "Done", false, COLOR_BUY)
-			else
-				setButton(row.button, "Claim", value >= challenge.goal, COLOR_CLAIM)
-			end
-		end
-
-		-- Red-dot style counts on the rail.
-		local weeklyReady = 0
-		for _, challenge in StoreConfig.WeeklyChallenges do
-			if not state.weekly.claimed[challenge.key] and (state.weekly[challenge.stat] or 0) >= challenge.goal then
-				weeklyReady += 1
-			end
-		end
-		setBadge("Royal Pass", claimable + weeklyReady)
-	end
-end
-
--- Bounties, Festival and Research pages, built and drawn in one block.
--- drawLoop returns how many things are ready to claim on Bounties and
--- Festival, for the menu badges.
-local drawLoop
-do
-	-- Bounties: login streak, daily and weekly tasks, and the Seal shop.
-	makeHeading(pages.Bounties, nextOrder(), "Login streak")
-	local streakCards = {}
-	local streakGrid = makeGrid(pages.Bounties, nextOrder(), 88, 4)
-	for day, reward in BountyConfig.Streak do
-		local info, button = makeCard(streakGrid)
-		info.RichText = true
-		info.Text = `<b>Day {day}</b>\n{StoreConfig.describe(reward)}`
-		streakCards[day] = button
-		button.Activated:Connect(function()
-			send("StreakClaim")
-		end)
-	end
-
-	local bountySummary = makeRow(pages.Bounties, nextOrder(), 44, false)
-	bountySummary.RichText = true
-
-	local dailyHeading = makeText(pages.Bounties, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 14)
-	dailyHeading.LayoutOrder = nextOrder()
-	dailyHeading.Font = Enum.Font.GothamBold
-	local bountyRows = {}
-	for _, task in BountyConfig.Daily do
-		local info, button = makeRow(pages.Bounties, nextOrder(), 46, true)
-		info.RichText = true
-		bountyRows[task.key] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("BountyClaim", task.key)
-		end)
-	end
-	local weeklyHeading = makeText(pages.Bounties, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(0, 0), COLOR_HEADER, 14)
-	weeklyHeading.LayoutOrder = nextOrder()
-	weeklyHeading.Font = Enum.Font.GothamBold
-	for _, task in BountyConfig.Weekly do
-		local info, button = makeRow(pages.Bounties, nextOrder(), 46, true)
-		info.RichText = true
-		bountyRows[task.key] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("BountyClaim", task.key)
-		end)
-	end
-
-	makeHeading(pages.Bounties, nextOrder(), "Seal shop (stock refills every Monday)")
-	local sealRows = {}
-	local sealGrid = makeGrid(pages.Bounties, nextOrder(), 96, 3)
-	for _, item in BountyConfig.Shop do
-		local info, button = makeCard(sealGrid)
-		info.RichText = true
-		sealRows[item.key] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("SealBuy", item.key)
-		end)
-	end
-
-	-- Festival: this week's festival, milestones and the leaderboard.
-	local festivalInfo = makeRow(pages.Festival, nextOrder(), 92, false)
-	festivalInfo.RichText = true
-
-	makeHeading(pages.Festival, nextOrder(), "Milestones")
-	local milestoneRows = {}
-	local milestoneGrid = makeGrid(pages.Festival, nextOrder(), 88, 4)
-	for index, milestone in FestivalConfig.Milestones do
-		local info, button = makeCard(milestoneGrid)
-		info.RichText = true
-		info.Text = `<b>{milestone.points} points</b>\n{StoreConfig.describe(milestone.reward)}`
-		milestoneRows[index] = button
-		button.Activated:Connect(function()
-			send("FestivalMilestone", tostring(index))
-		end)
-	end
-
-	makeHeading(pages.Festival, nextOrder(), "Leaderboard (all servers, updates every minute)")
-	local leaderText = makeRow(pages.Festival, nextOrder(), 20 * FestivalConfig.LeaderboardSize + 16, false)
-	leaderText.RichText = true
-	leaderText.TextYAlignment = Enum.TextYAlignment.Top
-
-	makeHeading(pages.Festival, nextOrder(), "Rank rewards (paid next week)")
-	local rankText = makeRow(pages.Festival, nextOrder(), 20 * #FestivalConfig.RankRewards + 16, false)
-	rankText.TextYAlignment = Enum.TextYAlignment.Top
-	do
-		local lines = {}
-		for _, entry in FestivalConfig.RankRewards do
-			table.insert(lines, `{entry.label}: {StoreConfig.describeList(entry.rewards)}`)
-		end
-		lines[#lines] ..= ` (with at least {FestivalConfig.MinPointsForReward} points)`
-		rankText.Text = table.concat(lines, "\n")
-	end
-
-	-- Research: what is running, then every tech by branch.
-	local researchInfo, researchFinish = makeRow(pages.Research, nextOrder(), 56, true)
-	researchInfo.RichText = true
-	researchFinish.Activated:Connect(function()
-		send("ResearchFinish")
-	end)
-	local techRows = {}
-	for _, branch in ResearchConfig.Branches do
-		makeHeading(pages.Research, nextOrder(), branch.name)
-		local grid = makeGrid(pages.Research, nextOrder(), 128, 3)
-		for _, tech in branch.techs do
-			local info, button = makeCard(grid)
-			info.RichText = true
-			info.TextSize = 12
-			techRows[tech.key] = { info = info, button = button }
-			button.Activated:Connect(function()
-				send("Research", tech.key)
-			end)
-		end
-	end
-
-	drawLoop = function(state): (number, number)
-		local bounty = state.bounty
-		local bountyReady = 0
-
-		-- Login streak
-		for day, button in streakCards do
-			if state.streakReady and day == state.streakDay then
-				bountyReady += 1
-				setButton(button, "Claim", true, COLOR_CLAIM)
-			elseif day < state.streakDay or (not state.streakReady and day == state.streakDay) then
-				setButton(button, "Claimed", false, COLOR_CLAIM)
-			else
-				setButton(button, `Day {day}`, false, COLOR_CLAIM)
-			end
-		end
-
-		local dayLeft = 86400 - os.time() % 86400
-		bountySummary.Text = `<b>{state.seals} Seals</b>   |   Finish bounties for Seals, then spend them in the Seal shop below.`
-		dailyHeading.Text = `DAILY BOUNTIES   (new ones in {formatLong(dayLeft)})`
-		weeklyHeading.Text = `WEEKLY BOUNTIES   (new ones in {formatLong(state.weekSecondsLeft)})`
-		local function drawTask(task, counts)
-			local row = bountyRows[task.key]
-			local value = math.min(task.goal, counts[task.stat] or 0)
-			row.info.Text = `<b>{task.name}</b>   +{task.seals} Seals\n{value} / {task.goal}`
-			if bounty.claimed[task.key] then
-				setButton(row.button, "Done", false, COLOR_CLAIM)
-			elseif value >= task.goal then
-				bountyReady += 1
-				setButton(row.button, "Claim", true, COLOR_CLAIM)
-			else
-				setButton(row.button, "Claim", false, COLOR_CLAIM)
-			end
-		end
-		for _, task in BountyConfig.Daily do
-			drawTask(task, bounty.daily)
-		end
-		for _, task in BountyConfig.Weekly do
-			drawTask(task, bounty.weekly)
-		end
-		for _, item in BountyConfig.Shop do
-			local row = sealRows[item.key]
-			local left = item.limit - (bounty.bought[item.key] or 0)
-			row.info.Text = `<b>{item.name}</b>\n{StoreConfig.describe(item.reward)}\n{left} of {item.limit} left this week`
-			if left <= 0 then
-				setButton(row.button, "Sold out", false, COLOR_BUY)
-			else
-				setButton(row.button, `Buy\n{item.cost} Seals`, state.seals >= item.cost, COLOR_BUY)
-			end
-		end
-
-		-- Festival
-		local festivalState = state.festival
-		local festival = FestivalConfig.getFestival(festivalState.week)
-		local festivalReady = 0
-		local pointParts = {}
-		for stat, points in festival.points do
-			table.insert(pointParts, `{stat} +{points}`)
-		end
-		table.sort(pointParts)
-		festivalInfo.Text = `<b>{string.upper(festival.name)}</b>   Ends in {formatLong(state.weekSecondsLeft)}\n`
-			.. `<font color="#F0C450">This week: {festival.bonusText}</font>\n`
-			.. `Your points: <b>{math.floor(festivalState.points)}</b>\n`
-			.. `Points for: {table.concat(pointParts, ", ")}`
-		for index, milestone in FestivalConfig.Milestones do
-			local button = milestoneRows[index]
-			if festivalState.milestones[tostring(index)] then
-				setButton(button, "Claimed", false, COLOR_CLAIM)
-			elseif festivalState.points >= milestone.points then
-				festivalReady += 1
-				setButton(button, "Claim", true, COLOR_CLAIM)
-			else
-				setButton(button, `{math.floor(festivalState.points)} / {milestone.points}`, false, COLOR_CLAIM)
-			end
-		end
-		local lines = {}
-		for index, entry in state.festivalTop do
-			local name = entry[1]
-			if name == player.Name then
-				name = `<b>{name} (you)</b>`
-			end
-			table.insert(lines, `#{index}   {name}   {Format.short(entry[2])}`)
-		end
-		if #lines == 0 then
-			table.insert(lines, "No scores yet this week. The board fills in once games save (about every minute).")
-		end
-		leaderText.Text = table.concat(lines, "\n")
-
-		-- Research
-		local research = state.research
-		local busy = research.active ~= ""
-		if busy then
-			local tech = ResearchConfig.Techs[research.active]
-			local level = (research.levels[research.active] or 0) + 1
-			researchInfo.Text = `<b>Researching {tech and tech.name or research.active} level {level}</b>\n`
-				.. `Done in {formatLong(state.researchLeft)}. Research keeps going while you are away.`
-			local cost = ResearchConfig.getFinishCost(state.researchLeft)
-			setButton(researchFinish, `Finish now\n{cost} Crowns`, state.crowns >= cost, COLOR_SELECTED)
-		else
-			researchInfo.Text = "<b>The scholars are idle.</b>\nPick a research below. Only one runs at a time."
-			setButton(researchFinish, "Idle", false, COLOR_SELECTED)
-		end
-		for key, row in techRows do
-			local tech = ResearchConfig.Techs[key]
-			local level = research.levels[key] or 0
-			local nowText = if level > 0 then ResearchConfig.describe(tech, level) else "nothing yet"
-			local text = `<b>{tech.name}</b>   Lv {level} / {tech.maxLevel}\nNow: {nowText}`
-			local locked = false
-			if tech.needs and (research.levels[tech.needs[1]] or 0) < tech.needs[2] then
-				local need = ResearchConfig.Techs[tech.needs[1]]
-				text ..= `\n<font color="#C8846E">Needs {need and need.name or tech.needs[1]} level {tech.needs[2]}</font>`
-				locked = true
-			elseif level < tech.maxLevel then
-				text ..= `\nNext: {ResearchConfig.describe(tech, level + 1)}, {formatLong(ResearchConfig.getSeconds(tech, level))}`
-			end
-			row.info.Text = text
-			if level >= tech.maxLevel then
-				setButton(row.button, "Fully researched", false, COLOR_BUY)
-			elseif research.active == key then
-				setButton(row.button, `In progress\n{formatLong(state.researchLeft)}`, false, COLOR_BUY)
-			elseif locked then
-				setButton(row.button, "Locked", false, COLOR_BUY)
-			else
-				local cost = ResearchConfig.getCost(tech, level)
-				setButton(row.button, `Research\n{Format.short(cost)}`, not busy and state.gold >= cost, COLOR_BUY)
-			end
-		end
-
-		return bountyReady, festivalReady
-	end
-end
+-- Shop: the page is built in ShopPage.luau.
 
 local function draw(state)
 	lastState = state
 	local stats = state.stats
 	local gold = state.gold
-	drawStore(state)
-	local bountyReady, festivalReady = drawLoop(state)
-	setBadge("Bounties", bountyReady)
-	setBadge("Festival", festivalReady)
 	for _, module in pageModules do
 		module.draw(state, ui)
 	end
@@ -1948,13 +1588,25 @@ local function draw(state)
 	nameLabel.Text = `{title}{player.DisplayName}`
 	nameLabel.TextColor3 = if state.passes.charter then COLOR_GOLD else COLOR_HEADER
 	setBar(xpBar, state.xp, state.xpNeeded, `XP {state.xp} / {state.xpNeeded}`)
+	local unspent = state.skillPoints or 0
+	pointsButton.Visible = unspent > 0
+	setButton(pointsButton, `+{Format.short(unspent)} POINTS`, true, COLOR_GOLD)
+	xpBar.fill.Parent.Size = UDim2.fromOffset(if unspent > 0 then 112 else 190, 16)
 	chips.gold.value.Text = Format.short(gold)
 	chips.gold.sub.Text = `Banked {Format.short(state.banked)}`
 	chips.crowns.value.Text = Format.short(state.crowns)
 	chips.crowns.sub.Text = if state.tithe > 0 then `{state.tithe} in Tithe Chest` else "premium"
-	setBar(energyBar, state.energy, stats.maxEnergy, `Energy {state.energy} / {stats.maxEnergy}`)
-	setBar(staminaBar, state.stamina, stats.maxStamina, `Stamina {state.stamina} / {stats.maxStamina}`)
-	setBar(healthBar, state.health, stats.maxHealth, `Health {state.health} / {stats.maxHealth}`)
+	do
+		-- "(+1 0:07)" until the next point, or FULL.
+		local regen = state.regenIn or {}
+		local function regenText(key: string): string
+			local left = regen[key] or 0
+			return if left > 0 then `   (+1 {math.floor(left / 60)}:{string.format("%02d", left % 60)})` else "   (FULL)"
+		end
+		setBar(energyBar, state.energy, stats.maxEnergy, `{state.energy} / {stats.maxEnergy}{regenText("energy")}`)
+		setBar(staminaBar, state.stamina, stats.maxStamina, `{state.stamina} / {stats.maxStamina}{regenText("stamina")}`)
+		setBar(healthBar, state.health, stats.maxHealth, `{state.health} / {stats.maxHealth}{regenText("health")}`)
+	end
 
 	-- Header chips for anything boosting the player right now.
 	local boosts = {}
@@ -1993,174 +1645,6 @@ local function draw(state)
 	end
 	setBadge("Keep", keepCount)
 
-	-- Keep
-	local keep = GameConfig.KeepLevels[state.keep]
-	local nextKeep = GameConfig.KeepLevels[state.keep + 1]
-	local keepText = `<b>{string.upper(keep.name)}</b>   Keep level {state.keep} of {#GameConfig.KeepLevels}\n`
-		.. `Income, attack and defense +{math.floor(keep.bonus * 100)}%`
-	if nextKeep then
-		local keepCost = table.clone(nextKeep.resources or {})
-		keepCost.gold = nextKeep.cost
-		keepText ..= `\nNext: {nextKeep.name}, +{math.floor(nextKeep.bonus * 100)}%. Costs {EstateConfig.describeCost(keepCost, Format.short)} (resources from the Estate).`
-		if state.level < nextKeep.level then
-			setButton(keepButton, `Level {nextKeep.level}\n{Format.short(nextKeep.cost)}`, false, COLOR_BUY)
-		else
-			setButton(keepButton, `Upgrade\n{Format.short(nextKeep.cost)}`, EstateConfig.canPay(keepCost, gold, state.estate.stock), COLOR_BUY)
-		end
-	else
-		setButton(keepButton, "Max level", false, COLOR_BUY)
-	end
-	keepInfo.RichText = true
-	keepInfo.Text = keepText
-
-	keepSummary.Text = `Attack {Format.short(stats.attack)}   |   Defense {Format.short(stats.defense)}   |   Renown {Format.short(state.renown)}\n`
-		.. `Income {Format.short(stats.incomePerHour)}/hr   |   Lots {stats.lotsUsed} / {stats.lots}   |   Soldiers {stats.crewSize} / {#state.crew}\n`
-		.. `Skill points to spend: {state.skillPoints}`
-	local lines = { "Where your attack and defense come from:" }
-	for _, part in stats.breakdown do
-		table.insert(lines, `{part[1]}: {Format.short(part[2])} attack, {Format.short(part[3])} defense`)
-	end
-	breakdownText.Text = table.concat(lines, "\n")
-
-	local played = state.playSeconds
-	playtimeSummary.Text = `Played today: {math.floor(played / 3600)}h {math.floor(played / 60) % 60}m. Rewards reset at 00:00 UTC.`
-	for index, reward in GameConfig.PlaytimeRewards do
-		local row = rewardRows[index]
-		local key = tostring(index)
-		if state.claimed[key] then
-			setButton(row.button, "Claimed", false, COLOR_BUY)
-		elseif played >= reward.minutes * 60 then
-			setButton(row.button, "Claim", true, COLOR_CLAIM)
-		else
-			setButton(row.button, `In {formatClock(reward.minutes * 60 - played)}`, false, COLOR_BUY)
-		end
-	end
-
-	for _, skill in GameConfig.Skills do
-		local row = skillRows[skill.id]
-		local bought = state.skills[skill.id] or 0
-		local cost = GameConfig.getSkillCost(skill, bought)
-		row.info.Text = `{skill.name}  (bought {bought})\n{skill.note}`
-		local pointWord = if cost == 1 then "point" else "points"
-		setButton(row.button, `Add\n{cost} {pointWord}`, state.skillPoints >= cost, COLOR_BUY)
-	end
-
-	-- Quests
-	ownsAutoQuest = state.passes.autoquest == true
-	autoQuestOn = state.autoQuestOn and ownsAutoQuest
-	local autoTarget = GameConfig.pickAutoQuest(state.autoQuestMode, state.level, state.quests, state.autoQuest)
-	local modeName = "Repeat last quest"
-	for _, mode in GameConfig.AutoQuestModes do
-		if mode.id == state.autoQuestMode then
-			modeName = mode.name
-		end
-	end
-	if not ownsAutoQuest then
-		autoQuestInfo.Text = "<b>Auto quests</b>\nThe Quest Herald game pass does quests for you whenever you have the energy."
-	else
-		autoQuestInfo.Text = `<b>Auto quests: {if autoQuestOn then "ON" else "OFF"}</b>   ({modeName})\n`
-			.. (if autoTarget then `Next: <b>{autoTarget.name}</b>, {autoTarget.energy} energy.` else "Do a quest once first.")
-	end
-	setButton(autoQuestButton, if autoQuestOn then "Auto: ON\nSettings" else "Auto quests\nSettings", true, if autoQuestOn then COLOR_CLAIM else COLOR_SELECTED)
-	questBoost.Text = if state.xpBoostLeft > 0 then `Double XP active: {formatClock(state.xpBoostLeft)} left` else ""
-	questBoost.Parent.Visible = state.xpBoostLeft > 0
-	local medalColors = { "#C8844E", "#C9D2DE", "#F0C85A" }
-	for _, quest in GameConfig.Quests do
-		local row = questRows[quest.id]
-		local done = state.quests[quest.id] or 0
-		local rank = GameConfig.getMasteryRank(done)
-		local medals = {}
-		for index, medal in GameConfig.MasteryMedals do
-			local color = if index <= rank then medalColors[index] else "#5A5F5A"
-			table.insert(medals, `<font color="{color}">{medal}</font>`)
-		end
-		local progress = if rank >= GameConfig.MaxMasteryRanks
-			then "Mastered"
-			else `{done % GameConfig.MasteryPerRank}/{GameConfig.MasteryPerRank}`
-		row.info.Text = `<b>{quest.name}</b>\n{quest.energy} energy   {Format.short(GameConfig.getQuestGold(quest, done))} gold   {quest.xp} XP   `
-			.. `{string.format("%.1f", quest.drop * 100)}% gear drop\n{table.concat(medals, "  ")}   {progress}`
-		if state.level < quest.level then
-			setButton(row.button, `Level {quest.level}`, false, COLOR_ACTION)
-		else
-			setButton(row.button, "Do Quest", state.energy >= quest.energy, COLOR_ACTION)
-		end
-	end
-
-	-- Holdings
-	local lotsFull = stats.lotsUsed >= stats.lots
-	holdingSummary.Text = `Income {Format.short(stats.incomePerHour)} gold/hr   |   Lots {stats.lotsUsed} / {stats.lots}{if lotsFull then " (full)" else ""}\n`
-		.. `Holdings earn {math.floor(GameConfig.OfflineRate * 100)}% while you are away. More lots come from skill points in the Keep.`
-	local anyOwned = false
-	for _, holding in GameConfig.Holdings do
-		local count = state.holdings[holding.id] or 0
-		local ownedRow = ownedRows[holding.id]
-		ownedRow.info.Parent.Visible = count > 0
-		if count > 0 then
-			anyOwned = true
-			local income = math.floor(holding.income * count * (1 + stats.keepBonus))
-			ownedRow.info.Text = `{holding.name}  x{count}\n{Format.short(income)} gold/hr`
-			local refund = math.floor(GameConfig.getHoldingCost(holding, count - 1) * GameConfig.DemolishRefund)
-			setButton(ownedRow.button, `Demolish 1\n+{Format.short(refund)}`, true, COLOR_DISABLED)
-		end
-
-		local row = holdingRows[holding.id]
-		local cost = GameConfig.getHoldingCost(holding, count)
-		row.info.Text = `{holding.name}  (you have {count})\n+{Format.short(holding.income)} gold/hr per lot`
-		if state.level < holding.level then
-			setButton(row.button, `Level {holding.level}`, false, COLOR_BUY)
-		elseif lotsFull then
-			setButton(row.button, `Lots full\n{Format.short(cost)}`, false, COLOR_BUY)
-		else
-			setButton(row.button, `Build\n{Format.short(cost)}`, gold >= cost, COLOR_BUY)
-		end
-	end
-	ownedEmpty.Parent.Visible = not anyOwned
-
-	-- Bank
-	bankSummary.Text = `On hand: {Format.short(gold)} gold\nBanked: {Format.short(state.banked)} gold\n`
-		.. `Deposit fee {math.floor(GameConfig.BankFee * 100)}%`
-
-	-- Market
-	marketWindowShown = state.marketWindow
-	marketSummary.Text = `New stock in {formatClock(state.marketRestock)}\nItems roll around your level. Rarer items are stronger and cost more.`
-	for index, row in marketRows do
-		local item = state.market[index]
-		if not item then
-			row.info.Parent.Visible = false
-			continue
-		end
-		row.info.Parent.Visible = true
-		row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)})\n{statText(item.attack, item.defense)}`
-		if item.sold then
-			setButton(row.button, "Sold", false, COLOR_BUY)
-		elseif state.level < item.level then
-			setButton(row.button, `Level {item.level}`, false, COLOR_BUY)
-		else
-			local price = math.floor(item.price * (1 - festivalDiscount(state, "marketPrice")))
-			setButton(row.button, `Buy\n{Format.short(price)}`, gold >= price, COLOR_BUY)
-		end
-	end
-
-	-- Auto-buy
-	local rule = state.autoBuy
-	ownsAutoBuy = state.passes.autobuy == true
-	autoBuyRunning = rule.on and ownsAutoBuy
-	if ownsAutoBuy then
-		autoBuyInfo.Text = `<b>Auto-buy: {if autoBuyRunning then "RUNNING" else "OFF"}</b>   Bought {rule.bought}, spent {Format.short(rule.spent)} gold\n`
-			.. `{rule.minRarity} or better. Buys matching Market items as they appear, while you are in the game.`
-	else
-		autoBuyInfo.Text = "<b>Auto-buy</b>\nThe Market Steward game pass buys gear that matches your rules every restock."
-	end
-	setButton(autoBuyButton, if autoBuyRunning then "Auto: ON\nSettings" else "Auto-buy\nSettings", true, if autoBuyRunning then COLOR_CLAIM else COLOR_SELECTED)
-	local recentLines = { "<b>Recent buys</b>" }
-	for _, buy in rule.recent do
-		table.insert(recentLines, `{rarityName(buy)}   {Format.short(buy.price)} gold`)
-	end
-	if #rule.recent == 0 then
-		table.insert(recentLines, "Nothing yet.")
-	end
-	recentBuys.Text = table.concat(recentLines, "\n")
-
 	-- Warband
 	local crew = state.crew
 	local autoRoll = state.autoRoll
@@ -2168,15 +1652,72 @@ local function draw(state)
 		.. (if autoRoll.on
 			then `Auto roll is on: {autoRoll.tier} recruits until {autoRoll.rarity}, {autoRoll.rolls} rolls so far.`
 			else `Warband size bonus +{math.floor(stats.crewBonus * 100 + 0.5)}% attack and defense`)
-	setButton(autoRollButton, if autoRoll.on then "Auto roll: ON\nSettings" else "Auto roll", true, if autoRoll.on then COLOR_CLAIM else COLOR_ACTION)
+	ownsAutoRoll = state.passes.autoroll == true
+	if ownsAutoRoll then
+		setButton(autoRollButton, if autoRoll.on then "Auto roll: ON\nSettings" else "Auto roll", true, if autoRoll.on then COLOR_CLAIM else COLOR_ACTION)
+	else
+		setButton(autoRollButton, "\u{1F512} Auto roll\nGet pass", false, COLOR_ACTION)
+	end
 
 	equipNewOn = state.autoEquipNew == true
 	setButton(equipButtons[1], "Equip best", true, COLOR_BUY)
 	setButton(equipButtons[2], if equipNewOn then "New gear: put on" else "New gear: keep spare", true, COLOR_SELECTED)
 
-	youRow.info.Text = `<b>You</b>, leader\nAttack {GameConfig.BaseAttack + (state.skills.attack or 0)}, defense {GameConfig.BaseDefense + (state.skills.defense or 0)} before gear`
+	-- Header chips and bar.
+	local filled = 0
+	for _, soldier in crew do
+		if soldier then
+			filled += 1
+		end
+	end
+	warbandChips[1].Text = `{filled} OF {#crew} SOLDIERS`
+	warbandChips[2].Text = `+{Format.short(stats.attack)} ATTACK`
+	warbandChips[3].Text = `+{Format.short(stats.defense)} DEFENSE`
+	warbandChips[4].Text = `SIZE BONUS +{math.floor(stats.crewBonus * 100 + 0.5)}%`
+	warbandButtons[5].Text = if equipNewOn then "NEW GEAR: WEAR" else "NEW GEAR: SPARE"
+	warbandButtons[6].Text = if not ownsAutoRoll then "\u{1F512} AUTO ROLL" elseif autoRoll.on then "AUTO ROLL: ON" else "AUTO ROLL"
+
+	-- A card's gear tiles, and its total attack and defense with gear.
+	local function drawTiles(row, wearing, counts): (number, number)
+		local attack, defense = 0, 0
+		for gearSlot, tile in row.tiles do
+			local item = wearing and wearing[gearSlot]
+			if item then
+				local rarity = GameConfig.getRarity(item.rarity)
+				ItemArt.set(tile.picture, item)
+				tile.name.Text = item.name
+				tile.name.TextColor3 = rarity.color
+				tile.rarity.Text = string.upper(item.rarity) .. setTag(item, counts)
+				tile.rarity.TextColor3 = rarity.color
+				tile.stats.Text = `<font color="#F08A6A">+{item.attack}</font>   <font color="#7FB4F0">+{item.defense}</font>`
+				tile.stroke.Color = rarity.color
+				attack += item.attack
+				defense += item.defense
+			else
+				local drawn = tile.picture:FindFirstChild("ItemArt")
+				if drawn then
+					drawn:Destroy()
+				end
+				tile.picture:SetAttribute("ItemArtKey", nil)
+				tile.name.Text = `No {string.lower(gearSlot)}`
+				tile.name.TextColor3 = COLOR_DIM
+				tile.rarity.Text = "TAP TO EQUIP"
+				tile.rarity.TextColor3 = COLOR_DIM
+				tile.stats.Text = ""
+				tile.stroke.Color = COLOR_DIM
+			end
+		end
+		return attack, defense
+	end
+	local function statsLines(attack: number, defense: number): string
+		return `<font color="#F08A6A">+{Format.short(attack)} ATTACK</font>\n<font color="#7FB4F0">+{Format.short(defense)} DEFENSE</font>`
+	end
+
 	local youCounts = memberSetCounts(state, 0)
-	youRow.gearText.Text = `Weapon: {gearLine(state.yourGear.Weapon, youCounts)}\nArmor: {gearLine(state.yourGear.Armor, youCounts)}\nMount: {gearLine(state.yourGear.Mount, youCounts)}`
+	local youGearAttack, youGearDefense = drawTiles(youRow, state.yourGear, youCounts)
+	youRow.info.Text = `<font size="20" color="#F0C450"><b>YOU</b></font>\n<font color="#B2A690">Warband leader</font>`
+	youRow.statsText.Text = statsLines(GameConfig.BaseAttack + (state.skills.attack or 0) + youGearAttack, GameConfig.BaseDefense + (state.skills.defense or 0) + youGearDefense)
+	youRow.edge.Color = COLOR_GOLD
 	setButton(youRow.gear, "Gear", true, COLOR_SELECTED)
 
 	for slot, row in crewRows do
@@ -2185,40 +1726,65 @@ local function draw(state)
 		if soldier == nil then
 			continue
 		end
+		row.up.Visible = slot > 1
+		row.down.Visible = crew[slot + 1] ~= nil
+		local tier = oneRollTier(state)
 		if soldier then
+			local rarity = GameConfig.getRarity(soldier.rarity)
 			local rank = if soldier.train > 0 then ` +{soldier.train}` else ""
-			row.info.Text = `{rarityName({ rarity = soldier.rarity, name = soldier.class })}{rank}\n{soldier.name}, {soldier.tier} recruit\n{statText(soldier.attack, soldier.defense)}`
+			local color = string.format("#%02X%02X%02X", math.floor(rarity.color.R * 255 + 0.5), math.floor(rarity.color.G * 255 + 0.5), math.floor(rarity.color.B * 255 + 0.5))
+			row.info.Text = `<font color="{color}" size="17"><b>{soldier.name}{rank}</b></font>\n`
+				.. `<font color="{color}"><b>{string.upper(soldier.rarity)}</b></font> {soldier.class}\n<font color="#B2A690">{soldier.tier} recruit</font>`
+			row.glyph.Text = CLASS_GLYPHS[soldier.class] or Art.Icons.soldier
+			row.portrait.Color = rarity.color
+			row.edge.Color = rarity.color
 			local counts = memberSetCounts(state, slot)
-			row.gearText.Text = `Weapon: {gearLine(soldier.gear.Weapon, counts)}\nArmor: {gearLine(soldier.gear.Armor, counts)}\nMount: {gearLine(soldier.gear.Mount, counts)}`
-			row.gear.Visible = true
-			setButton(row.gear, "Gear", true, COLOR_SELECTED)
+			local gearAttack, gearDefense = drawTiles(row, soldier.gear, counts)
+			row.statsText.Text = statsLines(soldier.attack + gearAttack, soldier.defense + gearDefense)
+			for _, tile in row.tiles do
+				tile.button.Visible = true
+			end
 			row.train.Visible = true
-			if soldier.train >= GameConfig.MaxTrainRank then
-				setButton(row.train, "Fully trained", false, COLOR_BUY)
+			if soldier.trainLeft then
+				setButton(row.train, `TRAINING\n{formatClock(soldier.trainLeft)}`, true, COLOR_SELECTED)
+			elseif soldier.train >= GameConfig.MaxTrainRank then
+				setButton(row.train, "FULLY\nTRAINED", false, COLOR_BUY)
 			else
-				setButton(row.train, `Train +{soldier.train + 1}\n{Format.short(soldier.trainCost)}`, gold >= soldier.trainCost, COLOR_BUY)
+				setButton(row.train, `TRAIN\n+{soldier.train} to +{soldier.train + 1}`, true, COLOR_BUY)
 			end
-			-- A reroll only replaces the soldier with one at least as rare.
-			local tier = oneRollTier(state)
-			local keep = soldier.rarity
-			if GameConfig.getChanceAtLeast(tier, keep) <= 0 then
+			-- Without the pass the button makes one reroll (only a soldier
+			-- at least as rare replaces this one).
+			if GameConfig.getChanceAtLeast(tier, soldier.rarity) <= 0 then
 				row.rollId = nil
-				setButton(row.roll, `Reroll\n{tier.id} can't beat`, false, COLOR_ACTION)
 			else
-				row.rollId = `{slot}:{tier.id}:{keep}:this:once`
-				setButton(row.roll, `Reroll\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
+				row.rollId = `{slot}:{tier.id}:{soldier.rarity}:this:once`
 			end
+			row.empty = false
+			setButton(row.roll, "AUTO", ownsAutoRoll, COLOR_ACTION)
 			row.release.Visible = true
-			setButton(row.release, "Release", true, COLOR_DISABLED)
+			setButton(row.release, "\u{1F5D1}\u{FE0F}", true, Color3.fromRGB(120, 40, 36))
 		else
-			row.info.Text = `<b>Empty slot {slot}</b>\nRecruit someone to fill it.`
-			row.gearText.Text = ""
-			row.train.Visible = false
+			row.info.Text = `<font size="17"><b>Empty slot {slot}</b></font>\nRecruit someone to fill it.`
+			row.statsText.Text = ""
+			row.glyph.Text = "?"
+			row.portrait.Color = COLOR_DIM
+			row.edge.Color = COLOR_DIM
+			for _, tile in row.tiles do
+				tile.button.Visible = false
+			end
 			row.release.Visible = false
-			row.gear.Visible = false
-			local tier = oneRollTier(state)
 			row.rollId = `{slot}:{tier.id}:Common:this:once`
-			setButton(row.roll, `Recruit\n{tier.id} {Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_ACTION)
+			row.empty = true
+			-- RECRUIT makes one roll; AUTO opens the auto roll window.
+			row.train.Visible = true
+			setButton(row.train, `RECRUIT\n{Format.short(oneRollCost(state, tier))}`, gold >= oneRollCost(state, tier), COLOR_BUY)
+			setButton(row.roll, "AUTO", ownsAutoRoll, COLOR_ACTION)
+		end
+		-- Empty slots are short cards (no gear tiles).
+		row.frame.Size = UDim2.new(1, -10, 0, if soldier then 160 else 76)
+		-- While a roll is showing on this slot, the card shows the rolled soldier.
+		if ui.showRoll then
+			ui.showRoll(slot)
 		end
 	end
 
@@ -2235,185 +1801,6 @@ local function draw(state)
 		end
 	end
 
-	-- Inventory
-	for index, tab in INVENTORY_TABS do
-		setButton(tabButtons[index], if tab == "Trophies" or tab == "Sets" then tab else (if tab == "All" then "All gear" else tab .. "s"), tab == inventoryTab, COLOR_SELECTED)
-	end
-	local showTrophies = inventoryTab == "Trophies"
-	local showSets = inventoryTab == "Sets"
-	filterInfo.Parent.Visible = not showTrophies and not showSets
-	local filterRarity = GameConfig.Rarities[inventoryRarity]
-	filterInfo.Text = if filterRarity then `Showing {filterRarity.id} and rarer` else "Showing every rarity"
-	setButton(filterButton, "Change rarity", true, COLOR_SELECTED)
-
-	local earnedCount = 0
-	for _, trophy in GameConfig.Trophies do
-		local row = trophyRows[trophy.id]
-		local earned = state.trophies[trophy.id] == true
-		if earned then
-			earnedCount += 1
-		end
-		row.info.Parent.Visible = showTrophies
-		local bonuses = {}
-		for _, pair in GameConfig.TrophyBonusNames do
-			local amount = trophy[pair[1]]
-			if amount then
-				table.insert(bonuses, `+{math.floor(amount * 100 + 0.5)}% {pair[2]}`)
-			end
-		end
-		local progress = state.trophyProgress[trophy.id] or 0
-		row.info.Text = `<b>{trophy.name}</b>   <font color="#9FD49A">{table.concat(bonuses, ", ")}</font>\n`
-			.. (if earned then trophy.note else `{trophy.note}   ({progress} / {trophy.value})`)
-		setButton(row.button, if earned then "Earned" else "Locked", earned, COLOR_GOLD)
-		row.button.TextColor3 = if earned then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
-	end
-
-	-- Sets: which pieces you own, and whether anyone wears the full set.
-	local ownedNames = {}
-	for _, item in state.gear do
-		if item.set then
-			ownedNames[item.name] = true
-		end
-	end
-	for _, set in GameConfig.GearSets do
-		local row = setRows[set.id]
-		row.info.Parent.Visible = showSets
-		local house = "a foe house"
-		for _, candidate in GameConfig.Houses do
-			if candidate.id == set.house then
-				house = candidate.name
-			end
-		end
-		local have, missing = {}, {}
-		for _, slot in GameConfig.GearSlots do
-			local name = set.pieces[slot]
-			table.insert(if ownedNames[name] then have else missing, name)
-		end
-		local two = math.floor(GameConfig.SetPieceBonus[2] * 100 + 0.5)
-		local three = math.floor(GameConfig.SetPieceBonus[3] * 100 + 0.5)
-		row.info.Text = `<b>{set.name}</b>   <font color="#9FD49A">Full set: {perkText(set.perk)}</font>\n`
-			.. `Drops from {house}. One person wearing 2 pieces: +{two}% on them, all 3: +{three}%.\n`
-			.. `Owned: {if #have > 0 then table.concat(have, ", ") else "none"}`
-			.. (if #missing > 0 and #have > 0 then `   <font color="#7F847E">Missing: {table.concat(missing, ", ")}</font>` else "")
-		local full = state.fullSets and state.fullSets[set.id] == true
-		setButton(row.button, if full then "Worn in full" else (if #missing == 0 then "Owned" else `{#have} / {GameConfig.SetPieceCount}`), full, COLOR_GOLD)
-		row.button.TextColor3 = if full then Color3.fromRGB(35, 28, 10) else Color3.new(1, 1, 1)
-	end
-
-	if showSets then
-		local bonus = stats.setBonus or {}
-		local active = perkText(bonus)
-		armorySummary.Text = `Gear sets. Wear all {GameConfig.SetPieceCount} pieces of a set on one person to switch on its bonus for your whole realm. `
-			.. `Equip set pieces by hand with the Gear button on the Warband page. Now: {if active ~= "" then active else "no full sets worn"}`
-	elseif showTrophies then
-		local bonus = stats.trophyBonus
-		armorySummary.Text = `Trophies {earnedCount} / {#GameConfig.Trophies}. Their bonuses never go away.   Now: `
-			.. `+{math.floor(bonus.attack * 100 + 0.5)}% attack, +{math.floor(bonus.defense * 100 + 0.5)}% defense, `
-			.. `+{math.floor(bonus.income * 100 + 0.5)}% income, +{math.floor(bonus.xp * 100 + 0.5)}% quest XP, +{math.floor(bonus.questGold * 100 + 0.5)}% quest gold`
-	else
-		local wornCount = 0
-		for _ in state.gearInUse do
-			wornCount += 1
-		end
-		armorySummary.Text = `Gear {#state.gear} / {state.maxGear}, {wornCount} worn. Gear only counts while someone wears it. `
-			.. `Use the Gear buttons on the Warband page, or Equip best there. Take gear off before selling it.`
-	end
-	local gear = {}
-	for _, item in state.gear do
-		local slotMatches = inventoryTab == "All" or item.slot == inventoryTab
-		if not showTrophies and not showSets and slotMatches and GameConfig.getRarityRank(item.rarity) >= math.max(1, inventoryRarity) then
-			table.insert(gear, item)
-		end
-	end
-	local slotOrder = { Weapon = 1, Armor = 2, Mount = 3 }
-	table.sort(gear, function(a, b)
-		if a.slot ~= b.slot then
-			return (slotOrder[a.slot] or 9) < (slotOrder[b.slot] or 9)
-		end
-		return a.attack + a.defense > b.attack + b.defense
-	end)
-	for index, row in gearRows do
-		local item = gear[index]
-		row.uid = if item then item.uid else nil
-		row.info.Parent.Visible = item ~= nil
-		if item then
-			local worn = item.wornBy ~= nil
-			local status = if worn then `Worn by {memberLabel(state, item.wornBy)}` else "Spare"
-			local counts = if worn then memberSetCounts(state, item.wornBy) else nil
-			row.info.Text = `{rarityName(item)}  Lv {item.level}  ({string.lower(item.slot)}){setTag(item, counts)}\n{statText(item.attack, item.defense)}   |   {status}`
-			if worn then
-				setButton(row.button, "Worn", false, COLOR_ACTION)
-			else
-				setButton(row.button, `Sell\n+{Format.short(item.price * GameConfig.SellShare)}`, true, COLOR_ACTION)
-			end
-		end
-	end
-
-	-- Foes
-	local function stageOpen(stage)
-		return state.level >= stage.level and stage.index <= state.highestStage + 1
-	end
-	-- Keep the panel on the chosen stage; otherwise show the first one
-	-- still to beat today.
-	local chosen = selectedStage and GameConfig.Stages[tonumber(string.sub(selectedStage, 2)) or 0]
-	if not chosen or state.stageCleared[chosen.id] or not stageOpen(chosen) then
-		chosen = nil
-		for _, stage in GameConfig.Stages do
-			if stageOpen(stage) and not state.stageCleared[stage.id] then
-				chosen = stage
-				break
-			end
-		end
-		selectedStage = chosen and chosen.id
-	end
-
-	foeSummary.Text = `<b>{state.tokens} boss tokens</b>   |   Highest stage {state.highestStage}   |   Foes return in {formatClock(state.stageReset)}\n`
-		.. "Beat each stage once a day. Each win opens the next stage. Spend tokens in the token shop below."
-	local hitLow = math.max(1, math.floor(GameConfig.getHit(stats.attack, chosen and chosen.defense or 0) * GameConfig.HitRollMin))
-	local hitHigh = math.max(1, math.floor(GameConfig.getHit(stats.attack, chosen and chosen.defense or 0) * GameConfig.HitRollMax))
-	setBar(yourFightBar, state.health, stats.maxHealth, `You: {state.health} / {stats.maxHealth}`)
-	if chosen then
-		local foeHealth = state.stageHealth[chosen.id] or chosen.health
-		local chest = if chosen.chest then `, {chosen.chest} chest` else ""
-		fightInfo.Text = `<b>STAGE {chosen.index}: {chosen.name}</b>  ({chosen.title})\n`
-			.. `You hit {Format.short(hitLow)} to {Format.short(hitHigh)}   vs   defense {Format.short(chosen.defense)}, attack {Format.short(chosen.attack)}\n`
-			.. `Reward: {Format.short(chosen.gold)} gold, {chosen.xp} XP, {chosen.tokens} tokens{chest}`
-			.. (if state.firstClears[chosen.id] then "" else `\n<font color="#F0C450">First clear bonus: +{chosen.firstCrowns} Crowns, +{chosen.firstTokens} tokens</font>`)
-		setBar(foeFightBar, foeHealth, chosen.health, `Foe: {Format.short(foeHealth)} / {Format.short(chosen.health)}`)
-		local ready = state.stamina >= 1 and state.health >= GameConfig.MinHealthToFight
-		local label = if state.stamina < 1 then "No stamina" elseif not ready then "Too wounded" else "Attack\n1 stamina"
-		setButton(fightButton, label, ready, COLOR_ACTION)
-	else
-		local nextStage = GameConfig.Stages[state.highestStage + 1]
-		fightInfo.Text = if nextStage and state.level < nextStage.level
-			then `<b>All open stages are beaten for today.</b>\nThe next stage opens at level {nextStage.level}.`
-			else "<b>All open stages are beaten for today.</b>\nFoes return at 00:00 UTC."
-		setBar(foeFightBar, 0, 1, "")
-		setButton(fightButton, "Done", false, COLOR_ACTION)
-	end
-
-	for _, stage in GameConfig.Stages do
-		local row = stageRows[stage.id]
-		local chest = if stage.chest then `   {stage.chest} chest` else ""
-		local first = if state.firstClears[stage.id] then "" else `   <font color="#F0C450">First clear: +{stage.firstCrowns} Crowns</font>`
-		row.info.Text = `<b>Stage {stage.index}: {stage.name}</b>   Level {stage.level}\n`
-			.. `{Format.short(stage.health)} health, {Format.short(stage.defense)} defense   |   {stage.tokens} tokens{chest}{first}`
-		if state.stageCleared[stage.id] then
-			setButton(row.button, "Done today", false, COLOR_BUY)
-		elseif state.level < stage.level then
-			setButton(row.button, `Level {stage.level}`, false, COLOR_ACTION)
-		elseif not stageOpen(stage) then
-			setButton(row.button, "Locked", false, COLOR_ACTION)
-		elseif stage.id == selectedStage then
-			setButton(row.button, "Selected", true, COLOR_SELECTED)
-		else
-			setButton(row.button, "Fight", true, COLOR_ACTION)
-		end
-	end
-
-	for _, item in GameConfig.TokenShop do
-		setButton(tokenRows[item.id], `Buy\n{item.cost} tokens`, state.tokens >= item.cost, COLOR_BUY)
-	end
 end
 
 redraw = function()
@@ -2448,10 +1835,8 @@ do
 	local recruitWindow = makeFrame(recruitGui, UDim2.fromOffset(540, 490), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
 	recruitWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 	addCorner(recruitWindow, 10)
-	local windowStroke = Instance.new("UIStroke")
-	windowStroke.Color = COLOR_HEADER
-	windowStroke.Thickness = 1.5
-	windowStroke.Parent = recruitWindow
+	recruitWindow.BackgroundColor3 = COLOR_PANEL
+	Art.panel(recruitWindow)
 	local windowLimit = Instance.new("UISizeConstraint")
 	windowLimit.MaxSize = Vector2.new(540, 490)
 	windowLimit.Parent = recruitWindow
@@ -2459,8 +1844,9 @@ do
 	windowScale.Parent = recruitWindow
 
 	local recruitTitle = makeText(recruitWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
-	recruitTitle.Font = Enum.Font.GothamBold
-	recruitTitle.Text = "AUTO ROLL"
+	recruitTitle.Font = Art.Fonts.title
+	recruitTitle.TextSize = 30
+	recruitTitle.Text = "Auto roll"
 
 	local closeButton = makeButton(recruitWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
 	closeButton.Text = "X"
@@ -2622,15 +2008,20 @@ do
 		local auto = state.autoRoll
 		if auto.on then
 			local waiting = if auto.waiting then " Waiting for gold." else ""
-			chanceText.Text ..= `\nAuto rolling {auto.tier} for {auto.rarity}: {auto.rolls} rolls, {Format.short(auto.spent)} gold so far.{waiting}`
+			local stopped = 0
+			for _ in auto.skip or {} do
+				stopped += 1
+			end
+			local stoppedText = if stopped > 0 then ` {stopped} slot{if stopped == 1 then "" else "s"} stopped by hand.` else ""
+			chanceText.Text ..= `\nAuto rolling {auto.tier} for {auto.rarity}: {auto.rolls} rolls, {Format.short(auto.spent)} gold so far.{waiting}{stoppedText} Stop single slots with STOP on the Warband rows, or everything here.`
 		elseif state.passes.autoroll then
-			chanceText.Text ..= `\nAuto roll makes {GameConfig.AutoRollsPerTick} roll a second until it hits, gold runs out or you stop it.`
+			chanceText.Text ..= `\nAuto roll rolls every chosen slot at once, one roll per slot each second, until it hits, gold runs out or you stop it.`
 		else
 			chanceText.Text ..= "\nAuto roll needs the Recruiting Sergeant pass. Single rolls are on each slot's Recruit button."
 		end
 		local ready = state.level >= tier.level and gold >= rollCost and scopeCount(state, chosenScope) > 0
 		if auto.on then
-			startButton.Text = "STOP AUTO ROLL"
+			startButton.Text = "STOP ALL AUTO ROLL"
 			startButton.BackgroundColor3 = COLOR_ACTION
 			startButton.TextColor3 = Color3.new(1, 1, 1)
 		else
@@ -2718,16 +2109,15 @@ do
 	local equipWindow = makeFrame(equipGui, UDim2.fromOffset(EQUIP_WIDTH, EQUIP_HEIGHT), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(20, 25, 22))
 	equipWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 	addCorner(equipWindow, 10)
-	local equipStroke = Instance.new("UIStroke")
-	equipStroke.Color = COLOR_HEADER
-	equipStroke.Thickness = 1.5
-	equipStroke.Parent = equipWindow
+	equipWindow.BackgroundColor3 = COLOR_PANEL
+	Art.panel(equipWindow)
 	local equipScale = Instance.new("UIScale")
 	equipScale.Parent = equipWindow
 
 	local equipTitle = makeText(equipWindow, UDim2.new(1, -70, 0, 34), UDim2.fromOffset(16, 10), COLOR_HEADER, 24)
-	equipTitle.Font = Enum.Font.GothamBold
-	equipTitle.Text = "GEAR"
+	equipTitle.Font = Art.Fonts.title
+	equipTitle.TextSize = 30
+	equipTitle.Text = "Gear"
 
 	local equipClose = makeButton(equipWindow, UDim2.fromOffset(36, 36), UDim2.new(1, -46, 0, 10), COLOR_ROW)
 	equipClose.Text = "X"
@@ -2798,7 +2188,10 @@ do
 	emptyNote.Text = "You own nothing for this slot yet. Buy gear in the Market or win it from quests and foes."
 
 	local equipRows = {}
-	for index = 1, GameConfig.MaxGearOwned + StoreConfig.ArmoryExtra do
+	local function equipRow(index: number)
+		if equipRows[index] then
+			return equipRows[index]
+		end
 		local row = makeFrame(equipList, UDim2.new(1, -10, 0, 46), UDim2.fromOffset(0, 0), COLOR_ROW)
 		row.LayoutOrder = index
 		addCorner(row, 6)
@@ -2814,6 +2207,7 @@ do
 				send("Equip", `{entry.uid}:{equipMember}`)
 			end
 		end)
+		return entry
 	end
 
 	function refreshEquipWindow()
@@ -2861,7 +2255,7 @@ do
 			box.uid = if item then item.uid else nil
 			box.box.BackgroundColor3 = if gearSlot == equipSlot then COLOR_SELECTED else COLOR_ROW
 			if item then
-				box.label.Text = `<b>{string.upper(gearSlot)}</b>\n{rarityName(item)} Lv {item.level}\n{statText(item.attack, item.defense)}{setTag(item, counts)}`
+				box.label.Text = `<b>{string.upper(gearSlot)}</b>\n{rarityName(item)}\n{statText(item.attack, item.defense)}{setTag(item, counts)}`
 				setButton(box.takeOff, "Take off", true, COLOR_ACTION)
 			else
 				box.label.Text = `<b>{string.upper(gearSlot)}</b>\n<font color="#7F847E">empty</font>`
@@ -2887,8 +2281,9 @@ do
 		listLabel.Text = `YOUR {string.upper(equipSlot)}S ({#pieces}), STRONGEST FIRST`
 		emptyNote.Visible = #pieces == 0
 
-		for index, row in equipRows do
+		for index = 1, math.max(#pieces, #equipRows) do
 			local item = pieces[index]
+			local row = if item then equipRow(index) else equipRows[index]
 			row.uid = if item then item.uid else nil
 			row.frame.Visible = item ~= nil
 			if not item then
@@ -2902,7 +2297,8 @@ do
 			else
 				where = "Spare"
 			end
-			row.info.Text = `{rarityName(item)}  Lv {item.level}{setTag(item, nil)}\n{statText(item.attack, item.defense)}   |   {where}`
+			local stackText = if (item.count or 1) > 1 then ` x{Format.short(item.count)}` else ""
+			row.info.Text = `{rarityName(item)}{stackText} {setTag(item, nil)}\n{statText(item.attack, item.defense)}   |   {where}`
 			if item.wornBy == equipMember then
 				row.usable = false
 				setButton(row.button, "Wearing", false, COLOR_BUY)
@@ -2955,6 +2351,9 @@ do
 		if typeof(text) ~= "string" or text == "" then
 			return
 		end
+		if lastState and lastState.settings and lastState.settings.toasts == false then
+			return
+		end
 		toastCount += 1
 		local card = makeText(toastStack, UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 0), COLOR_TEXT, 14)
 		card.AutomaticSize = Enum.AutomaticSize.Y
@@ -2963,12 +2362,18 @@ do
 		card.LayoutOrder = toastCount
 		card.Text = text
 		addCorner(card, 8)
+		Art.card(card)
 		local stroke = addStroke(card)
 		stroke.Color = COLOR_GOLD
+		local icon = Art.icon(card, Art.toastIcon(text), 24, UDim2.new(0, -32, 0.5, 0))
+		icon.AnchorPoint = Vector2.new(0, 0.5)
+		card.BackgroundTransparency = 1
+		card.TextTransparency = 1
+		Art.tween(card, 0.25, { BackgroundTransparency = 0.05, TextTransparency = 0 })
 		local padding = Instance.new("UIPadding")
 		padding.PaddingTop = UDim.new(0, 8)
 		padding.PaddingBottom = UDim.new(0, 8)
-		padding.PaddingLeft = UDim.new(0, 10)
+		padding.PaddingLeft = UDim.new(0, 42)
 		padding.PaddingRight = UDim.new(0, 10)
 		padding.Parent = card
 
@@ -2977,6 +2382,13 @@ do
 			table.remove(liveToasts, 1):Destroy()
 		end
 		task.delay(TOAST_SECONDS, function()
+			if not table.find(liveToasts, card) then
+				return
+			end
+			Art.tween(card, 0.3, { BackgroundTransparency = 1, TextTransparency = 1 })
+			Art.tween(icon, 0.3, { TextTransparency = 1 })
+			Art.tween(stroke, 0.3, { Transparency = 1 })
+			task.wait(0.3)
 			local index = table.find(liveToasts, card)
 			if index then
 				table.remove(liveToasts, index)
@@ -2997,9 +2409,15 @@ do
 		window.AnchorPoint = Vector2.new(0.5, 0.5)
 		window.ZIndex = 10
 		addCorner(window, 12)
+		window.BackgroundColor3 = COLOR_PANEL
+		Art.panel(window)
+		local coins = Art.icon(window, Art.Icons.gold, 40, UDim2.new(0.5, 0, 0, -10))
+		coins.AnchorPoint = Vector2.new(0.5, 0.5)
+		coins.ZIndex = 12
 
 		local title = makeText(window, UDim2.new(1, -30, 0, 34), UDim2.fromOffset(15, 14), COLOR_HEADER, 20)
-		title.Font = Enum.Font.GothamBold
+		title.Font = Art.Fonts.title
+		title.TextSize = 28
 		title.TextXAlignment = Enum.TextXAlignment.Center
 		title.Text = "Welcome back, my liege!"
 		title.ZIndex = 11
@@ -3015,6 +2433,7 @@ do
 		button.TextColor3 = Color3.fromRGB(40, 28, 12)
 		button.TextSize = 16
 		button.ZIndex = 11
+		Art.shine(button, 2)
 		button.Activated:Connect(function()
 			window:Destroy()
 		end)
@@ -3031,6 +2450,11 @@ do
 
 	player:GetAttributeChangedSignal("OfflineGold"):Connect(checkWelcomeBack)
 	checkWelcomeBack()
+end
+
+do
+	local Fx = require(script.Parent:WaitForChild("Fx"))
+	Fx.init(Art, GameConfig, Format.short, remotes:WaitForChild("Fx"), ItemArt, send)
 end
 
 print(`[{GameConfig.GameName}] client started`)

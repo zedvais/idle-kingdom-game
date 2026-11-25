@@ -73,11 +73,11 @@ StoreConfig.Passes = {
 		note = "No fee when you deposit gold in the Bank",
 	},
 	{
-		key = "armory",
+		key = "doubleincome",
 		id = 0,
-		name = "Armory Wing",
-		price = 149,
-		note = "Your armory holds 80 pieces of gear instead of 40",
+		name = "Golden Ledger",
+		price = 299,
+		note = "2x income from every holding, on top of every other bonus",
 	},
 	{
 		key = "autoquest",
@@ -104,6 +104,7 @@ StoreConfig.Passes = {
 
 -- What the passes do, used by the server.
 StoreConfig.CharterIncome = 0.25
+StoreConfig.DoubleIncome = 2 -- Golden Ledger pass: holding income multiplier
 StoreConfig.CharterQuestGold = 0.25
 StoreConfig.CharterXp = 0.1
 StoreConfig.CouriersSpeed = 2
@@ -217,6 +218,23 @@ StoreConfig.CrownShop = {
 -- pity: every `pityEvery` opens without a `pityRarity` (or better) piece,
 -- the next one is guaranteed to be that rarity.
 
+-- Coffers are sold one at a time or in bundles; bigger bundles cost less
+-- per coffer. They go to the Inventory to open later.
+StoreConfig.CofferBundles = {
+	{ count = 1, discount = 0 },
+	{ count = 5, discount = 0.1 },
+	{ count = 10, discount = 0.2 },
+}
+
+function StoreConfig.bundleCost(coffer, count: number): number?
+	for _, bundle in StoreConfig.CofferBundles do
+		if bundle.count == count then
+			return math.floor(coffer.cost * count * (1 - bundle.discount) + 0.5)
+		end
+	end
+	return nil
+end
+
 StoreConfig.Coffers = {
 	{
 		key = "coffer",
@@ -246,6 +264,10 @@ StoreConfig.SeasonDays = 28
 StoreConfig.PassTiers = 50
 StoreConfig.PointsPerTier = 200
 StoreConfig.TierSkipCost = 120 -- Crowns to buy one tier
+-- After tier 50, every BonusPoints more points give a small bonus reward
+-- (claimed from the BONUS card at the end of the track).
+StoreConfig.BonusPoints = 200
+StoreConfig.BonusReward = { kind = "gold", minutes = 15 }
 
 -- Where pass points come from.
 StoreConfig.PointsPerQuestEnergy = 1 / 5 -- 1 point per 5 energy spent on quests
@@ -376,6 +398,10 @@ function StoreConfig.describe(reward): string
 		return `"{reward.text}" title`
 	elseif kind == "seals" then
 		return `{reward.amount} Seals`
+	elseif reward.kind == "toLevel" then
+		return `XP up to level {reward.level}`
+	elseif reward.kind == "allPasses" then
+		return "every game pass"
 	end
 	return "a reward"
 end

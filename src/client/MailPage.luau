@@ -56,12 +56,16 @@ function MailPage.draw(state, ui)
 	local colors = ui.colors
 	local now = os.time()
 	local unread, claimable = 0, 0
+	local waiting = 0 -- letters that are unread or still have rewards; each counts once
 	for _, letter in state.mail do
 		if not letter.read then
 			unread += 1
 		end
 		if not letter.claimed then
 			claimable += 1
+		end
+		if not letter.read or not letter.claimed then
+			waiting += 1
 		end
 	end
 	summary.Text = `<b>{#state.mail} letters</b>   |   {unread} unread   |   {claimable} with rewards to claim`
@@ -97,7 +101,7 @@ function MailPage.draw(state, ui)
 		readSentAt = now
 		ui.send("MailRead", "all")
 	end
-	ui.setBadge("Mail", if ui.isOpen("Mail") then claimable else unread + claimable)
+	ui.setBadge("Mail", if ui.isOpen("Mail") then claimable else waiting)
 end
 
 return MailPage
