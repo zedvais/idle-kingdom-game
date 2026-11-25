@@ -578,6 +578,9 @@ function Fx.hit(info)
 			shake(anchors.you)
 		end)
 	end
+	if Fx.onHit then
+		Fx.onHit(info)
+	end
 	if info.result == "cleared" then
 		banner("Victory!", Art.Colors.gold)
 	elseif info.result == "down" then

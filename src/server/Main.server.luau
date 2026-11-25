@@ -1669,6 +1669,30 @@ function actions.TokenBuy(player: Player, data, id: string)
 	end
 end
 
+-- Buys a set piece from the TOKEN SHOP. id is "<set id>:<slot>".
+local setShopById = indexById(GameConfig.SetShop)
+function actions.TokenSet(player: Player, data, id: string)
+	local entry = setShopById[id]
+	local set = entry and GameConfig.getGearSet(entry.set)
+	if not entry or not set then
+		return
+	end
+	if not data.firstClears[entry.bossStage] then
+		local boss = stageById[entry.bossStage]
+		sendToast(player, `Beat {boss and boss.name or "the house boss"} once to unlock the {set.name} set.`)
+		return
+	end
+	if data.tokens < entry.cost then
+		sendToast(player, `Not enough boss tokens. You need {entry.cost}.`)
+		return
+	end
+	data.tokens -= entry.cost
+	local item = Market.makeSetPiece(data.level, set, entry.slot, entry.rarity)
+	local note = addGear(data, item)
+	sendToast(player, `Token shop: {item.rarity} {item.name}!{note}`)
+	sendFx(player, "gear", { rarity = item.rarity, name = item.name, slot = item.slot, source = "Token shop", crate = false })
+end
+
 -- Puts a piece of gear on someone. id is "<item uid>:<member>", where
 -- member 0 is you and 1 and up is a warband slot, for example "i42:0".
 function actions.Equip(player: Player, data, id: string)

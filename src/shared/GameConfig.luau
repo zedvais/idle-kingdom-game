@@ -778,4 +778,38 @@ local function buildStages()
 end
 buildStages()
 
+-- Set pieces sold for boss tokens in the TOKEN SHOP. Each house sells its
+-- set at the rarity of its chest. A house's pieces unlock once its last
+-- stage (the house boss) has been beaten for the first time.
+GameConfig.SetShopCost = { Uncommon = 40, Rare = 100, Epic = 250, Legendary = 600, Mythic = 1500 }
+GameConfig.SetShop = {}
+for _, set in GameConfig.GearSets do
+	local house, boss = nil, nil
+	for _, candidate in GameConfig.Houses do
+		if candidate.id == set.house then
+			house = candidate
+		end
+	end
+	for _, stage in GameConfig.Stages do
+		if stage.house == set.house then
+			boss = stage
+		end
+	end
+	if house and boss then
+		set.bossStage = boss.id
+		set.rarity = house.chest
+		for _, slot in { "Weapon", "Armor", "Mount" } do
+			table.insert(GameConfig.SetShop, {
+				id = `{set.id}:{slot}`,
+				set = set.id,
+				slot = slot,
+				name = set.pieces[slot],
+				rarity = house.chest,
+				cost = GameConfig.SetShopCost[house.chest] or 100,
+				bossStage = boss.id,
+			})
+		end
+	end
+end
+
 return GameConfig

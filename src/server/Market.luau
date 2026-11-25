@@ -91,6 +91,26 @@ function Market.rollSetPiece(random: Random, playerLevel: number, set, minRank: 
 	return item
 end
 
+-- One exact set piece (TOKEN SHOP): fixed slot, name and rarity.
+function Market.makeSetPiece(playerLevel: number, set, slot: string, rarityId: string)
+	local rarity = GameConfig.getRarity(rarityId)
+	local gearType = GameConfig.GearTypes[slot]
+	local name = set.pieces[slot]
+	local level = math.max(1, playerLevel)
+	local attack, defense = GameConfig.getGearStats(slot, name, rarity)
+	return {
+		kind = "Gear",
+		slot = slot,
+		name = name,
+		rarity = rarity.id,
+		level = level,
+		attack = attack,
+		defense = defense,
+		price = GameConfig.getItemPrice(gearType.price, level, rarity),
+		set = set.id,
+	}
+end
+
 -- A fresh stock for one player. Seeded by player and window, so the same
 -- player at the same level sees the same stock if they rejoin.
 function Market.roll(userId: number, window: number, playerLevel: number)
