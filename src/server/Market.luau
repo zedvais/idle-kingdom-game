@@ -62,6 +62,18 @@ function Market.rollGear(random: Random, playerLevel: number, minRank: number?)
 	}
 end
 
+-- One piece of gear of exactly this rarity (Royal Coffers).
+function Market.rollGearOfRarity(random: Random, playerLevel: number, rarityId: string)
+	local item = Market.rollGear(random, playerLevel, 1)
+	local rarity = GameConfig.getRarity(rarityId)
+	local gearType = GameConfig.GearTypes[item.slot]
+	item.rarity = rarity.id
+	item.attack = GameConfig.getItemStat(gearType.attack, item.level, rarity)
+	item.defense = GameConfig.getItemStat(gearType.defense, item.level, rarity)
+	item.price = GameConfig.getItemPrice(gearType.price, item.level, rarity)
+	return item
+end
+
 -- One piece of a gear set (foe drops). The slot is random; the name comes
 -- from the set.
 function Market.rollSetPiece(random: Random, playerLevel: number, set, minRank: number)

@@ -72,6 +72,32 @@ local function newData()
 			spent = 0,
 			recent = {}, -- newest first: { name, rarity, price }
 		},
+		-- Shop and Royal Pass
+		crowns = 0,
+		passes = {}, -- [pass key] = true for each game pass owned
+		receipts = {}, -- recent Robux purchase ids, newest first
+		packsBought = {}, -- [product key] = true for one-time packs
+		title = "", -- shown before your name, e.g. "Founder"
+		firstSeen = 0, -- os.time() of the first visit
+		tithe = 0, -- Crowns waiting in the Tithe Chest
+		titheEnergy = 0, -- quest energy not yet turned into a Crown
+		pity = {}, -- [coffer key] = opens since its pity rarity last came up
+		pass = {
+			season = -1, -- which season the fields below belong to
+			points = 0,
+			noble = false, -- premium track bought for this season
+			energyCarry = 0, -- quest energy not yet turned into a point
+			claimedFree = {}, -- [tier as text] = true
+			claimedNoble = {},
+		},
+		weekly = {
+			week = -1,
+			energy = 0,
+			foes = 0,
+			market = 0,
+			play = 0,
+			claimed = {}, -- [challenge key] = true
+		},
 		lastSeen = 0,
 	}
 end
@@ -89,9 +115,11 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for key, default in fresh.autoBuy do
-		if type(data.autoBuy[key]) ~= type(default) then
-			data.autoBuy[key] = default
+	for _, name in { "autoBuy", "pass", "weekly" } do
+		for key, default in fresh[name] do
+			if type(data[name][key]) ~= type(default) then
+				data[name][key] = default
+			end
 		end
 	end
 	data.foes = nil -- replaced by stages
