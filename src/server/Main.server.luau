@@ -263,6 +263,14 @@ local function checkTrophies(player: Player, data)
 	end
 end
 
+-- Restocks the Market when a new window starts.
+local function restockIfDue(player: Player, data)
+	local window = Market.currentWindow()
+	if data.market.window ~= window then
+		data.market = Market.roll(player.UserId, window, data.level)
+	end
+end
+
 -- Sends the player everything their menus need to draw.
 local function refresh(player: Player)
 	local session = sessions[player]
@@ -273,11 +281,7 @@ local function refresh(player: Player)
 	local stats = getStats(data)
 	local now = os.time()
 
-	-- Restock the Market when a new window starts.
-	local window = Market.currentWindow()
-	if data.market.window ~= window then
-		data.market = Market.roll(player.UserId, window, data.level)
-	end
+	restockIfDue(player, data)
 	local _, _, gearInUse, wearing = assignGear(data)
 
 	-- The warband as the client draws it: each slot with its soldier's
@@ -329,6 +333,7 @@ local function refresh(player: Player)
 		gearInUse = gearInUse,
 		market = data.market.items,
 		marketRestock = Market.secondsUntilRestock(),
+		marketWindow = data.market.window,
 		tokens = data.tokens,
 		highestStage = data.highestStage,
 		stageHealth = data.stageHealth,
@@ -674,7 +679,6 @@ function actions.Release(player: Player, data, id: string)
 	end
 end
 
--- Buys item number `id` ("1" to "8") from the Market.
 -- Buys a Market item. `auto` is true when auto-buy does it, which keeps
 -- its messages short.
 local function buyItem(player: Player, data, item, auto: boolean): boolean
@@ -707,9 +711,24 @@ local function buyItem(player: Player, data, item, auto: boolean): boolean
 	return true
 end
 
+-- Buys one Market offer. id is "<window>:<row>", for example "5902211:4":
+-- the restock window the player was looking at, then the row they clicked.
+-- If the stock has restocked since then, the row now holds a different item
+-- at a different price, so the request is turned down before any gold is
+-- taken, and the refresh that follows shows the player the new stock.
 function actions.Buy(player: Player, data, id: string)
-	local index = tonumber(id)
-	local item = index and data.market.items[index]
+	local windowText, rowText = string.match(id, "^(%d+):(%d+)$")
+	local window = tonumber(windowText)
+	local index = tonumber(rowText)
+	if not window or not index then
+		return
+	end
+	restockIfDue(player, data)
+	if window ~= data.market.window then
+		sendToast(player, "The Market just restocked, so nothing was bought. Check the new stock.")
+		return
+	end
+	local item = data.market.items[index]
 	if item and not item.sold then
 		buyItem(player, data, item, false)
 	end
@@ -888,6 +907,7 @@ local function runAutoBuy(player: Player, data)
 	if not rule.on then
 		return
 	end
+	restockIfDue(player, data)
 	local minRank = GameConfig.getRarityRank(rule.minRarity)
 	for _, item in data.market.items do
 		local wanted = not item.sold

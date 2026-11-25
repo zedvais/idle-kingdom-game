@@ -502,11 +502,17 @@ end
 -- Market: a fixed number of rows that are refilled each restock.
 local marketSummary = makeRow(pages.Market, nextOrder(), 50, false)
 local marketRows = {}
+-- The restock window of the stock on screen, set each time the Market is drawn.
+local marketWindowShown: number? = nil
 for index = 1, GameConfig.MarketSize do
 	local row = makeItemRow(pages.Market, nextOrder())
 	marketRows[index] = row
 	row.button.Activated:Connect(function()
-		send("Buy", tostring(index))
+		-- Send which stock the player is looking at with the row, so a click
+		-- that reaches the server after a restock can't buy the new item.
+		if marketWindowShown then
+			send("Buy", `{marketWindowShown}:{index}`)
+		end
 	end)
 end
 
@@ -866,6 +872,7 @@ local function draw(state)
 		.. `Deposit fee {math.floor(GameConfig.BankFee * 100)}%`
 
 	-- Market
+	marketWindowShown = state.marketWindow
 	marketSummary.Text = `New stock in {formatClock(state.marketRestock)}\nItems roll around your level. Rarer items are stronger and cost more.`
 	for index, row in marketRows do
 		local item = state.market[index]
