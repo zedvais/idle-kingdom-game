@@ -52,13 +52,8 @@ local function startLoop()
 		return
 	end
 	loopStarted = true
-	local wait = 0
-	RunService.Heartbeat:Connect(function(dt)
-		wait += dt
-		if wait < 0.05 then
-			return
-		end
-		wait = 0
+	RunService.RenderStepped:Connect(function(dt)
+		-- every frame, so motion is smooth (steps use the clock, not dt)
 		local t = os.clock()
 		for index = #movers, 1, -1 do
 			local mover = movers[index]
@@ -786,8 +781,21 @@ end
 -- whether it should move right now (its page is open).
 -- `width` above 120 widens the sky and ground; the picture stays centered
 -- and the sides get a few trees.
-local function make(holder: GuiObject, draw, background: boolean, gate: () -> boolean, width: number?): Frame
-	local fullWidth = width or W
+-- width "fill" makes the canvas as wide as the holder's shape, so the
+-- picture covers the whole holder with no empty sides; it is drawn again
+-- when the holder changes shape.
+local make
+function make(holder: GuiObject, draw, background: boolean, gate: () -> boolean, width: (number | string)?): Frame
+	local fill = width == "fill"
+	local fullWidth = W
+	if fill then
+		local size = holder.AbsoluteSize
+		if size.Y > 0 then
+			fullWidth = math.max(W, math.floor(size.X / size.Y * H + 0.5))
+		end
+	elseif type(width) == "number" then
+		fullWidth = width
+	end
 	local canvas = Instance.new("Frame")
 	canvas.Name = "Picture"
 	canvas.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -809,7 +817,21 @@ local function make(holder: GuiObject, draw, background: boolean, gate: () -> bo
 		end
 	end
 	fit()
-	holder:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+	local resized
+	resized = holder:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		if not canvas.Parent then
+			resized:Disconnect()
+			return
+		end
+		local size = holder.AbsoluteSize
+		if fill and size.Y > 0 and math.abs(math.max(W, math.floor(size.X / size.Y * H + 0.5)) - fullWidth) > 3 then
+			resized:Disconnect()
+			canvas:Destroy()
+			make(holder, draw, background, gate, width)
+			return
+		end
+		fit()
+	end)
 
 	local pen = newPen(canvas)
 	pen.z = holder.ZIndex
@@ -843,13 +865,13 @@ end
 
 -- A Keep level picture (1 = Timber Hall ... 8 = Sunspire Palace).
 -- width is the canvas width (default 120, the height is always 80).
-function Scenes.keep(holder: GuiObject, level: number, gate: () -> boolean, width: number?): Frame
+function Scenes.keep(holder: GuiObject, level: number, gate: () -> boolean, width: (number | string)?): Frame
 	local draw = KEEPS[math.clamp(level, 1, #KEEPS)]
 	return make(holder, draw, true, gate, width)
 end
 
 -- An Estate building picture, by building key. Nil for unknown keys.
-function Scenes.building(holder: GuiObject, key: string, gate: () -> boolean, width: number?): Frame?
+function Scenes.building(holder: GuiObject, key: string, gate: () -> boolean, width: (number | string)?): Frame?
 	local draw = BUILDINGS[key]
 	if not draw then
 		return nil
@@ -858,7 +880,7 @@ function Scenes.building(holder: GuiObject, key: string, gate: () -> boolean, wi
 end
 
 -- A Holdings picture, by holding id. Nil for unknown ids.
-function Scenes.holding(holder: GuiObject, id: string, gate: () -> boolean, width: number?): Frame?
+function Scenes.holding(holder: GuiObject, id: string, gate: () -> boolean, width: (number | string)?): Frame?
 	local draw = HOLDINGS[id]
 	if not draw then
 		return nil

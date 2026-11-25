@@ -20,11 +20,11 @@ local TROOP_STYLE = {
 	archer = { glyph = "\u{1F3F9}", color = Color3.fromRGB(90, 150, 90) },
 	cavalry = { glyph = "\u{1F40E}", color = Color3.fromRGB(170, 110, 60) },
 	knight = { glyph = "\u{1F6E1}\u{FE0F}", color = Color3.fromRGB(120, 140, 190) },
-	siege = { glyph = "\u{1FAB5}", color = Color3.fromRGB(140, 100, 70) },
+	siege = { glyph = "\u{1F40F}", color = Color3.fromRGB(140, 100, 70) },
 }
 local RESOURCE_GLYPHS = {
-	lumber = "\u{1FAB5}",
-	stone = "\u{1FAA8}",
+	lumber = "\u{1F332}",
+	stone = "\u{26F0}\u{FE0F}",
 	iron = "\u{26D3}\u{FE0F}",
 	grain = "\u{1F33E}",
 }

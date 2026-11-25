@@ -976,22 +976,10 @@ end
 -- Keep: the picture, numbers and skills are in KeepPage.luau; the daily
 -- playtime rewards are here.
 
-makeHeading(pages.Keep, nextOrder(), "Daily playtime rewards")
-local playtimeSummary = makeRow(pages.Keep, nextOrder(), 32, false)
-local rewardRows = {}
-do
-	local rewardGrid = makeGrid(pages.Keep, nextOrder(), 92, 4)
-	for index, reward in GameConfig.PlaytimeRewards do
-		local info, button = makeCard(rewardGrid)
-		rewardRows[index] = { info = info, button = button }
-		button.Activated:Connect(function()
-			send("Claim", tostring(index))
-		end)
-		info.RichText = true
-		info.Text = `<b>{reward.label}</b>\nAfter {reward.minutes} min`
-	end
-end
-
+-- Three LayoutOrder slots for the playtime rewards (PlaytimeRewards.luau).
+local playtimeOrder = nextOrder()
+nextOrder()
+nextOrder()
 
 -- Quests: the page is built in QuestsPage.luau.
 
@@ -1544,6 +1532,7 @@ ui = {
 	setBadge = setBadge,
 	send = send,
 	nextOrder = nextOrder,
+	playtimeOrder = playtimeOrder,
 	formatLong = formatLong,
 	formatClock = formatClock,
 	rarityName = rarityName,
@@ -1566,7 +1555,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)
@@ -1653,21 +1642,6 @@ local function draw(state)
 		end
 	end
 	setBadge("Keep", keepCount)
-
-	local played = state.playSeconds
-	playtimeSummary.Text = `Played today: {math.floor(played / 3600)}h {math.floor(played / 60) % 60}m. Rewards reset at 00:00 UTC.`
-	for index, reward in GameConfig.PlaytimeRewards do
-		local row = rewardRows[index]
-		local key = tostring(index)
-		Art.progress(row.info, if state.claimed[key] then 1 else played, if state.claimed[key] then 1 else reward.minutes * 60)
-		if state.claimed[key] then
-			setButton(row.button, "Claimed", false, COLOR_BUY)
-		elseif played >= reward.minutes * 60 then
-			setButton(row.button, "Claim", true, COLOR_CLAIM)
-		else
-			setButton(row.button, `In {formatClock(reward.minutes * 60 - played)}`, false, COLOR_BUY)
-		end
-	end
 
 	-- Warband
 	local crew = state.crew

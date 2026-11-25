@@ -26,11 +26,11 @@ local TROOP_GLYPHS = {
 	archer = "\u{1F3F9}",
 	cavalry = "\u{1F40E}",
 	knight = "\u{1F6E1}\u{FE0F}",
-	siege = "\u{1FAB5}",
+	siege = "\u{1F40F}",
 }
 local RESOURCE_GLYPHS = {
-	lumber = "\u{1FAB5}",
-	stone = "\u{1FAA8}",
+	lumber = "\u{1F332}",
+	stone = "\u{26F0}\u{FE0F}",
 	iron = "\u{26D3}\u{FE0F}",
 	grain = "\u{1F33E}",
 }

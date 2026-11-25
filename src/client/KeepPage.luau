@@ -376,7 +376,7 @@ function KeepPage.draw(state, ui)
 		if old then
 			old:Destroy()
 		end
-		Scenes.keep(show.picture, state.keep, show.gate, 360)
+		Scenes.keep(show.picture, state.keep, show.gate, "fill")
 	end
 
 	local keep = GameConfig.KeepLevels[state.keep]

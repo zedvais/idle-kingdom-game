@@ -22,8 +22,8 @@ local GREEN = Color3.fromRGB(110, 210, 110)
 local AMBER = Color3.fromRGB(240, 196, 80)
 local ARROW, CLOCK, LOCK = "\u{27A1}", "\u{23F1}", "\u{1F512}"
 local RESOURCE_ICONS = {
-	lumber = "\u{1FAB5}", -- wood
-	stone = "\u{1FAA8}", -- rock
+	lumber = "\u{1F332}", -- wood
+	stone = "\u{26F0}\u{FE0F}", -- rock
 	iron = "\u{26CF}\u{FE0F}", -- pick
 	grain = "\u{1F33E}", -- sheaf
 }
