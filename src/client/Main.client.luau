@@ -497,7 +497,7 @@ local PAGE_GROUPS = {
 	{ name = "Realm", pages = { "Keep", "Estate", "Holdings", "Research", "Bank" } },
 	{ name = "Daily", pages = { "Bounties", "Festival" } },
 	{ name = "Campaign", pages = { "Quests", "Foes", "Expeditions" } },
-	{ name = "Arena", pages = { "Rankings", "War Chronicle" } },
+	{ name = "Arena", pages = { "Raids", "Realm Map", "Guild", "Rankings", "War Chronicle" } },
 	{ name = "Court", pages = { "Warband", "Barracks", "Inventory", "Relic Hall", "Market" } },
 	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
 }
@@ -508,7 +508,19 @@ local PAGE_INFO = {
 	},
 	Rankings = {
 		about = "The mightiest players across every server.",
-		tip = "Scores are sent while you play and the boards refresh every couple of minutes. Fights with other players come here later.",
+		tip = "Scores are sent while you play and the boards refresh every couple of minutes.",
+	},
+	Raids = {
+		about = "Raid other players' keeps for their gold on hand and resources.",
+		tip = "Your attack roll against their defense roll. Gold in the Bank is always safe, and the Hidden Cellar protects resources. A raided keep gets a 30 minute shield.",
+	},
+	["Realm Map"] = {
+		about = "Guilds siege the realm's territories every week.",
+		tip = "Each siege costs 1 stamina and adds points for your guild. The guild with the most points on a territory holds it next week, and its members get that territory's bonus.",
+	},
+	Guild = {
+		about = "Found or join a guild. Donations level it up for bonuses.",
+		tip = "Every guild level gives all members more income, attack and defense, and room for more members. Guilds also fight over the realm map.",
 	},
 	["War Chronicle"] = {
 		about = "Reports of your foe fights and expeditions, newest first.",
@@ -1557,7 +1569,7 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards" } do
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards", "RaidsPage", "GuildPage", "RealmPage" } do
 	local module = require(script.Parent:WaitForChild(name))
 	module.build(ui)
 	table.insert(pageModules, module)

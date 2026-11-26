@@ -168,6 +168,20 @@ local function newData()
 			},
 		},
 		chronicleNext = 1,
+		-- Raids, guild and realm (other players)
+		raid = {
+			shieldUntil = 0, -- no one can raid you before this
+			wins = 0, -- raids you won
+			losses = 0, -- raids you lost
+			held = 0, -- raids on you that failed
+			fell = 0, -- raids on you that took loot
+			stolen = 0, -- gold taken in raids, all time
+			lost = 0, -- gold lost to raids, all time
+			sieges = 0, -- realm sieges, all time
+			cooldowns = {}, -- [target id] = time you may raid them again
+			attackers = {}, -- recent attackers: { userId, name, time, win }
+		},
+		guild = { id = "", name = "", tag = "", level = 1, lastPost = 0 },
 		lastSeen = 0,
 	}
 end
@@ -185,7 +199,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate", "settings" } do
+	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate", "settings", "raid", "guild" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default

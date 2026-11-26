@@ -644,6 +644,9 @@ function Fx.short(value: number): string
 	return Fx.format and Fx.format(value) or tostring(value)
 end
 
+-- Pages can handle their own effect kinds: Fx.handlers[kind] = function(info).
+Fx.handlers = {}
+
 function Fx.setAnchor(name: string, object: GuiObject)
 	anchors[name] = object
 end
@@ -721,6 +724,9 @@ function Fx.init(art, gameConfig, format, remote: RemoteEvent, itemArt, send)
 			Fx.hit(info)
 		elseif kind == "levelup" then
 			Fx.levelUp(info)
+		elseif Fx.handlers[kind] then
+			-- pages add their own (raid, siege, guild)
+			Fx.handlers[kind](info)
 		end
 	end)
 end
