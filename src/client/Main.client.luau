@@ -1592,7 +1592,7 @@ for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "M
 end
 print("[Idle Kingdom] all pages built")
 
-showPage("Quests")
+showPage("Keep") -- the Keep is the home page
 
 ---------------------------------------------------------------------------
 -- Drawing the state the server sends
