@@ -153,7 +153,7 @@ local function newData()
 		-- rarity, set, count, levels = { ["L12"] = copies at level 12 } }
 		relics = { count = 0, auto = false, items = {}, seen = {} },
 		chests = {}, -- [rarity] = unopened chests in the inventory
-		rebirth = { count = 0, stars = 0 },
+		rebirth = { count = 0, stars = 0, best = 0 }, -- best = highest level before a rebirth,
 		-- Barracks, expeditions and the War Chronicle
 		troops = {}, -- [troop key] = count at home
 		training = { kind = "", count = 0, endsAt = 0 }, -- one batch at a time

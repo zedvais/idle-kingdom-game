@@ -740,6 +740,7 @@ local function refresh(player: Player)
 		relicBonus = RelicConfig.getTotalBonus(data.relics.items),
 		rebirth = data.rebirth,
 		rebirthStars = RebirthConfig.getStars(data.level),
+		rebirthBest = math.max(data.rebirth.best or 0, data.level),
 		rankings = boardTops,
 		troops = data.troops,
 		training = data.training,
@@ -2225,6 +2226,7 @@ function actions.Rebirth(player: Player, data, id: string)
 		return
 	end
 	local fromLevel = data.level
+	data.rebirth.best = math.max(data.rebirth.best or 0, fromLevel)
 	data.rebirth.count += 1
 	data.rebirth.stars += stars
 	local title = RebirthConfig.getTitle(data.rebirth.count)
