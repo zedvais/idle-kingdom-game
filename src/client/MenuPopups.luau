@@ -20,6 +20,17 @@ local MAX_TITLES = 24
 -- Newest first. Shown in Updates.
 local UPDATES = {
 	{
+		date = "26 Nov 2026",
+		title = "Raids, guilds and the realm map",
+		lines = {
+			"Raids: attack other players' keeps for their gold on hand. Bank gold is always safe.",
+			"Raids wound the defender; under 20 health they are incapacitated. Take revenge on anyone who raided you.",
+			"Guilds: found or join one, donate to level it up, chat on the guild wall.",
+			"Realm Map: 50 territories in 5 tiers. Claim empty ones, attack and siege the rest, station soldiers, fortify and live in one.",
+			"Foes and expeditions rebalanced to match real warband power.",
+		},
+	},
+	{
 		date = "25 Nov 2026",
 		title = "Boss fights, battle pass and a new inventory",
 		lines = {

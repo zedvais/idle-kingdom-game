@@ -7,7 +7,9 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared:WaitForChild("GameConfig"))
 local EstateConfig = require(Shared:WaitForChild("EstateConfig"))
 local Format = require(Shared:WaitForChild("Format"))
+local RebirthConfig = require(Shared:WaitForChild("RebirthConfig"))
 local Scenes = require(script.Parent:WaitForChild("Scenes"))
+local Kit = require(script.Parent:WaitForChild("Kit"))
 
 local KeepPage = {}
 
@@ -27,6 +29,18 @@ local pending = {} -- [skill id] = points added in the window, not yet applied
 local skillWindow = {}
 local latest = nil
 local drawnKeep = 0
+local reborn = {} -- widgets of the Rebirth panel
+local rebirthArmed = 0 -- os.clock() of the first press of REBIRTH
+local REBIRTH_CONFIRM = 5 -- seconds to press again
+local REBIRTH_PURPLE = Color3.fromRGB(150, 110, 220)
+-- What every Star gives, in the order the tiles show it.
+local STAR_TILES = {
+	{ "attack", "\u{2694}\u{FE0F}", "ATTACK", Color3.fromRGB(230, 110, 100) },
+	{ "defense", "\u{1F6E1}\u{FE0F}", "DEFENSE", Color3.fromRGB(130, 170, 230) },
+	{ "income", "\u{1F4B0}", "INCOME", Color3.fromRGB(120, 210, 120) },
+	{ "xp", "\u{2B06}\u{FE0F}", "QUEST EXP", Color3.fromRGB(180, 140, 240) },
+	{ "questGold", "\u{1F4DC}", "QUEST GOLD", Color3.fromRGB(240, 196, 80) },
+}
 
 ---------------------------------------------------------------------------
 -- Small builders
@@ -257,6 +271,178 @@ end
 -- Building the page
 ---------------------------------------------------------------------------
 
+-- The Rebirth panel under the stats, laid out like a prestige panel:
+-- next rebirth badge, level numbers, what every Star gives, and the button.
+local function buildRebirth(ui, page)
+	local art = ui.art
+	local frame = ui.makeFrame(page, UDim2.new(1, -10, 0, 232), UDim2.fromOffset(0, 0), Color3.fromRGB(30, 24, 38))
+	frame.LayoutOrder = ui.nextOrder()
+	ui.addCorner(frame, 8)
+	art.stroke(frame, Color3.fromRGB(90, 70, 120), 1.5, 0)
+	local shade = Instance.new("UIGradient")
+	shade.Rotation = 90
+	shade.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(170, 160, 185))
+	shade.Parent = frame
+
+	-- title strip: REBIRTH ... REBORN n TIMES  and a pip per rebirth (up to 10)
+	local strip = ui.makeFrame(frame, UDim2.new(1, 0, 0, 38), UDim2.fromOffset(0, 0), Color3.fromRGB(40, 30, 52))
+	ui.addCorner(strip, 8)
+	local line = ui.makeFrame(frame, UDim2.new(1, -16, 0, 2), UDim2.fromOffset(8, 38), ui.colors.gold)
+	line.BackgroundTransparency = 0.4
+	label(ui, strip, UDim2.new(0.4, 0, 1, 0), UDim2.fromOffset(14, 0), REBIRTH_PURPLE:Lerp(Color3.new(1, 1, 1), 0.3), 17, Enum.Font.GothamBlack).Text = "\u{1F31F} REBIRTH"
+	reborn.count = label(ui, strip, UDim2.new(0.6, -250, 1, 0), UDim2.new(0.4, 0, 0, 0), ui.colors.text, 15, Enum.Font.GothamBlack)
+	reborn.count.TextXAlignment = Enum.TextXAlignment.Right
+	reborn.pips = {}
+	for index = 1, 10 do
+		local pip = ui.makeFrame(strip, UDim2.fromOffset(18, 18), UDim2.new(1, -234 + (index - 1) * 22, 0.5, -9), Color3.fromRGB(30, 24, 38))
+		ui.addCorner(pip, 3)
+		reborn.pips[index] = { frame = pip, stroke = art.stroke(pip, Color3.fromRGB(110, 100, 120), 1.5, 0) }
+	end
+
+	-- NEXT badge on the left
+	local nextLabel = label(ui, frame, UDim2.new(0.16, 0, 0, 18), UDim2.fromOffset(0, 50), ui.colors.dim, 13)
+	nextLabel.TextXAlignment = Enum.TextXAlignment.Center
+	nextLabel.Text = "NEXT"
+	local holder = ui.makeFrame(frame, UDim2.fromOffset(96, 96), UDim2.new(0.08, -48, 0, 72), Color3.new(0, 0, 0))
+	holder.BackgroundTransparency = 1
+	local glow = ui.makeFrame(holder, UDim2.fromOffset(96, 96), UDim2.fromOffset(0, 0), REBIRTH_PURPLE)
+	glow.BackgroundTransparency = 0.75
+	ui.addCorner(glow, 48)
+	local disc = ui.makeFrame(holder, UDim2.fromOffset(70, 70), UDim2.fromOffset(13, 13), Color3.fromRGB(34, 28, 44))
+	disc.Rotation = 45
+	ui.addCorner(disc, 10)
+	reborn.discStroke = art.stroke(disc, REBIRTH_PURPLE, 3, 0)
+	reborn.number = label(ui, holder, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), ui.colors.text, 40, art.Fonts.title)
+	reborn.number.TextXAlignment = Enum.TextXAlignment.Center
+	reborn.number.ZIndex = disc.ZIndex + 1
+	reborn.badge = holder
+	reborn.title = label(ui, frame, UDim2.new(0.16, 0, 0, 20), UDim2.fromOffset(0, 184), ui.colors.text, 15, Enum.Font.GothamBlack)
+	reborn.title.TextXAlignment = Enum.TextXAlignment.Center
+
+	-- numbers across the middle
+	local function number(index: number, title: string)
+		local x = 0.17 + (index - 1) * 0.14
+		local small = label(ui, frame, UDim2.new(0.14, 0, 0, 16), UDim2.new(x, 0, 0, 52), ui.colors.dim, 12)
+		small.Text = title
+		local big = label(ui, frame, UDim2.new(0.14, 0, 0, 34), UDim2.new(x, 0, 0, 70), ui.colors.text, 30, Enum.Font.GothamBlack)
+		return big
+	end
+	reborn.required = number(1, "LEVEL REQUIRED")
+	reborn.current = number(2, "CURRENT LEVEL")
+	reborn.highest = number(3, "HIGHEST LEVEL")
+	reborn.stars = number(4, "STARS YOU GET")
+
+	-- EVERY STAR GIVES
+	local gives = label(ui, frame, UDim2.new(0.56, 0, 0, 16), UDim2.new(0.17, 0, 0, 114), ui.colors.gold, 12, Enum.Font.GothamBlack)
+	gives.Text = "EVERY STAR GIVES"
+	for index, tile in STAR_TILES do
+		local box = ui.makeFrame(frame, UDim2.new(0.112, -6, 0, 66), UDim2.new(0.17 + (index - 1) * 0.112, 0, 0, 136), Color3.fromRGB(40, 32, 24))
+		ui.addCorner(box, 4)
+		art.stroke(box, Color3.fromRGB(120, 96, 50), 1.5, 0)
+		local glyph = label(ui, box, UDim2.fromOffset(30, 30), UDim2.fromOffset(6, 6), ui.colors.text, 22)
+		glyph.Text = tile[2]
+		local amount = label(ui, box, UDim2.new(1, -40, 0, 28), UDim2.fromOffset(38, 6), tile[4], 20, Enum.Font.GothamBlack)
+		amount.Text = `+{math.floor((RebirthConfig.PerStar[tile[1]] or 0) * 100 + 0.5)}%`
+		local name = label(ui, box, UDim2.new(1, -8, 0, 18), UDim2.new(0, 4, 1, -24), ui.colors.dim, 11, Enum.Font.GothamBold)
+		name.TextXAlignment = Enum.TextXAlignment.Center
+		name.Text = tile[3]
+	end
+	local rules = ui.makeButton(frame, UDim2.new(0.56, 0, 0, 20), UDim2.new(0.17, 0, 0, 206), Color3.new(0, 0, 0))
+	rules.BackgroundTransparency = 1
+	rules:SetAttribute("NoGlow", true)
+	rules.Font = Enum.Font.GothamBold
+	rules.TextSize = 12
+	rules.TextColor3 = ui.colors.dim
+	rules.TextXAlignment = Enum.TextXAlignment.Left
+	rules.Text = "Starts you over at level 1. Your warband, gear and research stay.  WHAT RESETS? \u{203A}"
+	rules.Activated:Connect(function()
+		ui.openModal("Rebirth")
+	end)
+
+	-- the button and the level bar on the right
+	local button = ui.makeButton(frame, UDim2.new(0.24, 0, 0, 104), UDim2.new(1, -14, 0, 52), Color3.fromRGB(60, 54, 66))
+	button.AnchorPoint = Vector2.new(1, 0)
+	button.Font = Enum.Font.GothamBlack
+	button.TextSize = 22
+	button.TextWrapped = true
+	button.RichText = true
+	reborn.button = button
+	for _, child in button:GetChildren() do
+		if child:IsA("UIStroke") then
+			child:Destroy()
+		end
+	end
+	reborn.buttonStroke = art.stroke(button, REBIRTH_PURPLE, 2, 0)
+	button.Activated:Connect(function()
+		if not latest or RebirthConfig.getStars(latest.level) <= 0 then
+			return
+		end
+		if os.clock() - rebirthArmed < REBIRTH_CONFIRM then
+			rebirthArmed = 0
+			ui.send("Rebirth", "confirm")
+		else
+			rebirthArmed = os.clock()
+			Kit.pop(button, 1.06)
+			ui.redraw()
+			task.delay(REBIRTH_CONFIRM, ui.redraw)
+		end
+	end)
+	reborn.bar = Kit.bar(ui, frame, UDim2.new(0.24, 0, 0, 14), UDim2.new(0.76, -14, 0, 170), ui.colors.gold)
+	reborn.bar.text.Visible = false
+	reborn.barText = label(ui, frame, UDim2.new(0.24, 0, 0, 18), UDim2.new(0.76, -14, 0, 190), ui.colors.dim, 13)
+	reborn.barText.TextXAlignment = Enum.TextXAlignment.Center
+end
+
+local function drawRebirth(state)
+	local rebirth = state.rebirth or { count = 0, stars = 0 }
+	local starsNow = RebirthConfig.getStars(state.level)
+	local count = rebirth.count or 0
+	reborn.count.Text = `REBORN {count} TIME{if count == 1 then "" else "S"}  <font color="#F0C450">\u{2B50} {rebirth.stars or 0} STARS</font>`
+	for index, pip in reborn.pips do
+		local done = index <= count
+		pip.frame.BackgroundColor3 = if done then Color3.fromRGB(230, 196, 110) else Color3.fromRGB(30, 24, 38)
+		pip.stroke.Color = if done or index == count + 1 then Color3.fromRGB(240, 210, 130) else Color3.fromRGB(110, 100, 120)
+	end
+	reborn.number.Text = tostring(count + 1)
+	reborn.title.Text = `REBIRTH {count + 1}`
+	local ready = starsNow > 0
+	reborn.required.Text = `<font color="{if ready then "#6ED26E" else "#E66A5E"}">{RebirthConfig.MinLevel}</font>`
+	reborn.current.Text = tostring(state.level)
+	reborn.highest.Text = tostring(math.max(state.rebirthBest or 0, state.level))
+	reborn.stars.Text = if ready then `<font color="#F0C450">\u{2B50} {starsNow}</font>` else `<font color="#8A8090">0</font>`
+	reborn.discStroke.Color = if ready then Color3.fromRGB(240, 196, 80) else REBIRTH_PURPLE
+
+	local armed = ready and os.clock() - rebirthArmed < REBIRTH_CONFIRM
+	if not ready then
+		reborn.button.Text = `REACH LEVEL\n{RebirthConfig.MinLevel}`
+		reborn.button.TextColor3 = Color3.fromRGB(150, 144, 156)
+		reborn.button.BackgroundColor3 = Color3.fromRGB(60, 54, 66)
+		reborn.button.AutoButtonColor = false
+	elseif armed then
+		reborn.button.Text = "PRESS AGAIN\nTO CONFIRM"
+		reborn.button.TextColor3 = Color3.fromRGB(40, 24, 10)
+		reborn.button.BackgroundColor3 = Color3.fromRGB(240, 196, 80)
+		reborn.button.AutoButtonColor = true
+	else
+		reborn.button.Text = `REBIRTH\n<font size="16">+{starsNow} \u{2B50}</font>`
+		reborn.button.TextColor3 = Color3.new(1, 1, 1)
+		reborn.button.BackgroundColor3 = Color3.fromRGB(110, 70, 170)
+		reborn.button.AutoButtonColor = true
+	end
+	Kit.setPulse(reborn.buttonStroke, ready and not armed, REBIRTH_PURPLE)
+	if ready then
+		-- progress to the next Star
+		local nextStar = RebirthConfig.MinLevel + starsNow * RebirthConfig.LevelsPerStar
+		local from = nextStar - RebirthConfig.LevelsPerStar
+		Kit.setBar(reborn.bar, state.level - from, RebirthConfig.LevelsPerStar, "")
+		reborn.barText.Text = `{starsNow + 1} STARS AT LEVEL {nextStar}`
+	else
+		Kit.setBar(reborn.bar, state.level, RebirthConfig.MinLevel, "")
+		reborn.barText.Text = `LEVEL {state.level} OF {RebirthConfig.MinLevel}`
+	end
+end
+
+
 function KeepPage.build(ui)
 	local page = ui.pages.Keep
 	local colors = ui.colors
@@ -357,6 +543,8 @@ function KeepPage.build(ui)
 	panels.sources = sourceValues
 	panels.sourceNames = sourceNames
 
+	buildRebirth(ui, page)
+
 	buildSkillWindow(ui)
 end
 
@@ -446,6 +634,8 @@ function KeepPage.draw(state, ui)
 		panels.sourceNames[tostring(index)].Text = if part then string.upper(part[1]) else ""
 		value.Text = if part then `{Format.short(part[2])} atk  {Format.short(part[3])} def` else ""
 	end
+
+	drawRebirth(state)
 
 	if ui.isOpen("Skills") then
 		drawSkillWindow(ui)

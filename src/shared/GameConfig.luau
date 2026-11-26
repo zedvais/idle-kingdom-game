@@ -743,7 +743,6 @@ GameConfig.HitRollMin = 0.85
 GameConfig.HitRollMax = 1.15
 
 -- Fills in each stage's numbers from its level and place in its house.
--- `power` is roughly the attack a player has at that level.
 local function buildStages()
 	local houseIndex, place, lastHouse = 0, 0, nil
 	for index, stage in GameConfig.Stages do
@@ -754,7 +753,11 @@ local function buildStages()
 		end
 		place += 1
 		local level = stage.level
-		local power = 0.6 * level ^ 2.3 + 10
+		-- Expected attack of a player at this level who keeps their warband
+		-- and gear up to date (fitted from a model of slots, rarities, gear,
+		-- skills and Keep bonus): about 30 at level 2, 160 at 10, 800 at 30,
+		-- 2800 at 60.
+		local power = 10 + 4.5 * level ^ 1.55
 		local playerHealth = GameConfig.BaseMaxHealth + 5 * level
 		stage.id = "s" .. index
 		stage.index = index

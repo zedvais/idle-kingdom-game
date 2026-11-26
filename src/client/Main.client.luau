@@ -497,7 +497,7 @@ local PAGE_GROUPS = {
 	{ name = "Realm", pages = { "Keep", "Estate", "Holdings", "Research", "Bank" } },
 	{ name = "Daily", pages = { "Bounties", "Festival" } },
 	{ name = "Campaign", pages = { "Quests", "Foes", "Expeditions" } },
-	{ name = "Arena", pages = { "Rankings", "War Chronicle" } },
+	{ name = "Arena", pages = { "Raids", "Realm Map", "Guild", "Rankings", "War Chronicle" } },
 	{ name = "Court", pages = { "Warband", "Barracks", "Inventory", "Relic Hall", "Market" } },
 	{ name = "Treasury", pages = { "Royal Pass", "Shop" } },
 }
@@ -508,7 +508,19 @@ local PAGE_INFO = {
 	},
 	Rankings = {
 		about = "The mightiest players across every server.",
-		tip = "Scores are sent while you play and the boards refresh every couple of minutes. Fights with other players come here later.",
+		tip = "Scores are sent while you play and the boards refresh every couple of minutes.",
+	},
+	Raids = {
+		about = "Raid other players' keeps for their gold on hand and resources.",
+		tip = "Your attack roll against their defense roll. Gold in the Bank is always safe, and the Hidden Cellar protects resources. Every raid wounds the defender; under 20 health they can not be raided (or raid) until they recover.",
+	},
+	["Realm Map"] = {
+		about = "Fifty territories in five lands. Guilds claim them and fight over them.",
+		tip = "Nobody holds it? Claim it for gold. Another guild holds it? Attack (stamina) and siege (energy) until its strength hits 0. Holders station soldiers, fortify, and get the bonus plus a stipend every 2 hours. Anyone can live in one territory for a share of its bonus, if its holders let them (open, by application or closed, with a level and rent).",
+	},
+	Guild = {
+		about = "Found or join a guild. Donations level it up for bonuses.",
+		tip = "Every guild level gives all members more income, attack and defense, and room for more members. Guilds also fight over the realm map.",
 	},
 	["War Chronicle"] = {
 		about = "Reports of your foe fights and expeditions, newest first.",
@@ -1386,6 +1398,9 @@ do
 		{ key = "Train", title = "Train soldier", width = 520, height = 470 },
 		{ key = "Holding", title = "Holding", width = 520, height = 470 },
 		{ key = "IncomeBonus", title = "Income bonus", width = 460, height = 420 },
+		{ key = "Territory", title = "Territory", width = 980, height = 660 },
+		{ key = "RealmList", title = "Territories", width = 720, height = 600 },
+		{ key = "RealmBonuses", title = "Realm bonuses", width = 600, height = 480 },
 	}
 	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560
 
@@ -1557,19 +1572,34 @@ ui = {
 	end,
 }
 local pageModules = {}
-for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards" } do
-	local module = require(script.Parent:WaitForChild(name))
-	module.build(ui)
-	table.insert(pageModules, module)
+for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards", "RaidsPage", "GuildPage", "RealmPage" } do
+	-- one broken page must not stop the whole game from opening
+	local started = os.clock()
+	print(`[Idle Kingdom] building {name}`)
+	local ok, problem = pcall(function()
+		local module = require(script.Parent:WaitForChild(name))
+		module.build(ui)
+		module.name = module.name or name
+		table.insert(pageModules, module)
+	end)
+	if not ok then
+		warn(`[Idle Kingdom] {name} failed to build: {problem}`)
+	end
+	local took = os.clock() - started
+	if took > 0.2 then
+		warn(`[Idle Kingdom] {name} took {math.floor(took * 1000)} ms to build`)
+	end
 end
+print("[Idle Kingdom] all pages built")
 
-showPage("Quests")
+showPage("Keep") -- the Keep is the home page
 
 ---------------------------------------------------------------------------
 -- Drawing the state the server sends
 ---------------------------------------------------------------------------
 
 local lastState = nil
+local firstDrawDone = false
 local refreshRecruitWindow -- defined further down, with the recruit window
 
 -- Shop: the page is built in ShopPage.luau.
@@ -1579,7 +1609,20 @@ local function draw(state)
 	local stats = state.stats
 	local gold = state.gold
 	for _, module in pageModules do
-		module.draw(state, ui)
+		local started = os.clock()
+		local ok, problem = pcall(module.draw, state, ui)
+		if not ok and not module.warned then
+			module.warned = true
+			warn(`[Idle Kingdom] {module.name} failed to draw: {problem}`)
+		end
+		if os.clock() - started > 0.3 and not module.slowWarned then
+			module.slowWarned = true
+			warn(`[Idle Kingdom] {module.name} took {math.floor((os.clock() - started) * 1000)} ms to draw`)
+		end
+	end
+	if lastState == state and not firstDrawDone then
+		firstDrawDone = true
+		print("[Idle Kingdom] first screen drawn")
 	end
 
 	-- Top bar

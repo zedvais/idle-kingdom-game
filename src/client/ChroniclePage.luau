@@ -137,7 +137,7 @@ function ChroniclePage.draw(state, ui)
 		local isExpedition = string.sub(report.title, 1, 10) == "Expedition"
 		part.ribbon.BackgroundColor3 = color
 		part.stroke.Color = color
-		part.glyph.Text = if isExpedition then "\u{1F5FA}\u{FE0F}" elseif report.win == false then "\u{1F915}" else "\u{1F409}"
+		part.glyph.Text = if isExpedition then "\u{1F5FA}\u{FE0F}" elseif report.win == false then "\u{1F480}" else "\u{1F409}"
 		part.tag.BackgroundColor3 = color:Lerp(Color3.new(0, 0, 0), 0.35)
 		part.tag.Text = if report.win == true then "\u{1F3C6} VICTORY" elseif report.win == false then "\u{1F480} DEFEAT" else "REPORT"
 		part.title.Text = report.title

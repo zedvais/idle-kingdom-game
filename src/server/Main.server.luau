@@ -26,6 +26,8 @@ local Recruit = require(script.Parent.Recruit)
 local Loadout = require(script.Parent.Loadout)
 local PlayerData = require(script.Parent.PlayerData)
 local Store = require(script.Parent.Store)
+local Social = require(script.Parent.Social) -- raids, guilds, realm map
+local socialWarned = false
 
 local AUTOSAVE_SECONDS = 60
 local MAX_ACTIONS_PER_SECOND = 25
@@ -242,6 +244,10 @@ local function getPerkBonus(data, gear)
 	end
 	-- Walls and Archer Towers on the Estate.
 	total.defense += EstateConfig.summarize(data.estate.castles).defense
+	-- Guild level and the realm territories your guild holds.
+	for key, amount in Social.bonus(data) do
+		total[key] = (total[key] or 0) + amount
+	end
 	return total
 end
 
@@ -651,7 +657,7 @@ local function refresh(player: Player)
 		end
 	end
 
-	stateRemote:FireClient(player, {
+	local state = {
 		regenIn = regenIn,
 		chests = data.chests,
 		gold = data.gold,
@@ -734,6 +740,7 @@ local function refresh(player: Player)
 		relicBonus = RelicConfig.getTotalBonus(data.relics.items),
 		rebirth = data.rebirth,
 		rebirthStars = RebirthConfig.getStars(data.level),
+		rebirthBest = math.max(data.rebirth.best or 0, data.level),
 		rankings = boardTops,
 		troops = data.troops,
 		training = data.training,
@@ -745,7 +752,18 @@ local function refresh(player: Player)
 		estate = data.estate,
 		estateSummary = EstateConfig.summarize(data.estate.castles),
 		estateLeft = estateLeft,
-	})
+	}
+	-- raids, guilds and the realm must not stop the rest of the game
+	local socialOk, social = pcall(Social.state, player, data)
+	if socialOk then
+		for key, value in social do
+			state[key] = value
+		end
+	elseif not socialWarned then
+		socialWarned = true
+		warn(`[Idle Kingdom] Social state failed: {social}`)
+	end
+	stateRemote:FireClient(player, state)
 
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if leaderstats then
@@ -2208,6 +2226,7 @@ function actions.Rebirth(player: Player, data, id: string)
 		return
 	end
 	local fromLevel = data.level
+	data.rebirth.best = math.max(data.rebirth.best or 0, fromLevel)
 	data.rebirth.count += 1
 	data.rebirth.stars += stars
 	local title = RebirthConfig.getTitle(data.rebirth.count)
@@ -3112,7 +3131,7 @@ actionRemote.OnServerEvent:Connect(function(player: Player, action, id)
 	if not session or type(action) ~= "string" then
 		return
 	end
-	if id ~= nil and (type(id) ~= "string" or #id > 64) then
+	if id ~= nil and (type(id) ~= "string" or #id > 160) then
 		return
 	end
 
@@ -3232,6 +3251,7 @@ local function onPlayerAdded(player: Player)
 		holdingCarry = {}, -- [holding id] = fraction of a gold not paid yet
 	}
 	refresh(player)
+	Social.onJoin(player, data)
 
 	-- Last week's festival rank reward, if it has not been paid yet.
 	checkFestival(data)
@@ -3249,12 +3269,32 @@ local function onPlayerRemoving(player: Player)
 		return
 	end
 	sessions[player] = nil
+	task.spawn(Social.onLeave, player, session.data)
 	if session.canSave then
 		PlayerData.save(player, session.data, true)
 		saveFestivalScore(player, session.data)
 		saveBoardScores(player, session)
 	end
 end
+
+Social.register(actions)
+Social.init({
+	sessions = sessions,
+	getStats = getStats,
+	sendToast = sendToast,
+	sendFx = sendFx,
+	addReport = addReport,
+	refresh = refresh,
+	countLifetime = countLifetime,
+	canAfford = canAfford,
+	clearMember = Loadout.clearMember,
+	addStock = function(data, stock)
+		local caps = EstateConfig.summarize(data.estate.castles).caps
+		for resource, amount in stock do
+			addStock(data, resource, amount, caps)
+		end
+	end,
+})
 
 Store.init({
 	getSession = function(player: Player)
