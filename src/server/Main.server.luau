@@ -27,6 +27,7 @@ local Loadout = require(script.Parent.Loadout)
 local PlayerData = require(script.Parent.PlayerData)
 local Store = require(script.Parent.Store)
 local Social = require(script.Parent.Social) -- raids, guilds, realm map
+local socialWarned = false
 
 local AUTOSAVE_SECONDS = 60
 local MAX_ACTIONS_PER_SECOND = 25
@@ -751,8 +752,15 @@ local function refresh(player: Player)
 		estateSummary = EstateConfig.summarize(data.estate.castles),
 		estateLeft = estateLeft,
 	}
-	for key, value in Social.state(player, data) do
-		state[key] = value
+	-- raids, guilds and the realm must not stop the rest of the game
+	local socialOk, social = pcall(Social.state, player, data)
+	if socialOk then
+		for key, value in social do
+			state[key] = value
+		end
+	elseif not socialWarned then
+		socialWarned = true
+		warn(`[Idle Kingdom] Social state failed: {social}`)
 	end
 	stateRemote:FireClient(player, state)
 

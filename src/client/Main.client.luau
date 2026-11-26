@@ -1573,9 +1573,16 @@ ui = {
 }
 local pageModules = {}
 for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards", "RaidsPage", "GuildPage", "RealmPage" } do
-	local module = require(script.Parent:WaitForChild(name))
-	module.build(ui)
-	table.insert(pageModules, module)
+	-- one broken page must not stop the whole game from opening
+	local ok, problem = pcall(function()
+		local module = require(script.Parent:WaitForChild(name))
+		module.build(ui)
+		module.name = module.name or name
+		table.insert(pageModules, module)
+	end)
+	if not ok then
+		warn(`[Idle Kingdom] {name} failed to build: {problem}`)
+	end
 end
 
 showPage("Quests")
@@ -1594,7 +1601,11 @@ local function draw(state)
 	local stats = state.stats
 	local gold = state.gold
 	for _, module in pageModules do
-		module.draw(state, ui)
+		local ok, problem = pcall(module.draw, state, ui)
+		if not ok and not module.warned then
+			module.warned = true
+			warn(`[Idle Kingdom] {module.name} failed to draw: {problem}`)
+		end
 	end
 
 	-- Top bar
