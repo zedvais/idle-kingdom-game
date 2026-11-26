@@ -1574,6 +1574,8 @@ ui = {
 local pageModules = {}
 for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "MailPage", "RelicPage", "BarracksPage", "ExpeditionsPage", "ChroniclePage", "AutoPopups", "EstatePage", "KeepPage", "PassPopup", "ChestShelf", "RollReel", "TrainPopup", "HoldingsPage", "QuestsPage", "FoesPage", "RoyalPassPage", "InventoryPage", "MenuPopups", "BankPage", "MarketPage", "ShopPage", "BountiesPage", "FestivalPage", "ResearchPage", "PlaytimeRewards", "RaidsPage", "GuildPage", "RealmPage" } do
 	-- one broken page must not stop the whole game from opening
+	local started = os.clock()
+	print(`[Idle Kingdom] building {name}`)
 	local ok, problem = pcall(function()
 		local module = require(script.Parent:WaitForChild(name))
 		module.build(ui)
@@ -1583,7 +1585,12 @@ for _, name in { "AmountPopup", "ProfilePage", "RebirthPage", "RankingsPage", "M
 	if not ok then
 		warn(`[Idle Kingdom] {name} failed to build: {problem}`)
 	end
+	local took = os.clock() - started
+	if took > 0.2 then
+		warn(`[Idle Kingdom] {name} took {math.floor(took * 1000)} ms to build`)
+	end
 end
+print("[Idle Kingdom] all pages built")
 
 showPage("Quests")
 
@@ -1592,6 +1599,7 @@ showPage("Quests")
 ---------------------------------------------------------------------------
 
 local lastState = nil
+local firstDrawDone = false
 local refreshRecruitWindow -- defined further down, with the recruit window
 
 -- Shop: the page is built in ShopPage.luau.
@@ -1601,11 +1609,20 @@ local function draw(state)
 	local stats = state.stats
 	local gold = state.gold
 	for _, module in pageModules do
+		local started = os.clock()
 		local ok, problem = pcall(module.draw, state, ui)
 		if not ok and not module.warned then
 			module.warned = true
 			warn(`[Idle Kingdom] {module.name} failed to draw: {problem}`)
 		end
+		if os.clock() - started > 0.3 and not module.slowWarned then
+			module.slowWarned = true
+			warn(`[Idle Kingdom] {module.name} took {math.floor((os.clock() - started) * 1000)} ms to draw`)
+		end
+	end
+	if lastState == state and not firstDrawDone then
+		firstDrawDone = true
+		print("[Idle Kingdom] first screen drawn")
 	end
 
 	-- Top bar
