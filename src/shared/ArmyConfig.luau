@@ -35,6 +35,9 @@ ArmyConfig.BaseCap = 30
 ArmyConfig.CapPerKeep = 20
 
 -- Expeditions. power = the enemy's strength; your attack power must beat
+-- it. Tuned so a full army of the right counter troops at the expedition's
+-- level has about 1.5x to 2x the power needed (army room = BaseCap +
+-- CapPerKeep x Keep level).
 -- it. Rewards: `goldMinutes` of holding income (with the usual floor),
 -- `plunder` resources (up to your storage),
 -- boss tokens, and a chance of a gear chest and of Crowns.
@@ -84,7 +87,7 @@ ArmyConfig.Expeditions = {
 		level = 15,
 		minutes = 60,
 		enemy = "fort",
-		power = 1800,
+		power = 1200,
 		goldMinutes = 100,
 		plunder = { stone = 8000, iron = 2000 },
 		tokens = 10,
@@ -99,7 +102,7 @@ ArmyConfig.Expeditions = {
 		level = 25,
 		minutes = 90,
 		enemy = "mixed",
-		power = 6000,
+		power = 1800,
 		goldMinutes = 150,
 		plunder = { iron = 8000, stone = 15000 },
 		tokens = 16,
@@ -114,7 +117,7 @@ ArmyConfig.Expeditions = {
 		level = 40,
 		minutes = 120,
 		enemy = "fort",
-		power = 20000,
+		power = 5000,
 		goldMinutes = 200,
 		plunder = { iron = 25000, stone = 40000, lumber = 40000 },
 		tokens = 25,
