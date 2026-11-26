@@ -516,7 +516,7 @@ local PAGE_INFO = {
 	},
 	["Realm Map"] = {
 		about = "Thirty territories in five lands. Guilds claim them and fight over them.",
-		tip = "Nobody holds it? Claim it for gold. Another guild holds it? Attack (stamina) and siege (energy) until its strength hits 0. Holders station soldiers, fortify, and get the bonus plus a stipend every 2 hours. Anyone can live in one territory for a share of its bonus.",
+		tip = "Nobody holds it? Claim it for gold. Another guild holds it? Attack (stamina) and siege (energy) until its strength hits 0. Holders station soldiers, fortify, and get the bonus plus a stipend every 2 hours. Anyone can live in one territory for a share of its bonus, if its holders let them (open, by application or closed, with a level and rent).",
 	},
 	Guild = {
 		about = "Found or join a guild. Donations level it up for bonuses.",

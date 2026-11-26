@@ -185,7 +185,7 @@ local function newData()
 		-- (stationed[i] = { t = territory id, round, soldier }; t = "" means
 		-- back from the front, waiting for a free warband slot) and the last
 		-- stipend period paid.
-		realm = { home = "", stationed = {}, stipendPaid = 0, attacks = 0, claims = 0, captures = 0, donated = 0 },
+		realm = { home = "", applied = "", stationed = {}, stipendPaid = 0, rentPaid = 0, attacks = 0, claims = 0, captures = 0, donated = 0 },
 		lastSeen = 0,
 	}
 end

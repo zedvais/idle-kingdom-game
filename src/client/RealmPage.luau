@@ -3,13 +3,15 @@
 -- Page: banner with the top three guilds, how many territories your guild
 -- holds and the next stipend; a tier selector (five lands, each with its
 -- own look); the tier's map with six territories colored by the guild
--- that holds them, each showing its building, holder, strength and bonus.
+-- that holds them, each showing its building, holder, strength and bonus,
+-- all on one grid map of the realm (drag, zoom, jump to a region).
 --
 -- Territory popup (press a territory), like Idle Mafia's district window:
 --   OVERVIEW  bonus, stipend, strength, garrison and history
 --   ATTACK    CLAIM when nobody holds it, otherwise ATTACK and SIEGE
 --   GARRISON  station soldiers from your warband, recall them
---   RESIDENTS live there for a share of its bonus
+--   RESIDENTS live there for a share of its bonus; holders set the rules
+--             (open, by application or closed, a level and a rent)
 --   FORTIFY   four buildings (named for the tier), funded with gold and energy
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -25,9 +27,8 @@ local Landmarks = require(script.Parent:WaitForChild("Landmarks"))
 local RealmPage = {}
 
 local w = {}
-local blobs = {} -- [slot 1..6] = tile widgets
 local pop = {} -- Territory popup widgets
-local tierShown = nil
+local tierShown = nil -- region the map is zoomed to (nil = whole map)
 local selected = "" -- territory open in the popup
 local tab = "overview"
 local latest = nil
@@ -77,16 +78,6 @@ local function ago(seconds: number): string
 	return `{math.floor(seconds / 86400)}d ago`
 end
 
-local function bestTier(level: number): number
-	local best = 1
-	for index, tier in SocialConfig.Tiers do
-		if level >= tier.level then
-			best = index
-		end
-	end
-	return best
-end
-
 ---------------------------------------------------------------------------
 -- Map page
 ---------------------------------------------------------------------------
@@ -99,104 +90,279 @@ local function openTerritory(ui, territory)
 	ui.openModal("Territory", territory.name)
 end
 
-local function buildBlob(ui, board: Frame, slot: number)
-	local x, y = SocialConfig.Territories[slot].x, SocialConfig.Territories[slot].y
-	local holder = ui.makeFrame(board, UDim2.fromScale(0.27, 0.42), UDim2.fromScale(x, y), Color3.new(1, 1, 1))
-	holder.BackgroundTransparency = 1
-	holder.ZIndex = 20
-	local scale = Instance.new("UIScale")
-	scale.Name = "Pop"
-	scale.Parent = holder
-	-- the land: a rounded patch plus two lobes so it looks like a region
-	local lobes = {}
-	for index, place in { { -0.06, 0.18, 0.5, 0.7 }, { 0.56, 0.3, 0.5, 0.7 } } do
-		local lobe = ui.makeFrame(holder, UDim2.fromScale(place[3], place[4]), UDim2.fromScale(place[1], place[2]), PARCHMENT)
-		lobe.ZIndex = 21
-		lobe.BackgroundTransparency = 0.15
-		ui.addCorner(lobe, 60)
-		lobes[index] = lobe
+-- The realm is one big grid map, like Idle Mafia's: each tier is a region
+-- of 3 x 2 territories, laid out in a 3 x 2 grid of regions (the top left
+-- corner is the sea). Drag to move, zoom with the wheel or the buttons,
+-- jump between regions with the arrows.
+local CELL_W, CELL_H, CELL_GAP = 210, 170, 6
+local REGION_GAP = 40
+local REGION_W, REGION_H = 3 * CELL_W + 4 * CELL_GAP, 2 * CELL_H + 3 * CELL_GAP
+local REGION_SPOT = { { 0, 1 }, { 1, 1 }, { 2, 1 }, { 2, 0 }, { 1, 0 } } -- tier -> region column, row
+local CANVAS_W = 3 * REGION_W + 4 * REGION_GAP
+local CANVAS_H = 2 * REGION_H + 3 * REGION_GAP
+local cells = {} -- [territory id] = cell widgets
+local camera = { x = CANVAS_W / 2, y = CANVAS_H / 2, zoom = 0.5 }
+local goal = { x = CANVAS_W / 2, y = CANVAS_H / 2, zoom = 0.5 }
+local drag = { on = false, moved = false, from = Vector2.zero, start = nil }
+
+local function regionOrigin(tier: number): Vector2
+	local spot = REGION_SPOT[tier]
+	return Vector2.new(REGION_GAP + spot[1] * (REGION_W + REGION_GAP), REGION_GAP + spot[2] * (REGION_H + REGION_GAP))
+end
+
+local function fitZoom(): number
+	local size = w.board.AbsoluteSize
+	if size.X <= 0 then
+		return 0.5
 	end
-	local land = ui.makeButton(holder, UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), PARCHMENT)
-	land.ZIndex = 22
-	land.AutoButtonColor = false
-	land.BackgroundTransparency = 0.1
-	ui.addCorner(land, 40)
-	for _, child in land:GetChildren() do
+	return math.min(size.X / CANVAS_W, size.Y / CANVAS_H)
+end
+
+local function clampGoal()
+	local fit = fitZoom()
+	goal.zoom = math.clamp(goal.zoom, fit, 1.6)
+	goal.x = math.clamp(goal.x, 0, CANVAS_W)
+	goal.y = math.clamp(goal.y, 0, CANVAS_H)
+end
+
+local function resetView()
+	goal.x, goal.y = CANVAS_W / 2, CANVAS_H / 2
+	goal.zoom = fitZoom()
+end
+
+local function focusRegion(tier: number)
+	local origin = regionOrigin(tier)
+	goal.x = origin.X + REGION_W / 2
+	goal.y = origin.Y + REGION_H / 2
+	local size = w.board.AbsoluteSize
+	goal.zoom = if size.X > 0 then math.min(size.X / (REGION_W + 80), size.Y / (REGION_H + 80), 1.3) else 1
+	clampGoal()
+end
+
+local function applyCamera()
+	w.canvasScale.Scale = camera.zoom
+	w.canvas.Position = UDim2.new(0.5, -camera.x * camera.zoom, 0.5, -camera.y * camera.zoom)
+end
+
+local function buildCell(ui, region: Frame, territory)
+	local column = (territory.slot - 1) % 3
+	local row = (territory.slot - 1) // 3
+	local cell = ui.makeButton(region, UDim2.fromOffset(CELL_W, CELL_H), UDim2.fromOffset(CELL_GAP + column * (CELL_W + CELL_GAP), CELL_GAP + row * (CELL_H + CELL_GAP)), PARCHMENT)
+	cell.AutoButtonColor = false
+	cell.ZIndex = 22
+	cell.ClipsDescendants = true
+	ui.addCorner(cell, 8)
+	for _, child in cell:GetChildren() do
 		if child:IsA("UIStroke") then
-			child:Destroy() -- the button edge; the land gets its own border
+			child:Destroy() -- the button edge; the cell gets its own border
 		end
 	end
-	local stroke = ui.art.stroke(land, Color3.fromRGB(40, 30, 20), 3, 0.1)
-	ui.art.grain(land)
-	local picture = ui.makeFrame(land, UDim2.fromScale(0.5, 0.42), UDim2.fromScale(0.25, 0.04), Color3.new(0, 0, 0))
+	local stroke = ui.art.stroke(cell, Color3.fromRGB(30, 22, 14), 3, 0)
+	ui.art.grain(cell)
+	local scale = Instance.new("UIScale")
+	scale.Name = "Pop"
+	scale.Parent = cell
+	local picture = ui.makeFrame(cell, UDim2.fromOffset(110, 74), UDim2.new(0.5, -55, 0, 4), Color3.new(0, 0, 0))
 	picture.BackgroundTransparency = 1
 	picture.ZIndex = 400
-	local name = ui.makeText(land, UDim2.new(1, -16, 0, 24), UDim2.new(0, 8, 0.46, 0), ui.colors.gold, 18)
+	local name = ui.makeText(cell, UDim2.new(1, -12, 0, 22), UDim2.fromOffset(6, 78), ui.colors.gold, 17)
 	name.Font = ui.art.Fonts.heading
 	name.TextXAlignment = Enum.TextXAlignment.Center
-	name.TextStrokeTransparency = 0.3
+	name.TextStrokeTransparency = 0.2
+	name.Text = territory.name
 	name.ZIndex = 430
-	local owner = ui.makeText(land, UDim2.new(1, -16, 0, 18), UDim2.new(0, 8, 0.46, 24), Color3.new(1, 1, 1), 12)
+	local owner = ui.makeText(cell, UDim2.new(1, -12, 0, 16), UDim2.fromOffset(6, 100), Color3.new(1, 1, 1), 12)
 	owner.Font = Enum.Font.GothamBlack
 	owner.TextXAlignment = Enum.TextXAlignment.Center
-	owner.TextStrokeTransparency = 0.4
+	owner.TextStrokeTransparency = 0.3
 	owner.TextTruncate = Enum.TextTruncate.AtEnd
 	owner.ZIndex = 430
-	local bar = Kit.bar(ui, land, UDim2.new(0.8, 0, 0, 14), UDim2.new(0.1, 0, 0.46, 46), Kit.RED)
+	local bar = Kit.bar(ui, cell, UDim2.new(1, -24, 0, 13), UDim2.fromOffset(12, 120), Kit.RED)
 	bar.back.ZIndex = 430
 	bar.fill.ZIndex = 431
 	bar.text.ZIndex = 432
 	bar.text.TextSize = 10
-	local pill = ui.makeText(land, UDim2.new(0.7, 0, 0, 18), UDim2.new(0.15, 0, 0.46, 66), Color3.fromRGB(30, 20, 8), 11)
+	local pill = ui.makeText(cell, UDim2.new(1, -40, 0, 18), UDim2.fromOffset(20, 140), Color3.fromRGB(30, 20, 8), 11)
 	pill.BackgroundTransparency = 0
 	pill.BackgroundColor3 = Kit.GOLD
 	pill.Font = Enum.Font.GothamBlack
 	pill.TextXAlignment = Enum.TextXAlignment.Center
+	pill.Text = bonusText(territory)
 	pill.ZIndex = 430
 	ui.addCorner(pill, 5)
-	local flags = ui.makeText(land, UDim2.new(1, -20, 0, 26), UDim2.fromOffset(10, 6), Color3.new(1, 1, 1), 20)
+	local flags = ui.makeText(cell, UDim2.new(1, -10, 0, 22), UDim2.fromOffset(4, 4), Color3.new(1, 1, 1), 16)
 	flags.TextXAlignment = Enum.TextXAlignment.Right
 	flags.ZIndex = 440
-	land.Activated:Connect(function()
-		local territory = byTier[tierShown or 1][slot]
-		Kit.pop(holder, 1.06)
+	local number = ui.makeText(cell, UDim2.fromOffset(40, 20), UDim2.fromOffset(8, 4), Color3.new(1, 1, 1), 12)
+	number.Font = Enum.Font.GothamBlack
+	number.TextStrokeTransparency = 0.3
+	number.Text = `{territory.tier}-{territory.slot}`
+	number.ZIndex = 440
+	cell.Activated:Connect(function()
+		if drag.moved then
+			return -- that press was a drag of the map
+		end
+		Kit.pop(cell, 1.06)
 		openTerritory(ui, territory)
 	end)
-	blobs[slot] = { holder = holder, land = land, lobes = lobes, stroke = stroke, picture = picture, name = name, owner = owner, bar = bar, pill = pill, flags = flags }
+	Landmarks.draw(picture, territory.tier)
+	cells[territory.id] = { cell = cell, stroke = stroke, owner = owner, bar = bar, flags = flags, territory = territory }
 end
 
--- Background for a tier: sky, ground and scattered scenery.
-local DECOR = {
-	{ "\u{1F332}", "\u{1F33E}", "\u{1F333}" },
-	{ "\u{26F0}\u{FE0F}", "\u{1F332}", "\u{1F5FB}" },
-	{ "\u{1F525}", "\u{1F30B}", "\u{26F0}\u{FE0F}" },
-	{ "\u{26F0}\u{FE0F}", "\u{2692}\u{FE0F}", "\u{1F5FB}" },
-	{ "\u{2B50}", "\u{1F3F0}", "\u{1F333}" },
-}
-local DECOR_SPOTS = {
-	{ 0.31, 0.44 }, { 0.62, 0.42 }, { 0.02, 0.45 }, { 0.93, 0.47 }, { 0.3, 0.92 }, { 0.65, 0.93 },
-	{ 0.95, 0.05 }, { 0.01, 0.02 }, { 0.5, 0.45 }, { 0.97, 0.9 }, { 0.02, 0.92 },
-}
+-- Scenery in the sea corner.
+local function buildSea(ui, canvas: Frame)
+	local sea = ui.makeFrame(canvas, UDim2.fromOffset(REGION_W, REGION_H), UDim2.fromOffset(REGION_GAP, REGION_GAP), Color3.fromRGB(50, 100, 150))
+	sea.ZIndex = 10
+	ui.addCorner(sea, 40)
+	local gradient = Instance.new("UIGradient")
+	gradient.Rotation = 90
+	gradient.Color = ColorSequence.new(Color3.fromRGB(90, 150, 200), Color3.fromRGB(30, 70, 120))
+	gradient.Parent = sea
+	for index, glyph in { "\u{26F5}", "\u{1F30A}", "\u{1F433}", "\u{1F30A}", "\u{2693}" } do
+		local label = ui.makeText(sea, UDim2.fromOffset(70, 70), UDim2.fromScale(({ 0.15, 0.45, 0.7, 0.2, 0.8 })[index], ({ 0.2, 0.15, 0.4, 0.65, 0.75 })[index]), Color3.new(1, 1, 1), 46)
+		label.TextXAlignment = Enum.TextXAlignment.Center
+		label.Text = glyph
+		label.ZIndex = 11
+		Kit.bob(label, 6, 0.8 + index * 0.2)
+	end
+	local title = ui.makeText(sea, UDim2.new(1, 0, 0, 40), UDim2.new(0, 0, 0.5, -20), Color3.fromRGB(220, 240, 255), 30)
+	title.Font = ui.art.Fonts.title
+	title.TextXAlignment = Enum.TextXAlignment.Center
+	title.TextTransparency = 0.3
+	title.Text = "The Sundering Sea"
+	title.ZIndex = 12
+end
 
-local function drawBoard(ui, tier: number)
-	local info = SocialConfig.Tiers[tier]
-	w.boardGradient.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, info.sky),
-		ColorSequenceKeypoint.new(0.18, info.land:Lerp(info.sky, 0.3)),
-		ColorSequenceKeypoint.new(1, info.land:Lerp(Color3.new(0, 0, 0), 0.45)),
-	})
-	for index, label in w.decor do
-		local glyphs = DECOR[tier]
-		label.Text = glyphs[(index - 1) % #glyphs + 1]
+local function buildMap(ui, page: Instance)
+	local board = ui.makeFrame(page, UDim2.new(1, -10, 0, 540), UDim2.fromOffset(0, 0), Color3.fromRGB(46, 40, 30))
+	board.LayoutOrder = 3
+	board.ClipsDescendants = true
+	board.Active = true
+	ui.addCorner(board, 12)
+	ui.art.stroke(board, ui.colors.gold, 2, 0.2)
+	ui.art.grain(board)
+	w.board = board
+	local canvas = ui.makeFrame(board, UDim2.fromOffset(CANVAS_W, CANVAS_H), UDim2.fromOffset(0, 0), Color3.fromRGB(120, 104, 72))
+	canvas.ZIndex = 2
+	ui.addCorner(canvas, 24)
+	ui.art.grain(canvas)
+	w.canvas = canvas
+	w.canvasScale = Instance.new("UIScale")
+	w.canvasScale.Parent = canvas
+	buildSea(ui, canvas)
+	w.regions = {}
+	for tier, info in SocialConfig.Tiers do
+		local origin = regionOrigin(tier)
+		local region = ui.makeFrame(canvas, UDim2.fromOffset(REGION_W, REGION_H), UDim2.fromOffset(origin.X, origin.Y), Color3.new(1, 1, 1))
+		region.ZIndex = 10
+		ui.addCorner(region, 14)
+		local gradient = Instance.new("UIGradient")
+		gradient.Rotation = 90
+		gradient.Color = ColorSequence.new(info.land:Lerp(info.sky, 0.25), info.land:Lerp(Color3.new(0, 0, 0), 0.45))
+		gradient.Parent = region
+		local edge = ui.art.stroke(region, info.land:Lerp(Color3.new(1, 1, 1), 0.3), 4, 0)
+		local label = ui.makeText(canvas, UDim2.fromOffset(REGION_W, 32), UDim2.fromOffset(origin.X, origin.Y - 36), info.land:Lerp(Color3.new(1, 1, 1), 0.55), 24)
+		label.Font = ui.art.Fonts.title
+		label.TextStrokeTransparency = 0.3
+		label.TextXAlignment = Enum.TextXAlignment.Center
+		label.Text = `{info.glyph}  {string.upper(info.name)}  \u{2022}  TIER {tier}  \u{2022}  LEVEL {info.level}+`
+		label.ZIndex = 15
+		w.regions[tier] = { frame = region, edge = edge }
+		for _, territory in byTier[tier] do
+			buildCell(ui, region, territory)
+		end
 	end
-	for slot, part in blobs do
-		local territory = byTier[tier][slot]
-		part.name.Text = territory.name
-		part.pill.Text = bonusText(territory)
-		Landmarks.draw(part.picture, tier)
+	-- zoom buttons
+	local function zoomButton(text: string, x: number, onPress)
+		local button = ui.makeButton(board, UDim2.fromOffset(if #text > 2 then 110 else 40, 36), UDim2.new(1, x, 0, 10), Color3.fromRGB(60, 50, 36))
+		button.Font = Enum.Font.GothamBlack
+		button.TextSize = if #text > 2 then 12 else 20
+		button.Text = text
+		button.ZIndex = 600
+		button.Activated:Connect(onPress)
 	end
-	w.tierName.Text = `{info.glyph}  {string.upper(info.name)}`
-	w.tierAbout.Text = `TIER {tier}  \u{2022}  LEVEL {info.level}+  \u{2022}  {info.about}`
+	zoomButton("+", -100, function()
+		goal.zoom *= 1.3
+		clampGoal()
+	end)
+	zoomButton("\u{2212}", -54, function()
+		goal.zoom /= 1.3
+		clampGoal()
+	end)
+	zoomButton("RESET ZOOM", -220, function()
+		tierShown = nil
+		resetView()
+	end)
+	local hint = ui.makeText(board, UDim2.fromOffset(300, 20), UDim2.new(0, 12, 1, -28), Color3.fromRGB(230, 220, 200), 12)
+	hint.Font = Enum.Font.GothamBold
+	hint.TextStrokeTransparency = 0.4
+	hint.Text = "Drag to move the map, zoom with the wheel"
+	hint.ZIndex = 600
+
+	-- drag, wheel and the smooth camera
+	local UserInputService = game:GetService("UserInputService")
+	local RunService = game:GetService("RunService")
+	local function inside(position: Vector3): boolean
+		if not board.Visible or not page.Visible or ui.isOpen("Territory") or ui.isOpen("RealmBonuses") then
+			return false
+		end
+		local at, size = board.AbsolutePosition, board.AbsoluteSize
+		local x, y = position.X, position.Y
+		return x >= at.X and x <= at.X + size.X and y >= at.Y and y <= at.Y + size.Y
+	end
+	UserInputService.InputBegan:Connect(function(input)
+		if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and inside(input.Position) then
+			drag.on = true
+			drag.moved = false
+			drag.from = Vector2.new(input.Position.X, input.Position.Y)
+			drag.start = Vector2.new(goal.x, goal.y)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if drag.on and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = Vector2.new(input.Position.X, input.Position.Y) - drag.from
+			if delta.Magnitude > 6 then
+				drag.moved = true
+			end
+			if drag.moved then
+				goal.x = drag.start.X - delta.X / camera.zoom
+				goal.y = drag.start.Y - delta.Y / camera.zoom
+				clampGoal()
+				camera.x, camera.y = goal.x, goal.y
+			end
+		elseif input.UserInputType == Enum.UserInputType.MouseWheel and inside(input.Position) then
+			local step = if input.Position.Z > 0 then 1.15 else 1 / 1.15
+			goal.zoom *= step
+			clampGoal()
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			drag.on = false
+			task.defer(function()
+				drag.moved = false
+			end)
+		end
+	end)
+	RunService.RenderStepped:Connect(function(dt)
+		if not page.Visible then
+			return
+		end
+		local blend = math.min(1, dt * 10)
+		camera.x += (goal.x - camera.x) * blend
+		camera.y += (goal.y - camera.y) * blend
+		camera.zoom += (goal.zoom - camera.zoom) * blend
+		applyCamera()
+	end)
+	board:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		if tierShown then
+			focusRegion(tierShown)
+		else
+			resetView()
+		end
+	end)
+	resetView()
+	camera.x, camera.y, camera.zoom = goal.x, goal.y, goal.zoom
 end
 
 ---------------------------------------------------------------------------
@@ -441,12 +607,108 @@ local function buildPopup(ui)
 			ui.send("RealmLive", selected)
 		end
 	end)
+	pop.residentCard.note.Size = UDim2.new(1, -20, 0, 50)
 	pop.residentShare = infoCard(ui, residentGrid, 2, "WHAT RESIDENTS GET", false)
 	pop.residentNames = ui.makeText(residents, UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 0), ui.colors.dim, 13)
 	pop.residentNames.AutomaticSize = Enum.AutomaticSize.Y
 	pop.residentNames.LayoutOrder = 2
 	pop.residentNames.Font = Enum.Font.GothamBold
 	pop.residentNames.RichText = true
+
+	-- rules the holders set: who may live here, from what level, and rent
+	local rules, rulesStroke = Kit.card(ui, residents, 3, Kit.GOLD)
+	rules.Size = UDim2.new(1, 0, 0, 160)
+	local _ = rulesStroke
+	pop.rules = rules
+	local rulesTitle = ui.makeText(rules, UDim2.new(1, -20, 0, 20), UDim2.fromOffset(12, 8), Kit.GOLD, 14)
+	rulesTitle.Font = Enum.Font.GothamBlack
+	rulesTitle.Text = "\u{1F4DC} RESIDENCY RULES  \u{2022}  your guild sets these"
+	local function sendRules(mode: string?, level: number?, rent: number?)
+		local land = latest and latest.realm.lands[selected]
+		local policy = land and land.policy or { mode = "open", level = 0, rent = 0 }
+		ui.send("RealmPolicy", `{selected}:{mode or policy.mode}:{math.max(0, level or policy.level or 0)}:{math.max(0, rent or policy.rent or 0)}`)
+	end
+	pop.modes = {}
+	for index, entry in { { "open", "OPEN TO ALL" }, { "apply", "BY APPLICATION" }, { "closed", "CLOSED" } } do
+		local button = ui.makeButton(rules, UDim2.new(1 / 3, -12, 0, 34), UDim2.new((index - 1) / 3, 8, 0, 34), ui.colors.row)
+		button.Font = Enum.Font.GothamBlack
+		button.TextSize = 13
+		button.Text = entry[2]
+		button.Activated:Connect(function()
+			sendRules(entry[1], nil, nil)
+		end)
+		pop.modes[entry[1]] = button
+	end
+	local function stepper(y: number, title: string, onStep)
+		local label = ui.makeText(rules, UDim2.new(0.5, -20, 0, 34), UDim2.fromOffset(12, y), ui.colors.text, 14)
+		label.Font = Enum.Font.GothamBold
+		label.RichText = true
+		label.Text = title
+		local minus = ui.makeButton(rules, UDim2.fromOffset(44, 34), UDim2.new(1, -110, 0, y), Kit.RED)
+		minus.Text = "\u{2212}"
+		minus.TextSize = 20
+		minus.Activated:Connect(function()
+			onStep(-1)
+		end)
+		local plus = ui.makeButton(rules, UDim2.fromOffset(44, 34), UDim2.new(1, -56, 0, y), Kit.GREEN)
+		plus.Text = "+"
+		plus.TextSize = 20
+		plus.Activated:Connect(function()
+			onStep(1)
+		end)
+		return label
+	end
+	pop.levelRule = stepper(76, "", function(step: number)
+		local land = latest and latest.realm.lands[selected]
+		local level = land and land.policy and land.policy.level or 0
+		sendRules(nil, math.clamp(level + step * 5, 0, SocialConfig.ResidentLevelMax), nil)
+	end)
+	pop.rentRule = stepper(116, "", function(step: number)
+		local territory = SocialConfig.TerritoryById[selected]
+		local land = latest and latest.realm.lands[selected]
+		if not territory then
+			return
+		end
+		local most = SocialConfig.rentMax(territory.tier)
+		local rent = land and land.policy and land.policy.rent or 0
+		-- steps: none, then 1%, 2%, 5%, 10%, 25%, 50%, 100% of the most allowed
+		local steps = { 0, 0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1 }
+		local at = 1
+		for index, share in steps do
+			if rent >= math.floor(most * share) then
+				at = index
+			end
+		end
+		at = math.clamp(at + step, 1, #steps)
+		sendRules(nil, nil, math.floor(most * steps[at]))
+	end)
+
+	pop.applicantsTitle = sectionTitle(ui, residents, 4)
+	pop.applicantRows = {}
+	for index = 1, SocialConfig.ApplicantsKept do
+		local row = listRow(ui, residents, 4 + index, true)
+		row.button.Size = UDim2.fromOffset(90, 28)
+		row.button.Position = UDim2.new(1, -196, 0, 4)
+		row.button.BackgroundColor3 = Kit.GREEN
+		row.button.Text = "ACCEPT"
+		local no = ui.makeButton(row.row, UDim2.fromOffset(90, 28), UDim2.new(1, -98, 0, 4), Kit.RED)
+		no.Font = Enum.Font.GothamBlack
+		no.TextSize = 12
+		no.Text = "TURN DOWN"
+		row.button.Activated:Connect(function()
+			local userId = row.row:GetAttribute("UserId")
+			if userId then
+				ui.send("RealmAnswer", `{selected}:{userId}:yes`)
+			end
+		end)
+		no.Activated:Connect(function()
+			local userId = row.row:GetAttribute("UserId")
+			if userId then
+				ui.send("RealmAnswer", `{selected}:{userId}:no`)
+			end
+		end)
+		pop.applicantRows[index] = row
+	end
 
 	-- FORTIFY
 	local fortify = body(ui, page, 7)
@@ -495,6 +757,23 @@ local function buildPopup(ui)
 	end
 end
 
+-- What the LIVE HERE button says and whether it can be pressed.
+local function liveButton(state, realm, info): (string, boolean)
+	local policy = info.policy or { mode = "open", level = 0, rent = 0 }
+	if realm.home == selected then
+		return "\u{1F3E0} MOVE OUT", true
+	elseif realm.applied == selected then
+		return "APPLICATION SENT", false
+	elseif policy.mode == "closed" then
+		return "\u{1F512} CLOSED", false
+	elseif state.level < (policy.level or 0) then
+		return `LEVEL {policy.level}`, false
+	elseif policy.mode == "apply" then
+		return "\u{1F4DD} APPLY TO LIVE", true
+	end
+	return "\u{1F3E0} LIVE HERE", true
+end
+
 local function drawPopup(state, ui)
 	local realm = state.realm
 	local territory = SocialConfig.TerritoryById[selected]
@@ -533,8 +812,8 @@ local function drawPopup(state, ui)
 	ui.setButton(pop.surrender, if os.clock() - surrenderArmed < 4 then "PRESS AGAIN TO GIVE UP" else "\u{1F3F3}\u{FE0F} SURRENDER", true, Kit.RED)
 	pop.mark.Visible = mine and realm.officer
 	ui.setButton(pop.mark, if info.marked then "UNMARK DEFENSE" else "\u{1F6E1}\u{FE0F} MARK FOR DEFENSE", true, Color3.fromRGB(60, 110, 170))
-	local canLive = state.level >= tier.level
-	ui.setButton(pop.live, if realm.home == selected then "\u{1F3E0} MOVE OUT" else `\u{1F3E0} LIVE HERE`, canLive or realm.home == selected, Color3.fromRGB(70, 140, 80))
+	local liveLabel, liveUsable = liveButton(state, realm, info)
+	ui.setButton(pop.live, liveLabel, liveUsable, Color3.fromRGB(70, 140, 80))
 
 	for key, button in pop.tabs do
 		local on = key == tab
@@ -582,12 +861,11 @@ local function drawPopup(state, ui)
 	pop.yours.card.Visible = mine
 	if holder == nil then
 		pop.claim.big.Text = `Claim for <font color="#F0C450">{Format.short(tier.claim)}</font> gold`
-		pop.claim.note.Text = `No fight needed. Your guild holds {realm.held} of its {realm.maxHeld} (2 + guild level).`
+		pop.claim.note.Text = `No fight and no level needed. Your guild holds {realm.held} of its {realm.maxHeld} (2 + guild level).`
 		local label = if not inGuild then "JOIN A GUILD"
-			elseif not levelOk then `LEVEL {tier.level}`
 			elseif realm.held >= realm.maxHeld then "GUILD AT ITS LIMIT"
 			else "\u{1F6A9} CLAIM"
-		ui.setButton(pop.claim.button, label, inGuild and levelOk and realm.held < realm.maxHeld and state.gold >= tier.claim, Kit.GOLD)
+		ui.setButton(pop.claim.button, label, inGuild and realm.held < realm.maxHeld and state.gold >= tier.claim, Kit.GOLD)
 		pop.claimInfo.big.Text = bonusText(territory)
 		pop.claimInfo.note.Text = `For every member, plus a stipend of {tier.stipendMinutes} min of income every 2 hours. Other guilds can then attack it.`
 	elseif not mine then
@@ -669,9 +947,32 @@ local function drawPopup(state, ui)
 	local homeLand = SocialConfig.TerritoryById[realm.home]
 	local homeName = if homeLand then homeLand.name else "another territory"
 	pop.residentCard.note.Text = if realm.home == selected then "This is your home." elseif realm.home ~= "" then `You live in {homeName}. Moving here moves you out.` else "Any player can live in one territory, in any guild or none."
-	ui.setButton(pop.residentCard.button, if realm.home == selected then "MOVE OUT" elseif canLive then "\u{1F3E0} LIVE HERE" else `LEVEL {tier.level}`, canLive or realm.home == selected, Color3.fromRGB(70, 140, 80))
+	ui.setButton(pop.residentCard.button, liveLabel, liveUsable, Color3.fromRGB(70, 140, 80))
+	local policy = info.policy or { mode = "open", level = 0, rent = 0 }
+	local modeText = ({ open = "open to all", apply = "by application", closed = "closed" })[policy.mode] or "open to all"
+	local rentText = if (policy.rent or 0) > 0 then `{Format.short(policy.rent)} gold rent every 2 hours` else "no rent"
+	pop.residentCard.note.Text ..= `\n<font color="#F0C450">Rules: {modeText}, level {policy.level or 0}+, {rentText}.</font>`
+	pop.rules.Visible = mine and realm.officer
+	for mode, button in pop.modes do
+		button.BackgroundColor3 = if mode == policy.mode then Kit.GOLD else ui.colors.row
+		button.TextColor3 = if mode == policy.mode then Color3.fromRGB(40, 28, 12) else Color3.new(1, 1, 1)
+	end
+	pop.levelRule.Text = `Level needed: <font color="#F0C450">{policy.level or 0}+</font>`
+	pop.rentRule.Text = `Rent every 2 hours: <font color="#F0C450">{Format.short(policy.rent or 0)}</font> gold <font color="#B2A690">(most {Format.short(SocialConfig.rentMax(territory.tier))})</font>`
+	local applicants = view and view.applicants or {}
+	local showApplicants = mine and realm.officer and policy.mode == "apply"
+	pop.applicantsTitle.Visible = showApplicants
+	pop.applicantsTitle.Text = if #applicants > 0 then `Applications ({#applicants})` else "No applications waiting"
+	for index, row in pop.applicantRows do
+		local entry = applicants[index]
+		row.row.Visible = showApplicants and entry ~= nil
+		if entry then
+			row.row:SetAttribute("UserId", entry.userId)
+			row.text.Text = `{entry.name}   <font color="#B2A690">level {entry.level}, {ago(now - entry.time)}</font>`
+		end
+	end
 	pop.residentShare.big.Text = `{math.floor(share * 100 + 0.5)}% of {bonusText(territory)}`
-	pop.residentShare.note.Text = "While any guild holds it. Members of the holding guild get the full bonus instead. The townhouse building raises the share."
+	pop.residentShare.note.Text = "While any guild holds it. Members of the holding guild get the full bonus and pay no rent. The townhouse building raises the share. Rent goes to the holding guild as guild experience."
 	local names = view and view.names or {}
 	pop.residentNames.Text = if #names > 0 then `Residents: {table.concat(names, ", ")}{if info.residents > #names then ` and {info.residents - #names} more` else ""}` else "Nobody lives here yet."
 
@@ -740,21 +1041,28 @@ function RealmPage.build(ui)
 		w.top[place] = label
 	end
 
-	-- tier selector
+	-- region selector
 	local strip = ui.makeFrame(page, UDim2.new(1, -10, 0, 58), UDim2.fromOffset(0, 0), Color3.fromRGB(40, 33, 24))
 	strip.LayoutOrder = 2
 	ui.addCorner(strip, 8)
 	ui.art.stroke(strip, ui.colors.gold, 1.5, 0.3)
+	local function showTier(tier: number?)
+		tierShown = tier
+		if tier then
+			focusRegion(tier)
+		else
+			resetView()
+		end
+		ui.redraw()
+	end
 	local function arrow(text: string, position: UDim2, step: number)
 		local button = ui.makeButton(strip, UDim2.fromOffset(42, 42), position, Color3.fromRGB(70, 56, 36))
 		button.Text = text
 		button.TextSize = 20
 		button.Font = Enum.Font.GothamBlack
 		button.Activated:Connect(function()
-			tierShown = math.clamp((tierShown or 1) + step, 1, #SocialConfig.Tiers)
-			drawBoard(ui, tierShown)
-			Kit.popAll(w.board)
-			ui.redraw()
+			local at = tierShown or (if step > 0 then 0 else #SocialConfig.Tiers + 1)
+			showTier(math.clamp(at + step, 1, #SocialConfig.Tiers))
 		end)
 	end
 	arrow("\u{25C0}", UDim2.fromOffset(8, 8), -1)
@@ -771,44 +1079,12 @@ function RealmPage.build(ui)
 		button.Font = Enum.Font.GothamBlack
 		button.TextSize = 12
 		button.Activated:Connect(function()
-			tierShown = index
-			drawBoard(ui, index)
-			Kit.popAll(w.board)
-			ui.redraw()
+			showTier(if tierShown == index then nil else index)
 		end)
 		w.tierTabs[index] = button
 	end
 
-	-- the map
-	local board = ui.makeFrame(page, UDim2.new(1, -10, 0, 480), UDim2.fromOffset(0, 0), Color3.new(1, 1, 1))
-	board.LayoutOrder = 3
-	board.ClipsDescendants = true
-	ui.addCorner(board, 12)
-	ui.art.stroke(board, ui.colors.gold, 2, 0.2)
-	w.boardGradient = Instance.new("UIGradient")
-	w.boardGradient.Rotation = 90
-	w.boardGradient.Parent = board
-	ui.art.grain(board)
-	w.board = board
-	-- winding roads between the territories
-	for _, road in { { 0.1, 0.47, 0.8, 0.018, -4 }, { 0.48, 0.1, 0.018, 0.8, 3 } } do
-		local path = ui.makeFrame(board, UDim2.fromScale(road[3], road[4]), UDim2.fromScale(road[1], road[2]), Color3.fromRGB(200, 180, 130))
-		path.BackgroundTransparency = 0.55
-		path.Rotation = road[5]
-		path.ZIndex = 3
-		ui.addCorner(path, 6)
-	end
-	w.decor = {}
-	for index, spot in DECOR_SPOTS do
-		local label = ui.makeText(board, UDim2.fromOffset(40, 40), UDim2.fromScale(spot[1], spot[2]), Color3.new(1, 1, 1), 30)
-		label.TextXAlignment = Enum.TextXAlignment.Center
-		label.TextTransparency = 0.25
-		label.ZIndex = 4
-		w.decor[index] = label
-	end
-	for slot = 1, 6 do
-		buildBlob(ui, board, slot)
-	end
+	buildMap(ui, page)
 	w.footer = ui.makeText(page, UDim2.new(1, -10, 0, 30), UDim2.fromOffset(0, 0), ui.colors.dim, 13)
 	w.footer.LayoutOrder = 4
 	w.footer.Font = Enum.Font.GothamBold
@@ -847,9 +1123,9 @@ function RealmPage.build(ui)
 		if not territory then
 			return
 		end
-		local part = blobs[territory.slot]
-		local onMap = part and tierShown == territory.tier
-		local target = if ui.isOpen("Territory") and selected == territory.id then pop.header elseif onMap then part.land else nil
+		local part = cells[territory.id]
+		local onMap = part ~= nil and w.board.Parent ~= nil and not ui.isOpen("Territory")
+		local target = if ui.isOpen("Territory") and selected == territory.id then pop.header elseif onMap then part.cell else nil
 		if not target then
 			return
 		end
@@ -871,7 +1147,7 @@ function RealmPage.build(ui)
 	end
 	page:GetPropertyChangedSignal("Visible"):Connect(function()
 		if page.Visible then
-			Kit.popAll(board)
+			Kit.popAll(w.board)
 			ui.send("RealmRefresh")
 		end
 	end)
@@ -884,10 +1160,6 @@ function RealmPage.draw(state, ui)
 	latest = state
 	local realm = state.realm
 	local guildId = realm.guildId or ""
-	if tierShown == nil then
-		tierShown = bestTier(state.level)
-		drawBoard(ui, tierShown)
-	end
 
 	-- banner
 	if guildId == "" then
@@ -909,6 +1181,15 @@ function RealmPage.draw(state, ui)
 		end
 	end
 
+	-- region selector
+	if tierShown then
+		local info = SocialConfig.Tiers[tierShown]
+		w.tierName.Text = `{info.glyph}  {string.upper(info.name)}`
+		w.tierAbout.Text = `TIER {tierShown}  \u{2022}  LEVEL {info.level}+  \u{2022}  {info.about}`
+	else
+		w.tierName.Text = "\u{1F5FA}\u{FE0F}  THE WHOLE REALM"
+		w.tierAbout.Text = `{#SocialConfig.Territories} TERRITORIES IN {#SocialConfig.Tiers} TIERS  \u{2022}  PICK A REGION OR DRAG THE MAP`
+	end
 	-- tier tabs: how many each tier your guild holds
 	for index, button in w.tierTabs do
 		local held = 0
@@ -927,18 +1208,15 @@ function RealmPage.draw(state, ui)
 		end
 	end
 
-	-- the map tiles
-	for slot, part in blobs do
-		local territory = byTier[tierShown][slot]
-		local info = realm.lands[territory.id] or {}
+	-- the map cells
+	for id, part in cells do
+		local info = realm.lands[id] or {}
 		local holder = info.holder
 		local mine = holder ~= nil and guildId ~= "" and holder.id == guildId
-		local color = if holder then guildColor(holder.id) else PARCHMENT
-		part.land.BackgroundColor3 = color
-		for _, lobe in part.lobes do
-			lobe.BackgroundColor3 = color:Lerp(Color3.new(0, 0, 0), 0.12)
-		end
-		part.owner.Text = if holder then guildText(holder) else "UNCLAIMED  \u{2022}  CLAIM IT"
+		local land = SocialConfig.Tiers[part.territory.tier].land
+		part.cell.BackgroundColor3 = if holder then guildColor(holder.id) else land:Lerp(PARCHMENT, 0.6)
+		part.cell.BackgroundTransparency = if holder then 0.05 else 0.25
+		part.owner.Text = if holder then guildText(holder) else "UNCLAIMED"
 		part.bar.back.Visible = holder ~= nil
 		if holder then
 			Kit.setBar(part.bar, info.strength or 0, info.max or 1, Format.short(info.strength or 0))
@@ -953,11 +1231,14 @@ function RealmPage.draw(state, ui)
 		if info.hot then
 			table.insert(flags, "\u{1F525}")
 		end
-		if realm.home == territory.id then
+		if realm.home == id then
 			table.insert(flags, "\u{1F3E0}")
 		end
 		part.flags.Text = table.concat(flags, " ")
-		Kit.setPulse(part.stroke, mine, Color3.fromRGB(40, 30, 20))
+		Kit.setPulse(part.stroke, mine, Color3.fromRGB(30, 22, 14))
+	end
+	for tier, region in w.regions do
+		region.edge.Color = if tier == tierShown then Kit.GOLD else SocialConfig.Tiers[tier].land:Lerp(Color3.new(1, 1, 1), 0.3)
 	end
 
 	local stationed, waiting = 0, 0

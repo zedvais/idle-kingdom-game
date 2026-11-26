@@ -115,6 +115,8 @@ end
 -- defense), donate gold and energy to four fortifications, and every two
 -- hours each member gets a stipend. Any player can live in one territory
 -- as a resident and gets a share of its bonus while a guild holds it.
+-- Holders choose who may live there: open, by application or closed, with
+-- a level requirement. Claiming has no level requirement.
 
 SocialConfig.RealmRefreshSeconds = 120 -- full re-read of every territory
 SocialConfig.RealmViewSeconds = 10 -- re-read of the territory you have open
@@ -130,6 +132,8 @@ SocialConfig.HeldBase = 2 -- a guild holds up to this + its level territories
 SocialConfig.StipendSeconds = 7200 -- every two hours
 SocialConfig.ResidentShare = 0.25 -- residents get this share of the bonus
 SocialConfig.ResidentsMax = 50
+SocialConfig.ApplicantsKept = 20 -- applications waiting on one territory
+SocialConfig.ResidentLevelMax = 100 -- highest level requirement a holder can set
 SocialConfig.HistoryKept = 8
 SocialConfig.ResidentNamesKept = 12
 
@@ -242,6 +246,11 @@ end
 -- Share of max strength regained an hour.
 function SocialConfig.regenRate(heal: number): number
 	return SocialConfig.RegenPerHour + SocialConfig.Forts[3].per * heal
+end
+
+-- The most rent a holder can ask, per resident every two hours.
+function SocialConfig.rentMax(tier: number): number
+	return SocialConfig.Tiers[tier].claim // 10
 end
 
 function SocialConfig.residentShare(homes: number): number

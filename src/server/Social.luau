@@ -925,6 +925,10 @@ local function fixLand(doc)
 	doc.names = if type(doc.names) == "table" then doc.names else {}
 	doc.history = if type(doc.history) == "table" then doc.history else {}
 	doc.residents = math.max(0, doc.residents or 0)
+	doc.policy = if type(doc.policy) == "table" then doc.policy else { mode = "open", level = 0, rent = 0 }
+	doc.policy.rent = doc.policy.rent or 0
+	doc.applicants = if type(doc.applicants) == "table" then doc.applicants else {}
+	doc.approved = if type(doc.approved) == "table" then doc.approved else {}
 	for _, fort in SocialConfig.Forts do
 		doc.forts[fort.key] = doc.forts[fort.key] or { l = 0, g = 0, e = 0 }
 	end
@@ -932,6 +936,9 @@ local function fixLand(doc)
 end
 
 local function resetForts(doc)
+	-- a new holder starts with open residency and no applications
+	doc.policy = { mode = "open", level = 0, rent = 0 }
+	doc.applicants = {}
 	doc.forts = {}
 	for _, fort in SocialConfig.Forts do
 		doc.forts[fort.key] = { l = 0, g = 0, e = 0 }
@@ -1048,6 +1055,9 @@ local function canFight(player: Player, data, territory, what: string): boolean
 	if data.guild.id == "" then
 		ctx.sendToast(player, `Join or found a guild to {what} territories.`)
 		return false
+	end
+	if what == "claim" then
+		return true -- claiming has no level requirement
 	end
 	local tier = SocialConfig.Tiers[territory.tier]
 	if data.level < tier.level then
@@ -1436,6 +1446,58 @@ local function recall(player: Player, data, id: string)
 	ctx.refresh(player)
 end
 
+local function moveOut(player: Player, old: string)
+	if old ~= "" and territoryFrom(old) then
+		local key = tostring(player.UserId)
+		changeLand(old, function(land)
+			land.residents = math.max(0, land.residents - 1)
+			land.names[key] = nil
+			return land
+		end)
+	end
+end
+
+local function addResident(land, key: string, name: string)
+	land.residents += 1
+	local named = 0
+	for _ in land.names do
+		named += 1
+	end
+	if named < SocialConfig.ResidentNamesKept then
+		land.names[key] = name
+	end
+end
+
+-- Territories that take residents by application: you apply, the
+-- holder's leader or officers accept or turn you down.
+local function applyToLive(player: Player, data, territory)
+	if data.realm.applied == territory.id then
+		ctx.sendToast(player, "Your application is waiting for an answer.")
+		return
+	end
+	local key = tostring(player.UserId)
+	local reason = ""
+	local result = changeLand(territory.id, function(land)
+		local count = 0
+		for _ in land.applicants do
+			count += 1
+		end
+		if count >= SocialConfig.ApplicantsKept then
+			reason = "full"
+			return nil
+		end
+		land.applicants[key] = { n = player.DisplayName, l = data.level, t = now() }
+		return land
+	end)
+	if not result then
+		ctx.sendToast(player, if reason == "full" then "Too many applications are waiting there. Try later." else "Could not apply right now. Try again.")
+		return
+	end
+	data.realm.applied = territory.id
+	ctx.sendToast(player, `You applied to live in {territory.name}. The holders will answer.`)
+	ctx.refresh(player)
+end
+
 local function live(player: Player, data, id: string)
 	local territory = territoryFrom(id)
 	local old = data.realm.home
@@ -1445,16 +1507,27 @@ local function live(player: Player, data, id: string)
 	if id == old then
 		return
 	end
-	if territory and data.level < SocialConfig.Tiers[territory.tier].level then
-		ctx.sendToast(player, `You need level {SocialConfig.Tiers[territory.tier].level} to live there.`)
-		return
+	local key = tostring(player.UserId)
+	if territory then
+		local policy = landOf(territory.id).policy
+		if policy.mode == "closed" then
+			ctx.sendToast(player, `{territory.name} is closed to new residents.`)
+			return
+		end
+		if data.level < (policy.level or 0) then
+			ctx.sendToast(player, `{territory.name} takes residents from level {policy.level}.`)
+			return
+		end
+		if policy.mode == "apply" then
+			applyToLive(player, data, territory)
+			return
+		end
 	end
 	local mine = info(player)
 	if mine.busy then
 		return
 	end
 	mine.busy = true
-	local key = tostring(player.UserId)
 	local full = false
 	local ok = true
 	if territory then
@@ -1487,6 +1560,7 @@ local function live(player: Player, data, id: string)
 		return
 	end
 	data.realm.home = id
+	data.realm.rentPaid = 0
 	ctx.sendToast(player, if territory then `You now live in {territory.name}.` else "You moved out.")
 	ctx.refresh(player)
 end
@@ -1591,6 +1665,79 @@ local function isOfficer(player: Player, data): boolean
 	return role == "leader" or role == "officer"
 end
 
+-- Holder's leader or officers set who may live there:
+-- "<territory>:<open|apply|closed>:<level>:<rent>". Rent is gold each
+-- resident pays every two hours (members of the holding guild pay none).
+local function setPolicy(player: Player, data, id: string)
+	local landId, mode, levelText, rentText = string.match(id or "", "^([%w]+):(%a+):(%d+):(%d+)$")
+	local territory = territoryFrom(landId)
+	local level = tonumber(levelText)
+	local rent = tonumber(rentText)
+	if not territory or not level or not rent or (mode ~= "open" and mode ~= "apply" and mode ~= "closed") then
+		return
+	end
+	if not isOfficer(player, data) then
+		ctx.sendToast(player, "Only the guild leader and officers can set who lives here.")
+		return
+	end
+	level = math.clamp(math.floor(level), 0, SocialConfig.ResidentLevelMax)
+	rent = math.clamp(math.floor(rent), 0, SocialConfig.rentMax(territory.tier))
+	local result = changeLand(territory.id, function(land)
+		if not land.holder or land.holder.id ~= data.guild.id then
+			return nil
+		end
+		land.policy = { mode = mode, level = level, rent = rent }
+		if mode ~= "apply" then
+			land.applicants = {}
+		end
+		return land
+	end)
+	if result then
+		ctx.refresh(player)
+	end
+end
+
+-- "<territory>:<userId>:yes|no" on an application.
+local function answerApplicant(player: Player, data, id: string)
+	local landId, userId, answer = string.match(id or "", "^([%w]+):(%d+):(%a+)$")
+	local territory = territoryFrom(landId)
+	if not territory or (answer ~= "yes" and answer ~= "no") then
+		return
+	end
+	if not isOfficer(player, data) then
+		return
+	end
+	local reason = ""
+	local name = ""
+	local result = changeLand(territory.id, function(land)
+		reason = ""
+		if not land.holder or land.holder.id ~= data.guild.id then
+			return nil
+		end
+		local applicant = land.applicants[userId]
+		if not applicant then
+			return nil
+		end
+		name = applicant.n or "Someone"
+		land.applicants[userId] = nil
+		if answer == "yes" then
+			if land.residents >= SocialConfig.ResidentsMax then
+				reason = "full"
+				return nil
+			end
+			addResident(land, userId, name)
+			land.approved[userId] = true
+		end
+		return land
+	end)
+	if result then
+		ctx.sendToast(player, if answer == "yes" then `{name} now lives in {territory.name}.` else `Turned down {name}.`)
+		ctx.refresh(player)
+	elseif reason == "full" then
+		ctx.sendToast(player, `{territory.name} is full ({SocialConfig.ResidentsMax} residents).`)
+	end
+end
+
 local function surrender(player: Player, data, id: string)
 	local territory = territoryFrom(id)
 	if not territory or data.guild.id == "" then
@@ -1673,9 +1820,62 @@ local function syncRealm(player: Player, data)
 		end
 	end
 	placeWaiting(data)
+	-- An application answered on another server.
+	local applied = data.realm.applied
+	local appliedLand = applied ~= "" and lands[applied]
+	if appliedLand then
+		local key = tostring(player.UserId)
+		local territory = territoryFrom(applied)
+		if appliedLand.approved[key] then
+			local old = data.realm.home
+			data.realm.home = applied
+			data.realm.applied = ""
+			data.realm.rentPaid = 0
+			changeLand(applied, function(land)
+				land.approved[key] = nil
+				return land
+			end)
+			if old ~= applied then
+				moveOut(player, old)
+			end
+			ctx.sendToast(player, `Your application was accepted: you now live in {territory.name}.`)
+		elseif not appliedLand.applicants[key] then
+			data.realm.applied = ""
+			ctx.sendToast(player, `Your application to live in {territory.name} was turned down.`)
+		end
+	elseif applied ~= "" and not territoryFrom(applied) then
+		data.realm.applied = ""
+	end
 	for id, count in came do
 		local territory = territoryFrom(id)
 		ctx.sendToast(player, `{count} soldier{if count == 1 then "" else "s"} came home from {territory.name}: your guild lost it.`)
+	end
+	-- Rent: residents pay the holder's rent once every two hours while
+	-- they play; it goes to the holding guild as guild experience. No gold
+	-- for rent means moving out.
+	local home = data.realm.home
+	local homeLand = home ~= "" and lands[home]
+	local rentPeriod = SocialConfig.stipendPeriod(now())
+	if homeLand and data.realm.rentPaid < rentPeriod then
+		data.realm.rentPaid = rentPeriod
+		local holder = homeLand.holder
+		local rent = homeLand.policy.rent or 0
+		if holder and rent > 0 and holder.id ~= data.guild.id then
+			local territory = territoryFrom(home)
+			if data.gold >= rent then
+				data.gold -= rent
+				changeGuild(holder.id, function(guild)
+					guild.xp = (guild.xp or 0) + rent // SocialConfig.DonateXpPer
+					guild.rent = (guild.rent or 0) + rent
+					return guild
+				end)
+				ctx.sendToast(player, `Paid {Format.short(rent)} gold rent for {territory.name}.`)
+			else
+				data.realm.home = ""
+				moveOut(player, home)
+				ctx.sendToast(player, `You could not pay the {Format.short(rent)} gold rent, so you moved out of {territory.name}.`)
+			end
+		end
 	end
 	-- Stipend: once every two hours while you play, for each territory
 	-- your guild holds.
@@ -1749,6 +1949,7 @@ local function realmState(player: Player, data)
 			hot = t - (doc.hitAt or 0) < 300,
 			since = doc.since or 0,
 			forts = forts,
+			policy = doc.policy,
 		}
 		if doc.holder then
 			local score = scores[doc.holder.id] or { id = doc.holder.id, name = doc.holder.name, tag = doc.holder.tag, score = 0, held = 0 }
@@ -1792,7 +1993,14 @@ local function realmState(player: Player, data)
 			local entry = doc.forts[fort.key]
 			forts[fort.key] = { l = entry.l, g = entry.g, e = entry.e }
 		end
-		view = { id = viewId, garrison = garrison, names = names, history = doc.history, forts = forts, round = doc.round }
+		local applicants = {}
+		for userId, entry in doc.applicants do
+			table.insert(applicants, { userId = userId, name = entry.n, level = entry.l or 1, time = entry.t or 0 })
+		end
+		table.sort(applicants, function(a, b)
+			return a.time < b.time
+		end)
+		view = { id = viewId, garrison = garrison, names = names, history = doc.history, forts = forts, round = doc.round, applicants = applicants }
 	end
 	local stationed = {}
 	for index, entry in data.realm.stationed do
@@ -1814,6 +2022,7 @@ local function realmState(player: Player, data)
 		held = heldBy(data.guild.id),
 		maxHeld = SocialConfig.maxHeld(myGuildLevel(data)),
 		home = data.realm.home,
+		applied = data.realm.applied,
 		stationed = stationed,
 		stipendIn = SocialConfig.StipendSeconds - t % SocialConfig.StipendSeconds,
 		stipendNext = math.floor(stats.incomePerHour * minutes / 60),
@@ -1946,6 +2155,8 @@ function Social.register(actions)
 	actions.RealmDonate = donate
 	actions.RealmSurrender = surrender
 	actions.RealmMark = mark
+	actions.RealmPolicy = setPolicy
+	actions.RealmAnswer = answerApplicant
 	actions.RealmView = viewLand
 	actions.RealmRefresh = function(player: Player, data)
 		refreshRealm()

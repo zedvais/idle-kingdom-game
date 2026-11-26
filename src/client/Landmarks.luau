@@ -273,11 +273,16 @@ function Landmarks.draw(holder: GuiObject, tier: number)
 	if not holder:GetAttribute("Watched") then
 		-- drawn before it had a size (page hidden): draw again once sized
 		holder:SetAttribute("Watched", true)
-		local drawnAt = holder.AbsoluteSize
-		holder:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		-- only the shape matters (zooming the map keeps the shape)
+		local function shapeOf(): number
 			local size = holder.AbsoluteSize
-			if size.X > 0 and size.Y > 0 and (math.abs(size.X - drawnAt.X) > 8 or math.abs(size.Y - drawnAt.Y) > 8) then
-				drawnAt = size
+			return if size.X > 0 and size.Y > 0 then size.X / size.Y else 0
+		end
+		local drawnAt = shapeOf()
+		holder:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			local shape = shapeOf()
+			if shape > 0 and math.abs(shape - drawnAt) > 0.05 then
+				drawnAt = shape
 				local current = holder:GetAttribute("Tier")
 				holder:SetAttribute("Tier", nil)
 				Landmarks.draw(holder, current)
