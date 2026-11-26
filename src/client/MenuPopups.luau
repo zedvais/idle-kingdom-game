@@ -24,7 +24,7 @@ local UPDATES = {
 		title = "Raids, guilds and the realm map",
 		lines = {
 			"Raids: attack other players' keeps for their gold on hand. Bank gold is always safe.",
-			"Shields after being raided, and revenge on anyone who raided you.",
+			"Raids wound the defender; under 20 health they are incapacitated. Take revenge on anyone who raided you.",
 			"Guilds: found or join one, donate to level it up, chat on the guild wall.",
 			"Realm Map: guilds siege nine territories each week for bonuses.",
 			"Foes and expeditions rebalanced to match real warband power.",

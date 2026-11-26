@@ -3,7 +3,7 @@
 -- SharedStore:
 --   Raid_Profiles  [userId] = what raiders see of you (published each minute)
 --   Raid_Levels    ordered [userId] = level, to find targets near your level
---   Raid_Ledger    [userId] = { shieldUntil, hits = { ... } }: raids on you
+--   Raid_Ledger    [userId] = { health, healthAt, hits = { ... } }: raids on you
 --                  that your own server takes off your save
 --   Guilds         [guild id] = the guild: members, experience, wall
 --   Guild_Names    [lower case name] = guild id, so names are unique
@@ -82,6 +82,8 @@ local function publishProfile(player: Player, data)
 		stock = table.clone(data.estate.stock),
 		cellar = summary.cellar,
 		tag = data.guild.tag,
+		health = data.health,
+		maxHealth = stats.maxHealth,
 		time = now(),
 	})
 	SharedStore.setOrdered("Raid_Levels", tostring(player.UserId), data.level)
@@ -108,6 +110,9 @@ local function makeNpc(data, stats, index: number)
 		stock = stock,
 		cellar = 0,
 		tag = "",
+		health = GameConfig.BaseMaxHealth + 5 * level,
+		maxHealth = GameConfig.BaseMaxHealth + 5 * level,
+		healthAt = now(),
 	}
 end
 
@@ -126,7 +131,16 @@ local function targetFromProfile(userId: string, profile)
 		cellar = profile.cellar or 0,
 		tag = profile.tag or "",
 		seen = profile.time or 0,
+		health = profile.health or profile.maxHealth or GameConfig.BaseMaxHealth,
+		maxHealth = profile.maxHealth or GameConfig.BaseMaxHealth,
+		healthAt = profile.time or 0,
 	}
+end
+
+-- A player's health now, from a known value at a time plus regen since.
+local function healthNow(health: number, maxHealth: number, at: number): number
+	local regen = math.max(0, now() - at) / GameConfig.HealthRegenSeconds
+	return math.min(maxHealth, math.floor(health + regen))
 end
 
 -- Looks for players near your level, then fills up with NPC keeps.
@@ -147,7 +161,7 @@ local function lookForTargets(player: Player, data)
 			break
 		end
 		local userId = entry[1]
-		if userId ~= tostring(player.UserId) and (data.raid.cooldowns["u" .. userId] or 0) <= now() then
+		if userId ~= tostring(player.UserId) then
 			reads += 1
 			local profile = SharedStore.get("Raid_Profiles", userId)
 			if type(profile) == "table" and now() - (profile.time or 0) < 14 * 86400 then
@@ -212,8 +226,8 @@ local function raid(player: Player, data, targetId: string)
 		ctx.sendToast(player, `Raids open at level {SocialConfig.RaidMinLevel}.`)
 		return
 	end
-	if (data.raid.cooldowns[target.id] or 0) > now() then
-		ctx.sendToast(player, `You raided {target.name} recently. Try someone else.`)
+	if not target.npc and healthNow(target.health, target.maxHealth, target.healthAt) < GameConfig.MinHealthToFight then
+		ctx.sendToast(player, `{target.name} is incapacitated: under {GameConfig.MinHealthToFight} health. Wait for them to recover.`)
 		return
 	end
 	if data.stamina < SocialConfig.RaidStamina then
@@ -233,17 +247,28 @@ local function raid(player: Player, data, targetId: string)
 
 	mine.busy = true
 	if not target.npc then
-		-- The victim's ledger decides: a shield that went up after you
-		-- looked stops the raid, and stamina is not spent.
+		-- The victim's ledger decides: if they are already too wounded
+		-- (other raids since you looked), the raid stops and stamina is
+		-- not spent. Their health is tracked in the ledger between saves.
 		local blocked = false
 		local _, ok = SharedStore.update("Raid_Ledger", tostring(target.userId), function(ledger)
-			ledger = if type(ledger) == "table" then ledger else { shieldUntil = 0, hits = {} }
+			ledger = if type(ledger) == "table" then ledger else { hits = {} }
 			ledger.hits = ledger.hits or {}
-			if (ledger.shieldUntil or 0) > now() then
+			local health, at = target.health, target.healthAt
+			if type(ledger.health) == "number" and (ledger.healthAt or 0) >= at then
+				health, at = ledger.health, ledger.healthAt
+			end
+			local current = healthNow(health, target.maxHealth, at)
+			if current < GameConfig.MinHealthToFight then
 				blocked = true
+				target.health, target.healthAt = current, now()
 				return nil
 			end
 			blocked = false
+			local damage = math.floor(target.maxHealth * random:NextNumber(table.unpack(if win then SocialConfig.WinDamage else SocialConfig.LossDamage)))
+			ledger.health = math.max(0, current - damage)
+			ledger.healthAt = now()
+			target.health, target.healthAt = ledger.health, ledger.healthAt
 			table.insert(ledger.hits, {
 				from = player.DisplayName,
 				fromId = player.UserId,
@@ -252,13 +277,11 @@ local function raid(player: Player, data, targetId: string)
 				stock = stock,
 				attack = attackRoll,
 				defense = defenseRoll,
+				damage = damage,
 				time = now(),
 			})
 			while #ledger.hits > 20 do
 				table.remove(ledger.hits, 1)
-			end
-			if win then
-				ledger.shieldUntil = now() + SocialConfig.ShieldSeconds
 			end
 			return ledger
 		end)
@@ -269,8 +292,7 @@ local function raid(player: Player, data, targetId: string)
 		end
 		if blocked then
 			mine.busy = false
-			target.shielded = true
-			ctx.sendToast(player, `{target.name} is under a shield after another raid. Try someone else.`)
+			ctx.sendToast(player, `{target.name} is incapacitated: under {GameConfig.MinHealthToFight} health. Wait for them to recover.`)
 			ctx.refresh(player)
 			return
 		end
@@ -281,12 +303,7 @@ local function raid(player: Player, data, targetId: string)
 	end
 
 	data.stamina -= SocialConfig.RaidStamina
-	data.raid.cooldowns[target.id] = now() + SocialConfig.RaidCooldownSeconds
-	for key, untilTime in data.raid.cooldowns do
-		if untilTime <= now() then
-			data.raid.cooldowns[key] = nil
-		end
-	end
+	data.raid.cooldowns = {} -- no cooldowns: a keep can be hit until its lord is incapacitated
 	local maxHealth = stats.maxHealth
 	data.health = math.max(0, data.health - math.floor(maxHealth * (if win then SocialConfig.WinHealthCost else SocialConfig.LossHealthCost)))
 	ctx.countLifetime(data, "raids", 1)
@@ -300,11 +317,14 @@ local function raid(player: Player, data, targetId: string)
 	else
 		data.raid.losses += 1
 	end
-	-- the target leaves the list once raided
-	for index, candidate in mine.targets do
-		if candidate.id == target.id then
-			table.remove(mine.targets, index)
-			break
+	-- an NPC keep leaves the list once raided; players stay until they
+	-- are incapacitated
+	if target.npc then
+		for index, candidate in mine.targets do
+			if candidate.id == target.id then
+				table.remove(mine.targets, index)
+				break
+			end
 		end
 	end
 	local loot = stockText(stock)
@@ -334,7 +354,6 @@ local function collectRaids(player: Player, data)
 	if type(peek) ~= "table" then
 		return
 	end
-	data.raid.shieldUntil = math.max(data.raid.shieldUntil, peek.shieldUntil or 0)
 	if type(peek.hits) ~= "table" or #peek.hits == 0 then
 		return
 	end
@@ -345,6 +364,13 @@ local function collectRaids(player: Player, data)
 		end
 		taken = ledger.hits or {}
 		ledger.hits = {}
+		-- the ledger's health now follows your save again
+		local damage = 0
+		for _, hit in taken do
+			damage += hit.damage or 0
+		end
+		ledger.health = math.max(0, data.health - damage)
+		ledger.healthAt = now()
 		return ledger
 	end)
 	if not player.Parent or #taken == 0 then
@@ -354,6 +380,7 @@ local function collectRaids(player: Player, data)
 	for _, hit in taken do
 		local entry = { userId = hit.fromId, name = hit.from, time = hit.time, win = hit.win }
 		table.insert(data.raid.attackers, 1, entry)
+		data.health = math.max(0, data.health - (hit.damage or 0))
 		if hit.win then
 			fell += 1
 			local gold = math.min(math.max(0, data.gold), math.max(0, hit.gold or 0))
@@ -1089,9 +1116,9 @@ function Social.state(player: Player, data)
 			defense = target.defense,
 			gold = target.gold,
 			tag = target.tag,
-			shielded = target.shielded == true,
 			revenge = target.revenge == true,
-			cooldown = math.max(0, (data.raid.cooldowns[target.id] or 0) - t),
+			health = healthNow(target.health, target.maxHealth, target.healthAt),
+			maxHealth = target.maxHealth,
 		})
 	end
 
@@ -1165,7 +1192,6 @@ function Social.state(player: Player, data)
 		raid = {
 			targets = targets,
 			lookIn = math.max(0, SocialConfig.RaidRefreshSeconds - (t - mine.lookedAt)),
-			shieldLeft = math.max(0, data.raid.shieldUntil - t),
 			wins = data.raid.wins,
 			losses = data.raid.losses,
 			held = data.raid.held,

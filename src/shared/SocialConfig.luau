@@ -4,7 +4,9 @@
 -- server). Your attack roll against their defense roll; win and you take
 -- part of their gold on hand and unprotected resources. Gold in the Bank
 -- is always safe, and the Hidden Cellar keeps part of the resources safe.
--- A player who was just raided gets a shield for a while.
+-- Every raid also wounds the defender. Under GameConfig.MinHealthToFight
+-- (20) health they are incapacitated: they can not be raided, and they can
+-- not attack anyone either, until their health recovers.
 --
 -- Guilds: up to MaxMembers players. Members donate gold for guild
 -- experience; guild levels give every member bonuses.
@@ -24,8 +26,8 @@ SocialConfig.RaidLevelRange = 6 -- targets are within this many levels of you
 SocialConfig.RaidStamina = 1 -- stamina per raid
 SocialConfig.RaidTargets = 6 -- targets shown at once
 SocialConfig.RaidRefreshSeconds = 30 -- how often you can look for new targets
-SocialConfig.RaidCooldownSeconds = 15 * 60 -- before you can raid the same player again
-SocialConfig.ShieldSeconds = 30 * 60 -- protection after being raided
+SocialConfig.WinDamage = { 0.2, 0.35 } -- share of the defender's max health a won raid takes
+SocialConfig.LossDamage = { 0.05, 0.1 } -- share a failed raid still takes
 SocialConfig.StealGold = 0.1 -- share of gold on hand taken by a win
 SocialConfig.StealResources = 0.08 -- share of unprotected resources taken
 SocialConfig.WinHealthCost = 0.05 -- share of your max health a win costs

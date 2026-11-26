@@ -1,6 +1,6 @@
 -- Raids page (Arena):
 --   * banner with your attack and defense and your raid record,
---   * a shield strip while you are protected,
+--   * your health: under 20 you can not raid or be raided,
 --   * target cards (players near your level and NPC keeps): portrait,
 --     level, guild tag, their defense against your attack with a win
 --     chance, gold on hand, ATTACK,
@@ -272,8 +272,8 @@ function RaidsPage.build(ui)
 	w.record.Size = UDim2.new(0.4, -10, 0, 70)
 	w.record.TextWrapped = true
 
-	-- shield / bank note
-	local strip = ui.makeFrame(page, UDim2.new(1, -10, 0, 44), UDim2.fromOffset(0, 0), Color3.fromRGB(30, 40, 60))
+	-- your health / bank note
+	local strip = ui.makeFrame(page, UDim2.new(1, -10, 0, 52), UDim2.fromOffset(0, 0), Color3.fromRGB(30, 40, 60))
 	strip.LayoutOrder = 2
 	ui.addCorner(strip, 8)
 	w.shieldStroke = ui.art.stroke(strip, Color3.fromRGB(110, 150, 230), 1.5, 0.2)
@@ -362,12 +362,12 @@ function RaidsPage.draw(state, ui)
 	local locked = state.level < SocialConfig.RaidMinLevel
 	if locked then
 		w.shield.Text = `\u{1F512} Raids open at level {SocialConfig.RaidMinLevel}. Until then no one can raid you either.`
-	elseif raid.shieldLeft > 0 then
-		w.shield.Text = `\u{1F6E1}\u{FE0F} <b>SHIELDED</b> for {Kit.clock(raid.shieldLeft)}: no one can raid you. Raiding others does not break it.`
+	elseif state.health < 20 then
+		w.shield.Text = `\u{1F480} <b><font color="#E66A5A">INCAPACITATED</font></b>  {state.health} / {stats.maxHealth} health. Under 20 you can not raid, and no one can raid you, until you recover.`
 	else
-		w.shield.Text = `\u{1F4B0} <font color="#F0C450">{Format.short(state.gold)}</font> gold on hand can be raided. Bank it to keep it safe.`
+		w.shield.Text = `\u{2764}\u{FE0F} {state.health} / {stats.maxHealth} health   \u{2022}   \u{1F4B0} <font color="#F0C450">{Format.short(state.gold)}</font> gold on hand can be raided. Bank it to keep it safe.`
 	end
-	Kit.setPulse(w.shieldStroke, raid.shieldLeft > 0, Color3.fromRGB(110, 150, 230))
+	Kit.setPulse(w.shieldStroke, state.health < 20, Kit.RED)
 
 	ui.setButton(w.scout, if raid.lookIn > 0 and #raid.targets > 0 then `\u{1F50E} SCOUT IN {raid.lookIn}s` else "\u{1F50E} SCOUT FOR TARGETS", not locked and (raid.lookIn <= 0 or #raid.targets == 0), ui.colors.action)
 	w.offline.Text = if raid.online
@@ -395,7 +395,7 @@ function RaidsPage.draw(state, ui)
 		end
 		local tag = if target.tag ~= "" then `<font color="#F0C450">[{target.tag}]</font> ` else ""
 		part.name.Text = `{tag}{target.name}`
-		part.sub.Text = `LEVEL {target.level}  \u{2022}  {if target.npc then "NPC KEEP" else "PLAYER"}`
+		part.sub.Text = `LEVEL {target.level}  \u{2022}  {if target.npc then "NPC KEEP" else "PLAYER"}  \u{2022}  \u{2764}\u{FE0F} {target.health or "?"} / {target.maxHealth or "?"}`
 		part.ribbon.Visible = target.revenge
 		local chance = winChance(stats.attack, target.defense)
 		local color = if chance >= 0.65 then Kit.GREEN elseif chance >= 0.35 then Kit.GOLD else Kit.RED
@@ -404,10 +404,11 @@ function RaidsPage.draw(state, ui)
 		Kit.setBar(part.bar, chance, 1, `{math.floor(chance * 100 + 0.5)}% TO WIN`)
 		local take = math.floor(target.gold * SocialConfig.StealGold)
 		part.loot.Text = `\u{1F4B0} ON HAND {Format.short(target.gold)}  >  <font color="#FFFFFF">+{Format.short(take)}</font>`
-		if target.shielded then
-			ui.setButton(part.button, "\u{1F6E1}\u{FE0F} SHIELDED", false, Kit.RED)
-		elseif target.cooldown > 0 then
-			ui.setButton(part.button, `AGAIN IN {Kit.clock(target.cooldown)}`, false, Kit.RED)
+		local down = not target.npc and (target.health or 100) < 20
+		if down then
+			ui.setButton(part.button, "\u{1F480} INCAPACITATED", false, Kit.RED)
+		elseif state.health < 20 then
+			ui.setButton(part.button, "TOO WOUNDED", false, Kit.RED)
 		elseif locked then
 			ui.setButton(part.button, `LEVEL {SocialConfig.RaidMinLevel}`, false, Kit.RED)
 		else

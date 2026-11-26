@@ -170,7 +170,6 @@ local function newData()
 		chronicleNext = 1,
 		-- Raids, guild and realm (other players)
 		raid = {
-			shieldUntil = 0, -- no one can raid you before this
 			wins = 0, -- raids you won
 			losses = 0, -- raids you lost
 			held = 0, -- raids on you that failed
@@ -178,7 +177,7 @@ local function newData()
 			stolen = 0, -- gold taken in raids, all time
 			lost = 0, -- gold lost to raids, all time
 			sieges = 0, -- realm sieges, all time
-			cooldowns = {}, -- [target id] = time you may raid them again
+			cooldowns = {}, -- unused (raids have no cooldown)
 			attackers = {}, -- recent attackers: { userId, name, time, win }
 		},
 		guild = { id = "", name = "", tag = "", level = 1, lastPost = 0 },

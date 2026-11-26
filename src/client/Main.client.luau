@@ -512,7 +512,7 @@ local PAGE_INFO = {
 	},
 	Raids = {
 		about = "Raid other players' keeps for their gold on hand and resources.",
-		tip = "Your attack roll against their defense roll. Gold in the Bank is always safe, and the Hidden Cellar protects resources. A raided keep gets a 30 minute shield.",
+		tip = "Your attack roll against their defense roll. Gold in the Bank is always safe, and the Hidden Cellar protects resources. Every raid wounds the defender; under 20 health they can not be raided (or raid) until they recover.",
 	},
 	["Realm Map"] = {
 		about = "Guilds siege the realm's territories every week.",
