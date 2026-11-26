@@ -515,7 +515,7 @@ local PAGE_INFO = {
 		tip = "Your attack roll against their defense roll. Gold in the Bank is always safe, and the Hidden Cellar protects resources. Every raid wounds the defender; under 20 health they can not be raided (or raid) until they recover.",
 	},
 	["Realm Map"] = {
-		about = "Thirty territories in five lands. Guilds claim them and fight over them.",
+		about = "Fifty territories in five lands. Guilds claim them and fight over them.",
 		tip = "Nobody holds it? Claim it for gold. Another guild holds it? Attack (stamina) and siege (energy) until its strength hits 0. Holders station soldiers, fortify, and get the bonus plus a stipend every 2 hours. Anyone can live in one territory for a share of its bonus, if its holders let them (open, by application or closed, with a level and rent).",
 	},
 	Guild = {
@@ -1398,7 +1398,8 @@ do
 		{ key = "Train", title = "Train soldier", width = 520, height = 470 },
 		{ key = "Holding", title = "Holding", width = 520, height = 470 },
 		{ key = "IncomeBonus", title = "Income bonus", width = 460, height = 420 },
-		{ key = "Territory", title = "Territory", width = 920, height = 620 },
+		{ key = "Territory", title = "Territory", width = 980, height = 660 },
+		{ key = "RealmList", title = "Territories", width = 720, height = 600 },
 		{ key = "RealmBonuses", title = "Realm bonuses", width = 600, height = 480 },
 	}
 	local DEFAULT_WIDTH, DEFAULT_HEIGHT = 680, 560

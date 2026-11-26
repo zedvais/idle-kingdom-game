@@ -2026,6 +2026,7 @@ local function realmState(player: Player, data)
 		stationed = stationed,
 		stipendIn = SocialConfig.StipendSeconds - t % SocialConfig.StipendSeconds,
 		stipendNext = math.floor(stats.incomePerHour * minutes / 60),
+		income = stats.incomePerHour,
 		attackDamage = math.floor(stats.attack * SocialConfig.AttackPower),
 		siegeDamage = math.floor(stats.attack * SocialConfig.SiegePower),
 		guildId = data.guild.id,

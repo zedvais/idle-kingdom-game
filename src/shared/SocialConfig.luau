@@ -11,7 +11,7 @@
 -- Guilds: up to MaxMembers players. Members donate gold for guild
 -- experience; guild levels give every member bonuses.
 --
--- Realm map: 30 territories in 5 tiers that guilds claim, attack, siege,
+-- Realm map: 50 territories in 5 tiers that guilds claim, attack, siege,
 -- garrison and fortify (details in the Realm map section below).
 
 local SocialConfig = {}
@@ -101,7 +101,7 @@ end
 ---------------------------------------------------------------------------
 -- Realm map
 ---------------------------------------------------------------------------
--- Thirty territories in five tiers. Every tier is its own land with its
+-- Fifty territories in five tiers. Every tier is its own land with its
 -- own look and buildings; the bonus kinds are the same everywhere, higher
 -- tiers just give bigger percentages.
 --
@@ -192,16 +192,26 @@ SocialConfig.Tiers = {
 	},
 }
 
--- Six territories a tier. x, y = where the territory sits on its tier's
--- map (0 to 1).
-local LAYOUT = { { 0.04, 0.08 }, { 0.36, 0.03 }, { 0.68, 0.1 }, { 0.08, 0.54 }, { 0.4, 0.5 }, { 0.71, 0.56 } }
-local KINDS = { "income", "attack", "defense", "xp", "questGold", "income" }
+-- Ten territories a tier on one honeycomb map, 10 columns x 5 rows of
+-- flat-topped hexes (odd columns sit half a hex lower). Each tier is one
+-- region of the map; the Crownlands sit in the middle. Cells[tier][n] =
+-- { column, row } for that tier's nth territory (0-based).
+SocialConfig.MapColumns = 10
+SocialConfig.MapRows = 5
+local CELLS = {
+	{ { 3, 1 }, { 3, 2 }, { 0, 3 }, { 2, 3 }, { 1, 3 }, { 3, 3 }, { 0, 4 }, { 2, 4 }, { 1, 4 }, { 3, 4 } },
+	{ { 0, 0 }, { 2, 0 }, { 1, 0 }, { 3, 0 }, { 0, 1 }, { 2, 1 }, { 1, 1 }, { 0, 2 }, { 2, 2 }, { 1, 2 } },
+	{ { 6, 0 }, { 8, 0 }, { 5, 0 }, { 7, 0 }, { 9, 0 }, { 6, 1 }, { 8, 1 }, { 7, 1 }, { 9, 1 }, { 8, 2 } },
+	{ { 7, 2 }, { 9, 2 }, { 8, 3 }, { 7, 3 }, { 9, 3 }, { 6, 4 }, { 8, 4 }, { 5, 4 }, { 7, 4 }, { 9, 4 } },
+	{ { 4, 0 }, { 4, 1 }, { 5, 1 }, { 4, 2 }, { 6, 2 }, { 5, 2 }, { 4, 3 }, { 6, 3 }, { 5, 3 }, { 4, 4 } },
+}
+local KINDS = { "income", "attack", "defense", "xp", "questGold" }
 local NAMES = {
-	{ "Millbrook", "Hollow Green", "Applecross", "Fernhill", "Little Dunmore", "Brackenford" },
-	{ "Greywatch Gate", "Cairn Hill", "Stonemere", "Wolfscar", "Ravenmoor", "Highcrag" },
-	{ "Cinder Vale", "Ashfall", "Emberforge", "Brimstone Gulch", "Smokehollow", "Redspire" },
-	{ "Ironhold", "Anvil Reach", "Blackmine", "Steelwater", "Hammerdeep", "Forgeholm" },
-	{ "Throne of Ashvale", "Kingsreach", "Gilded Court", "Sunspire", "Regent's Rest", "Crownhaven" },
+	{ "Millbrook", "Hollow Green", "Applecross", "Fernhill", "Little Dunmore", "Brackenford", "Thistledown", "Oxbow Meadow", "Honeycomb Hill", "Willowmere" },
+	{ "Greywatch Gate", "Cairn Hill", "Stonemere", "Wolfscar", "Ravenmoor", "Highcrag", "Flintwall", "Barrow Downs", "Hawkspire", "Coldbrook" },
+	{ "Cinder Vale", "Ashfall", "Emberforge", "Brimstone Gulch", "Smokehollow", "Redspire", "Slagheap Row", "Kiln Hollow", "Charwood", "Pyre Hill" },
+	{ "Ironhold", "Anvil Reach", "Blackmine", "Steelwater", "Hammerdeep", "Forgeholm", "Rivet Row", "Chainbridge", "Oreholt", "Bellows Gate" },
+	{ "Throne of Ashvale", "Kingsreach", "Gilded Court", "Sunspire", "Regent's Rest", "Crownhaven", "Marble Walk", "Herald's Square", "Velvet Row", "Lionsgate" },
 }
 
 SocialConfig.Territories = {}
@@ -209,15 +219,16 @@ SocialConfig.TerritoryById = {}
 for tierIndex, names in NAMES do
 	local tier = SocialConfig.Tiers[tierIndex]
 	for index, name in names do
-		local kind = KINDS[index]
+		local kind = KINDS[(index - 1) % #KINDS + 1]
 		local id = string.lower(string.gsub(name, "[^%a]", ""))
 		local territory = {
 			id = id,
 			name = name,
 			tier = tierIndex,
 			slot = index,
-			x = LAYOUT[index][1],
-			y = LAYOUT[index][2],
+			number = #SocialConfig.Territories + 1,
+			column = CELLS[tierIndex][index][1],
+			row = CELLS[tierIndex][index][2],
 			bonus = kind,
 			amount = math.floor(SocialConfig.BonusBase[kind] * tier.scale * 1000 + 0.5) / 1000,
 		}

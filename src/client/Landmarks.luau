@@ -311,4 +311,63 @@ function Landmarks.draw(holder: GuiObject, tier: number)
 	DRAW[math.clamp(tier, 1, #DRAW)](root, holder.ZIndex, aspect)
 end
 
+-- A tiny building for the map, in the tier's style, centred at (x, y)
+-- pixels inside `parent`, about `size` pixels wide. Not animated.
+local function px(parent: Instance, x: number, y: number, w: number, h: number, color: Color3, z: number, round: number?): Frame
+	local frame = Instance.new("Frame")
+	frame.Position = UDim2.fromOffset(x, y)
+	frame.Size = UDim2.fromOffset(w, h)
+	frame.BackgroundColor3 = color
+	frame.BorderSizePixel = 0
+	frame.ZIndex = z
+	if round then
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(round, 0)
+		corner.Parent = frame
+	end
+	frame.Parent = parent
+	return frame
+end
+
+local MINI = {
+	function(parent, x, y, size, z, variant) -- cottage
+		local roofColor = if variant % 2 == 0 then Color3.fromRGB(150, 80, 50) else Color3.fromRGB(190, 150, 70)
+		local roof = px(parent, x - size * 0.36, y - size * 0.62, size * 0.72, size * 0.72, roofColor, z)
+		roof.Rotation = 45
+		px(parent, x - size * 0.5, y - size * 0.25, size, size * 0.6, Color3.fromRGB(236, 220, 180), z + 1)
+		px(parent, x - size * 0.1, y + size * 0.05, size * 0.2, size * 0.3, Color3.fromRGB(110, 70, 40), z + 2)
+	end,
+	function(parent, x, y, size, z, variant) -- stone tower
+		local stone = if variant % 2 == 0 then Color3.fromRGB(160, 160, 165) else Color3.fromRGB(130, 132, 140)
+		px(parent, x - size * 0.3, y - size * 0.7, size * 0.6, size * 1.05, stone, z)
+		for index = 0, 2 do
+			px(parent, x - size * 0.34 + index * size * 0.26, y - size * 0.86, size * 0.16, size * 0.18, stone, z)
+		end
+		px(parent, x - size * 0.06, y - size * 0.45, size * 0.12, size * 0.2, Color3.fromRGB(30, 30, 40), z + 1)
+	end,
+	function(parent, x, y, size, z, variant) -- forge
+		px(parent, x + size * 0.15, y - size * 0.75, size * 0.18, size * 0.5, Color3.fromRGB(50, 40, 36), z)
+		px(parent, x - size * 0.5, y - size * 0.35, size, size * 0.7, Color3.fromRGB(80, 56, 48), z + 1, 0.1)
+		local glow = px(parent, x - size * 0.3, y - size * 0.05, size * 0.3, size * 0.3, Color3.fromRGB(255, 130 + (variant % 3) * 30, 40), z + 2, 0.3)
+		local _ = glow
+	end,
+	function(parent, x, y, size, z, variant) -- iron hall
+		local metal = if variant % 2 == 0 then Color3.fromRGB(100, 106, 124) else Color3.fromRGB(84, 90, 110)
+		px(parent, x - size * 0.55, y - size * 0.45, size * 1.1, size * 0.8, metal, z)
+		px(parent, x - size * 0.55, y - size * 0.55, size * 1.1, size * 0.12, Color3.fromRGB(60, 64, 80), z + 1)
+		px(parent, x - size * 0.14, y - size * 0.05, size * 0.28, size * 0.4, Color3.fromRGB(30, 30, 38), z + 1, 0.4)
+	end,
+	function(parent, x, y, size, z, variant) -- palace
+		local dome = px(parent, x - size * 0.3, y - size * 0.8, size * 0.6, size * 0.6, Color3.fromRGB(230, 190, 70), z, 0.5)
+		local _ = dome
+		px(parent, x - size * 0.55, y - size * 0.4, size * 1.1, size * 0.75, Color3.fromRGB(242, 236, 220), z + 1, 0.05)
+		px(parent, x - size * 0.55, y - size * 0.4, size * 1.1, size * 0.1, Color3.fromRGB(230, 190, 70), z + 2)
+		px(parent, x - size * 0.12, y - size * 0.05, size * 0.24, size * 0.4, Color3.fromRGB(150, 60, 60 + (variant % 2) * 40), z + 2, 0.4)
+	end,
+}
+
+function Landmarks.mini(parent: Instance, tier: number, x: number, y: number, size: number, z: number, variant: number)
+	MINI[math.clamp(tier, 1, #MINI)](parent, x, y, size, z, variant)
+end
+
 return Landmarks
