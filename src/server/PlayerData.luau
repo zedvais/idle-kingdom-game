@@ -181,6 +181,11 @@ local function newData()
 			attackers = {}, -- recent attackers: { userId, name, time, win }
 		},
 		guild = { id = "", name = "", tag = "", level = 1, lastPost = 0 },
+		-- Realm map: the territory you live in, soldiers you stationed
+		-- (stationed[i] = { t = territory id, round, soldier }; t = "" means
+		-- back from the front, waiting for a free warband slot) and the last
+		-- stipend period paid.
+		realm = { home = "", stationed = {}, stipendPaid = 0, attacks = 0, claims = 0, captures = 0, donated = 0 },
 		lastSeen = 0,
 	}
 end
@@ -198,7 +203,7 @@ local function repair(data)
 		end
 	end
 	-- Settings tables get any new fields too.
-	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate", "settings", "raid", "guild" } do
+	for _, name in { "autoBuy", "autoRoll", "pass", "weekly", "bounty", "streak", "festival", "research", "relics", "rebirth", "training", "expedition", "estate", "settings", "raid", "guild", "realm" } do
 		for key, default in fresh[name] do
 			if type(data[name][key]) ~= type(default) then
 				data[name][key] = default

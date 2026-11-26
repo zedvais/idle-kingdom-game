@@ -11,9 +11,8 @@
 -- Guilds: up to MaxMembers players. Members donate gold for guild
 -- experience; guild levels give every member bonuses.
 --
--- Realm map: each week guilds siege the realm's territories. The guild
--- with the most siege points on a territory at the end of the week holds
--- it the next week, and its members get that territory's bonus.
+-- Realm map: 30 territories in 5 tiers that guilds claim, attack, siege,
+-- garrison and fortify (details in the Realm map section below).
 
 local SocialConfig = {}
 
@@ -102,29 +101,126 @@ end
 ---------------------------------------------------------------------------
 -- Realm map
 ---------------------------------------------------------------------------
+-- Thirty territories in five tiers. Every tier is its own land with its
+-- own look and buildings; the bonus kinds are the same everywhere, higher
+-- tiers just give bigger percentages.
+--
+-- A territory nobody holds is CLAIMED (gold, no fighting). A territory
+-- another guild holds is fought for: ATTACK (stamina) and SIEGE (energy)
+-- wear down its strength, which regains 10% an hour. At 0 strength the
+-- guild that did the most damage in that blow takes it over at half
+-- strength; the old garrison goes home and the fortifications are lost.
+--
+-- Holders station soldiers from their warband as a garrison (more
+-- defense), donate gold and energy to four fortifications, and every two
+-- hours each member gets a stipend. Any player can live in one territory
+-- as a resident and gets a share of its bonus while a guild holds it.
 
-SocialConfig.SiegeStamina = 1
-SocialConfig.SiegeMinLevel = 8
-SocialConfig.RealmRefreshSeconds = 60
+SocialConfig.RealmRefreshSeconds = 120 -- full re-read of every territory
+SocialConfig.RealmViewSeconds = 10 -- re-read of the territory you have open
+SocialConfig.RealmFlushSeconds = 8 -- attacks are sent in batches this often
 
--- Siege points for one siege: grows with your level and a little with power.
-function SocialConfig.siegePoints(level: number, attack: number): number
-	return math.floor(10 + level + math.sqrt(math.max(0, attack)) * 0.5)
-end
+SocialConfig.AttackStamina = 1
+SocialConfig.AttackPower = 3 -- damage = attack x this (x roll)
+SocialConfig.SiegeEnergy = 10
+SocialConfig.SiegePower = 25 -- a siege hits much harder, for energy
+SocialConfig.RegenPerHour = 0.1 -- share of max strength regained an hour
+SocialConfig.CaptureStrength = 0.5 -- a captured territory starts at half
+SocialConfig.HeldBase = 2 -- a guild holds up to this + its level territories
+SocialConfig.StipendSeconds = 7200 -- every two hours
+SocialConfig.ResidentShare = 0.25 -- residents get this share of the bonus
+SocialConfig.ResidentsMax = 50
+SocialConfig.HistoryKept = 8
+SocialConfig.ResidentNamesKept = 12
 
--- Laid out in a 3 x 3 grid, row by row. bonus kinds are the same as
--- research and gear sets: income, questGold, xp, attack, defense.
-SocialConfig.Territories = {
-	{ id = "northmarch", name = "The Northmarch", glyph = "\u{2744}\u{FE0F}", bonus = "defense", amount = 0.05, color = Color3.fromRGB(120, 160, 200) },
-	{ id = "crownwood", name = "Crownwood", glyph = "\u{1F332}", bonus = "income", amount = 0.05, color = Color3.fromRGB(70, 140, 70) },
-	{ id = "stormcliff", name = "Stormcliff", glyph = "\u{26A1}", bonus = "attack", amount = 0.05, color = Color3.fromRGB(110, 100, 160) },
-	{ id = "goldfields", name = "The Goldfields", glyph = "\u{1F33E}", bonus = "questGold", amount = 0.08, color = Color3.fromRGB(200, 170, 70) },
-	{ id = "throne", name = "Throne of Ashvale", glyph = "\u{1F451}", bonus = "income", amount = 0.1, color = Color3.fromRGB(220, 180, 60) },
-	{ id = "saltcoast", name = "The Salt Coast", glyph = "\u{1F30A}", bonus = "xp", amount = 0.06, color = Color3.fromRGB(70, 140, 190) },
-	{ id = "fenlands", name = "The Fenlands", glyph = "\u{1F438}", bonus = "xp", amount = 0.05, color = Color3.fromRGB(90, 130, 90) },
-	{ id = "emberpass", name = "Ember Pass", glyph = "\u{1F525}", bonus = "attack", amount = 0.06, color = Color3.fromRGB(200, 90, 50) },
-	{ id = "ironhold", name = "Ironhold", glyph = "\u{26CF}\u{FE0F}", bonus = "defense", amount = 0.06, color = Color3.fromRGB(130, 130, 140) },
+-- The four fortifications. Effects are the same on every tier; the names
+-- change with the tier's theme (Tiers[n].forts).
+SocialConfig.Forts = {
+	{ key = "walls", about = "Max strength", per = 0.2, text = "+20% max strength a level" },
+	{ key = "guard", about = "Garrison defense", per = 0.2, text = "+20% garrison defense a level" },
+	{ key = "heal", about = "Strength regained", per = 0.02, text = "+2% strength an hour a level" },
+	{ key = "homes", about = "Residents' share", per = 0.01, text = "+1% residents' share a level" },
 }
+SocialConfig.FortMax = 5
+
+-- Each soldier in a garrison adds this x their rarity rank (Common 1 ...
+-- Divine 7) to the territory's defense. Damage is divided by 1 + defense.
+SocialConfig.GarrisonPerRank = 0.003
+
+-- Base bonus amounts, multiplied by the tier's scale.
+SocialConfig.BonusBase = { income = 0.03, attack = 0.02, defense = 0.02, xp = 0.03, questGold = 0.04 }
+
+SocialConfig.Tiers = {
+	{
+		tier = 1, name = "The Hamlets", level = 8, scale = 1, strength = 100000, claim = 100000,
+		stipendMinutes = 10, garrison = 20, fortGold = 40000, fortEnergy = 30, points = 1,
+		glyph = "\u{1F3E1}", land = Color3.fromRGB(96, 150, 70), sky = Color3.fromRGB(150, 200, 230),
+		about = "Farm villages, mills and orchards.",
+		forts = { "Wooden Palisade", "Lookout Post", "Herb Hut", "Thatched Cottages" },
+	},
+	{
+		tier = 2, name = "Greywatch Marches", level = 15, scale = 1.8, strength = 500000, claim = 1000000,
+		stipendMinutes = 15, garrison = 25, fortGold = 400000, fortEnergy = 45, points = 2,
+		glyph = "\u{1F3F0}", land = Color3.fromRGB(110, 116, 120), sky = Color3.fromRGB(120, 140, 160),
+		about = "Stone towers on the grey border hills.",
+		forts = { "Stone Curtain Wall", "Watchtowers", "Chapel Hospice", "Garrison Row" },
+	},
+	{
+		tier = 3, name = "The Ember Wilds", level = 22, scale = 2.8, strength = 2000000, claim = 8000000,
+		stipendMinutes = 20, garrison = 30, fortGold = 3000000, fortEnergy = 60, points = 4,
+		glyph = "\u{1F30B}", land = Color3.fromRGB(150, 70, 40), sky = Color3.fromRGB(200, 110, 60),
+		about = "Forges and smelters on the burning slopes.",
+		forts = { "Obsidian Ramparts", "Brazier Towers", "Hot Spring Baths", "Smith Lodges" },
+	},
+	{
+		tier = 4, name = "Iron Baronies", level = 30, scale = 4, strength = 6000000, claim = 50000000,
+		stipendMinutes = 30, garrison = 35, fortGold = 20000000, fortEnergy = 80, points = 7,
+		glyph = "\u{26CF}\u{FE0F}", land = Color3.fromRGB(70, 76, 96), sky = Color3.fromRGB(90, 96, 120),
+		about = "Mine fortresses of the iron barons.",
+		forts = { "Iron Gatehouse", "Crossbow Bastions", "Barber Surgeons", "Miners' Halls" },
+	},
+	{
+		tier = 5, name = "The Crownlands", level = 40, scale = 6, strength = 20000000, claim = 300000000,
+		stipendMinutes = 45, garrison = 40, fortGold = 120000000, fortEnergy = 100, points = 10,
+		glyph = "\u{1F451}", land = Color3.fromRGB(170, 140, 60), sky = Color3.fromRGB(240, 210, 130),
+		about = "Palaces and courts around the throne.",
+		forts = { "Royal Ramparts", "Kingsguard Barracks", "Royal Infirmary", "Noble Townhouses" },
+	},
+}
+
+-- Six territories a tier. x, y = where the territory sits on its tier's
+-- map (0 to 1).
+local LAYOUT = { { 0.04, 0.08 }, { 0.36, 0.03 }, { 0.68, 0.1 }, { 0.08, 0.54 }, { 0.4, 0.5 }, { 0.71, 0.56 } }
+local KINDS = { "income", "attack", "defense", "xp", "questGold", "income" }
+local NAMES = {
+	{ "Millbrook", "Hollow Green", "Applecross", "Fernhill", "Little Dunmore", "Brackenford" },
+	{ "Greywatch Gate", "Cairn Hill", "Stonemere", "Wolfscar", "Ravenmoor", "Highcrag" },
+	{ "Cinder Vale", "Ashfall", "Emberforge", "Brimstone Gulch", "Smokehollow", "Redspire" },
+	{ "Ironhold", "Anvil Reach", "Blackmine", "Steelwater", "Hammerdeep", "Forgeholm" },
+	{ "Throne of Ashvale", "Kingsreach", "Gilded Court", "Sunspire", "Regent's Rest", "Crownhaven" },
+}
+
+SocialConfig.Territories = {}
+SocialConfig.TerritoryById = {}
+for tierIndex, names in NAMES do
+	local tier = SocialConfig.Tiers[tierIndex]
+	for index, name in names do
+		local kind = KINDS[index]
+		local id = string.lower(string.gsub(name, "[^%a]", ""))
+		local territory = {
+			id = id,
+			name = name,
+			tier = tierIndex,
+			slot = index,
+			x = LAYOUT[index][1],
+			y = LAYOUT[index][2],
+			bonus = kind,
+			amount = math.floor(SocialConfig.BonusBase[kind] * tier.scale * 1000 + 0.5) / 1000,
+		}
+		table.insert(SocialConfig.Territories, territory)
+		SocialConfig.TerritoryById[id] = territory
+	end
+end
 
 SocialConfig.BonusNames = {
 	income = "income",
@@ -134,14 +230,38 @@ SocialConfig.BonusNames = {
 	defense = "defense",
 }
 
--- Realm weeks start Monday 00:00 UTC (the epoch began on a Thursday).
-function SocialConfig.getWeek(now: number): number
-	return (now - 4 * 86400) // (7 * 86400)
+function SocialConfig.maxHeld(guildLevel: number): number
+	return SocialConfig.HeldBase + guildLevel
 end
 
-function SocialConfig.getWeekSecondsLeft(now: number): number
-	local into = (now - 4 * 86400) % (7 * 86400)
-	return 7 * 86400 - into
+-- Max strength of a territory with its walls at `walls`.
+function SocialConfig.maxStrength(tier: number, walls: number): number
+	return math.floor(SocialConfig.Tiers[tier].strength * (1 + SocialConfig.Forts[1].per * walls))
+end
+
+-- Share of max strength regained an hour.
+function SocialConfig.regenRate(heal: number): number
+	return SocialConfig.RegenPerHour + SocialConfig.Forts[3].per * heal
+end
+
+function SocialConfig.residentShare(homes: number): number
+	return SocialConfig.ResidentShare + SocialConfig.Forts[4].per * homes
+end
+
+-- Gold and energy for the next level of a fortification.
+function SocialConfig.fortCost(tier: number, level: number): (number, number)
+	local info = SocialConfig.Tiers[tier]
+	return info.fortGold * (level + 1), info.fortEnergy * (level + 1)
+end
+
+-- The garrison's defense bonus from the sum of its soldiers' rarity ranks.
+function SocialConfig.garrisonDefense(rankSum: number, guard: number): number
+	return rankSum * SocialConfig.GarrisonPerRank * (1 + SocialConfig.Forts[2].per * guard)
+end
+
+-- The two-hour stipend period number.
+function SocialConfig.stipendPeriod(now: number): number
+	return now // SocialConfig.StipendSeconds
 end
 
 return SocialConfig

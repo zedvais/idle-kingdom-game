@@ -59,6 +59,14 @@ Assets.Pictures = {
 		glassworks = "",
 		mint = "",
 	},
+	-- Realm map: the building drawn for each tier (map tiles, territory popup).
+	realm = {
+		[1] = "", -- The Hamlets: cottage and windmill
+		[2] = "", -- Greywatch Marches: stone watchtower
+		[3] = "", -- The Ember Wilds: forge
+		[4] = "", -- Iron Baronies: iron gatehouse
+		[5] = "", -- The Crownlands: palace
+	},
 }
 
 -- Icons: menu, page headers, popup titles, top bar chips. Same names as

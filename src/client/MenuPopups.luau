@@ -26,7 +26,7 @@ local UPDATES = {
 			"Raids: attack other players' keeps for their gold on hand. Bank gold is always safe.",
 			"Raids wound the defender; under 20 health they are incapacitated. Take revenge on anyone who raided you.",
 			"Guilds: found or join one, donate to level it up, chat on the guild wall.",
-			"Realm Map: guilds siege nine territories each week for bonuses.",
+			"Realm Map: 30 territories in 5 tiers. Claim empty ones, attack and siege the rest, station soldiers, fortify and live in one.",
 			"Foes and expeditions rebalanced to match real warband power.",
 		},
 	},

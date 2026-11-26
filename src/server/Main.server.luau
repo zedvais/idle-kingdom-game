@@ -3277,6 +3277,7 @@ Social.init({
 	refresh = refresh,
 	countLifetime = countLifetime,
 	canAfford = canAfford,
+	clearMember = Loadout.clearMember,
 	addStock = function(data, stock)
 		local caps = EstateConfig.summarize(data.estate.castles).caps
 		for resource, amount in stock do

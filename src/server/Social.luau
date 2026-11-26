@@ -8,7 +8,8 @@
 --   Guilds         [guild id] = the guild: members, experience, wall
 --   Guild_Names    [lower case name] = guild id, so names are unique
 --   Guild_Directory "list" = { [guild id] = summary } for browsing
---   Realm_<week>   [territory id] = { scores = { [guild id] = { p, name, tag } } }
+--   Realm_Lands    [territory id] = who holds it, strength, garrison, forts
+--                  (see the Realm map section)
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -893,74 +894,212 @@ end
 ---------------------------------------------------------------------------
 -- Realm map
 ---------------------------------------------------------------------------
+-- Realm_Lands [territory id] = {
+--   holder = { id, name, tag } or nil, round (goes up whenever it changes
+--   hands), since, strength + strengthAt (regen is worked out from these),
+--   marked (flagged for defense), hitAt (last attacked),
+--   forts = { [key] = { l = level, g = gold given, e = energy given } },
+--   garrison = { [userId] = { n = name, c = soldiers, r = rarity rank sum, d = defense } },
+--   residents = count, names = { [userId] = name } (the first few),
+--   history = { { t, x } } newest first,
+-- }
+-- Attacks are added up on each server and sent every few seconds, so many
+-- players can hit one territory without running into DataStore limits.
 
-local realm = { week = -1, current = {}, last = {}, at = 0 }
+local lands = {} -- [territory id] = doc, as last read or written
+local landsAt = 0
+local landAt = {} -- [territory id] = os.clock() of the last read
+local pending = {} -- [territory id] = { total, guilds = { [gid] = { d, name, tag, level } }, users = { [Player] = damage } }
+local flushing = {}
+local viewing = {} -- [Player] = territory id open in the popup
 
-local function topOf(doc)
-	local best, bestId = nil, nil
-	for gid, score in (doc and doc.scores) or {} do
-		if not best or score.p > best.p then
-			best = score
-			bestId = gid
-		end
+local function blankLand()
+	return { round = 0, since = 0, strength = 0, strengthAt = 0, forts = {}, garrison = {}, residents = 0, names = {}, history = {}, marked = false, hitAt = 0 }
+end
+
+local function fixLand(doc)
+	doc = if type(doc) == "table" then doc else blankLand()
+	doc.round = doc.round or 0
+	doc.forts = if type(doc.forts) == "table" then doc.forts else {}
+	doc.garrison = if type(doc.garrison) == "table" then doc.garrison else {}
+	doc.names = if type(doc.names) == "table" then doc.names else {}
+	doc.history = if type(doc.history) == "table" then doc.history else {}
+	doc.residents = math.max(0, doc.residents or 0)
+	for _, fort in SocialConfig.Forts do
+		doc.forts[fort.key] = doc.forts[fort.key] or { l = 0, g = 0, e = 0 }
 	end
-	return bestId, best
+	return doc
+end
+
+local function resetForts(doc)
+	doc.forts = {}
+	for _, fort in SocialConfig.Forts do
+		doc.forts[fort.key] = { l = 0, g = 0, e = 0 }
+	end
+end
+
+local function fortLevel(doc, key: string): number
+	return (doc.forts[key] and doc.forts[key].l) or 0
+end
+
+local function landMax(territory, doc): number
+	return SocialConfig.maxStrength(territory.tier, fortLevel(doc, "walls"))
+end
+
+-- Strength now: the stored value plus regen since it was stored.
+local function strengthNow(territory, doc, t: number): number
+	if not doc.holder then
+		return 0
+	end
+	local max = landMax(territory, doc)
+	local rate = SocialConfig.regenRate(fortLevel(doc, "heal"))
+	local elapsed = math.max(0, t - (doc.strengthAt or t))
+	return math.min(max, (doc.strength or max) + max * rate * elapsed / 3600)
+end
+
+local function garrisonTotals(doc): (number, number)
+	local count, ranks = 0, 0
+	for _, entry in doc.garrison do
+		count += entry.c or 0
+		ranks += entry.r or 0
+	end
+	return count, ranks
+end
+
+local function landDefense(doc): number
+	local _, ranks = garrisonTotals(doc)
+	return SocialConfig.garrisonDefense(ranks, fortLevel(doc, "guard"))
+end
+
+local function addHistory(doc, text: string)
+	table.insert(doc.history, 1, { t = now(), x = text })
+	while #doc.history > SocialConfig.HistoryKept do
+		table.remove(doc.history)
+	end
+end
+
+local function guildLabel(guild): string
+	return `[{guild.tag}] {guild.name}`
+end
+
+local function readLand(id: string)
+	local doc, ok = SharedStore.get("Realm_Lands", id)
+	if ok then
+		lands[id] = fixLand(doc)
+		landAt[id] = os.clock()
+	end
 end
 
 local function refreshRealm(force: boolean?)
-	local week = SocialConfig.getWeek(now())
-	if not force and week == realm.week and os.clock() - realm.at < SocialConfig.RealmRefreshSeconds then
+	if not force and os.clock() - landsAt < SocialConfig.RealmRefreshSeconds then
 		return
 	end
-	local current, last = {}, {}
+	landsAt = os.clock()
 	for _, territory in SocialConfig.Territories do
-		local doc = SharedStore.get(`Realm_{week}`, territory.id)
-		current[territory.id] = if type(doc) == "table" then doc else { scores = {} }
-		if week ~= realm.week or not realm.last[territory.id] then
-			local old = SharedStore.get(`Realm_{week - 1}`, territory.id)
-			last[territory.id] = if type(old) == "table" then old else { scores = {} }
-		else
-			last[territory.id] = realm.last[territory.id]
-		end
+		readLand(territory.id)
 	end
-	realm = { week = week, current = current, last = last, at = os.clock() }
 end
 
--- Bonuses your guild gets from the territories it holds this week.
-local function realmBonus(guildId: string)
-	local bonus = {}
+local function landOf(id: string)
+	return lands[id] or fixLand(nil)
+end
+
+-- Changes a territory with transform(doc) -> doc or nil (nil = no change).
+-- Returns the new doc, or nil when nothing changed or the call failed.
+local function changeLand(id: string, transform)
+	local changed = false
+	local doc, ok = SharedStore.update("Realm_Lands", id, function(old)
+		changed = false
+		local result = transform(fixLand(old))
+		changed = result ~= nil
+		return result
+	end)
+	if ok and changed and type(doc) == "table" then
+		lands[id] = fixLand(doc)
+		landAt[id] = os.clock()
+		return lands[id]
+	end
+	return nil
+end
+
+local function heldBy(guildId: string): number
+	local count = 0
 	if guildId == "" then
-		return bonus
+		return 0
 	end
-	for _, territory in SocialConfig.Territories do
-		local holder = topOf(realm.last[territory.id])
-		if holder == guildId then
-			bonus[territory.bonus] = (bonus[territory.bonus] or 0) + territory.amount
+	for _, doc in lands do
+		if doc.holder and doc.holder.id == guildId then
+			count += 1
 		end
 	end
-	return bonus
+	return count
 end
 
-local function siege(player: Player, data, territoryId: string)
-	local territory = nil
-	for _, candidate in SocialConfig.Territories do
-		if candidate.id == territoryId then
-			territory = candidate
+local function myGuildLevel(data): number
+	return data.guild.level or 1
+end
+
+local function territoryFrom(id: string)
+	return SocialConfig.TerritoryById[id or ""]
+end
+
+-- Basic checks before a realm action that needs a guild and the tier's level.
+local function canFight(player: Player, data, territory, what: string): boolean
+	if data.guild.id == "" then
+		ctx.sendToast(player, `Join or found a guild to {what} territories.`)
+		return false
+	end
+	local tier = SocialConfig.Tiers[territory.tier]
+	if data.level < tier.level then
+		ctx.sendToast(player, `{tier.name} opens at level {tier.level}.`)
+		return false
+	end
+	return true
+end
+
+-- A soldier back from the front goes into the first empty warband slot,
+-- or waits (t = "") until there is one.
+local function returnHome(data, entry): boolean
+	for slot, soldier in data.crew do
+		if soldier == false then
+			data.crew[slot] = entry.s
+			local index = table.find(data.realm.stationed, entry)
+			if index then
+				table.remove(data.realm.stationed, index)
+			end
+			return true
 		end
 	end
-	if not territory then
+	entry.t = ""
+	return false
+end
+
+local function placeWaiting(data)
+	for _, entry in table.clone(data.realm.stationed) do
+		if entry.t == "" then
+			returnHome(data, entry)
+		end
+	end
+end
+
+local function claim(player: Player, data, id: string)
+	local territory = territoryFrom(id)
+	if not territory or not canFight(player, data, territory, "claim") then
 		return
 	end
-	if data.guild.id == "" then
-		ctx.sendToast(player, "Join or found a guild to siege the realm.")
+	local tier = SocialConfig.Tiers[territory.tier]
+	local doc = landOf(territory.id)
+	if doc.holder then
+		ctx.sendToast(player, `{territory.name} is held by {guildLabel(doc.holder)}. Attack it instead.`)
 		return
 	end
-	if data.level < SocialConfig.SiegeMinLevel then
-		ctx.sendToast(player, `Sieges open at level {SocialConfig.SiegeMinLevel}.`)
+	local max = SocialConfig.maxHeld(myGuildLevel(data))
+	if heldBy(data.guild.id) >= max then
+		ctx.sendToast(player, `Your guild already holds {max} territories, its most at guild level {myGuildLevel(data)}.`)
 		return
 	end
-	if data.stamina < SocialConfig.SiegeStamina then
-		ctx.sendToast(player, "Not enough stamina. It refills over time.")
+	if not ctx.canAfford(data, tier.claim) then
+		ctx.sendToast(player, `Claiming costs {Format.short(tier.claim)} gold.`)
 		return
 	end
 	local mine = info(player)
@@ -968,35 +1107,738 @@ local function siege(player: Player, data, territoryId: string)
 		return
 	end
 	mine.busy = true
-	local stats = ctx.getStats(data)
-	local points = SocialConfig.siegePoints(data.level, stats.attack)
-	local guildId, name, tag = data.guild.id, data.guild.name, data.guild.tag
-	local week = SocialConfig.getWeek(now())
-	local doc, ok = SharedStore.update(`Realm_{week}`, territory.id, function(old)
-		old = if type(old) == "table" then old else { scores = {} }
-		old.scores = old.scores or {}
-		local score = old.scores[guildId] or { p = 0, name = name, tag = tag }
-		score.p += points
-		score.name = name
-		score.tag = tag
-		old.scores[guildId] = score
-		return old
+	data.gold -= tier.claim -- taken first, given back if the claim fails
+	local guild = { id = data.guild.id, name = data.guild.name, tag = data.guild.tag }
+	local reason = ""
+	local result = changeLand(territory.id, function(land)
+		if land.holder then
+			reason = "taken"
+			return nil
+		end
+		land.holder = guild
+		land.round += 1
+		land.since = now()
+		land.strength = SocialConfig.maxStrength(territory.tier, 0)
+		land.strengthAt = now()
+		land.garrison = {}
+		land.marked = false
+		resetForts(land)
+		addHistory(land, `{guildLabel(guild)} claimed it ({player.DisplayName}).`)
+		return land
 	end)
 	mine.busy = false
-	if not ok then
-		ctx.sendToast(player, "The siege could not be sent right now. Try again.")
+	if not result then
+		data.gold += tier.claim
+		ctx.sendToast(player, if reason == "taken" then `Someone claimed {territory.name} first.` else "The claim could not be sent right now. Try again.")
+		ctx.refresh(player)
 		return
 	end
-	if not player.Parent then
+	data.realm.claims += 1
+	ctx.sendFx(player, "realm", { territory = territory.id, kind = "claim" })
+	ctx.sendToast(player, `{territory.name} is now held by {guildLabel(guild)}!`)
+	ctx.refresh(player)
+end
+
+-- Damage one attack or siege does.
+local function hitDamage(stats, doc, power: number): number
+	local roll = random:NextNumber(SocialConfig.RollMin, SocialConfig.RollMax)
+	return math.max(1, math.floor(stats.attack * power * roll / (1 + landDefense(doc))))
+end
+
+local flushLand -- below
+
+local function attackLand(player: Player, data, id: string)
+	local landId, kind = string.match(id or "", "^([%w]+):(%a+)$")
+	local territory = territoryFrom(landId)
+	if not territory or (kind ~= "attack" and kind ~= "siege") then
 		return
 	end
-	data.stamina -= SocialConfig.SiegeStamina
+	if not canFight(player, data, territory, "attack") then
+		return
+	end
+	local doc = landOf(territory.id)
+	if not doc.holder then
+		ctx.sendToast(player, `Nobody holds {territory.name}. Claim it instead.`)
+		return
+	end
+	if doc.holder.id == data.guild.id then
+		ctx.sendToast(player, "Your guild holds this territory.")
+		return
+	end
+	if data.health < GameConfig.MinHealthToFight then
+		ctx.sendToast(player, `You are too wounded to fight. You need {GameConfig.MinHealthToFight} health.`)
+		return
+	end
+	local isSiege = kind == "siege"
+	if isSiege and data.energy < SocialConfig.SiegeEnergy then
+		ctx.sendToast(player, `A siege needs {SocialConfig.SiegeEnergy} energy.`)
+		return
+	elseif not isSiege and data.stamina < SocialConfig.AttackStamina then
+		ctx.sendToast(player, "Not enough stamina. It refills over time.")
+		return
+	end
+	local queued = pending[territory.id]
+	local left = strengthNow(territory, doc, now()) - (if queued then queued.total else 0)
+	if left <= 0 then
+		ctx.sendToast(player, `{territory.name} is falling. Wait a moment.`)
+		return
+	end
+	if isSiege then
+		data.energy -= SocialConfig.SiegeEnergy
+	else
+		data.stamina -= SocialConfig.AttackStamina
+	end
+	local stats = ctx.getStats(data)
+	local damage = hitDamage(stats, doc, if isSiege then SocialConfig.SiegePower else SocialConfig.AttackPower)
+	queued = queued or { total = 0, guilds = {}, users = {} }
+	pending[territory.id] = queued
+	queued.total += damage
+	local entry = queued.guilds[data.guild.id] or { d = 0, name = data.guild.name, tag = data.guild.tag, level = myGuildLevel(data) }
+	entry.d += damage
+	queued.guilds[data.guild.id] = entry
+	queued.users[player] = (queued.users[player] or 0) + damage
+	data.realm.attacks += 1
 	data.raid.sieges += 1
 	ctx.countLifetime(data, "sieges", 1)
-	if realm.week == week and type(doc) == "table" then
-		realm.current[territory.id] = doc
+	ctx.sendFx(player, "realm", { territory = territory.id, kind = kind, damage = damage, left = math.max(0, left - damage) })
+	if left - damage <= 0 then
+		task.spawn(flushLand, territory.id)
 	end
-	ctx.sendFx(player, "siege", { territory = territory.id, points = points })
+	ctx.refresh(player)
+end
+
+-- Sends the attacks queued on this server for one territory.
+flushLand = function(id: string)
+	local queued = pending[id]
+	if not queued or flushing[id] then
+		return
+	end
+	flushing[id] = true
+	pending[id] = nil
+	local territory = territoryFrom(id)
+	local captured, lostBy = nil, nil
+	local result = changeLand(id, function(land)
+		captured, lostBy = nil, nil
+		if not land.holder then
+			return nil -- it was given up meanwhile
+		end
+		local t = now()
+		local total = 0
+		local best, bestId = nil, nil
+		for gid, entry in queued.guilds do
+			if gid ~= land.holder.id then
+				total += entry.d
+				local room = heldBy(gid) < SocialConfig.maxHeld(entry.level or 1)
+				if room and (not best or entry.d > best.d) then
+					best = entry
+					bestId = gid
+				end
+			end
+		end
+		if total <= 0 then
+			return nil
+		end
+		local strength = strengthNow(territory, land, t) - total
+		land.hitAt = t
+		if strength > 0 then
+			land.strength = strength
+			land.strengthAt = t
+			return land
+		end
+		lostBy = land.holder
+		if best then
+			captured = { id = bestId, name = best.name, tag = best.tag }
+			land.holder = captured
+			land.strength = SocialConfig.maxStrength(territory.tier, 0) * SocialConfig.CaptureStrength
+			addHistory(land, `{guildLabel(captured)} captured it from {guildLabel(lostBy)}.`)
+		else
+			-- every attacking guild already holds its most: it falls empty
+			land.holder = nil
+			land.strength = 0
+			addHistory(land, `{guildLabel(lostBy)} lost it. Nobody holds it now.`)
+		end
+		land.round += 1
+		land.since = t
+		land.strengthAt = t
+		land.garrison = {}
+		land.marked = false
+		resetForts(land)
+		return land
+	end)
+	flushing[id] = false
+	if result == nil and lands[id] and lands[id].holder then
+		-- the write failed: try again next time
+		local again = pending[id] or { total = 0, guilds = {}, users = {} }
+		again.total += queued.total
+		for gid, entry in queued.guilds do
+			local into = again.guilds[gid] or { d = 0, name = entry.name, tag = entry.tag, level = entry.level }
+			into.d += entry.d
+			again.guilds[gid] = into
+		end
+		for user, damage in queued.users do
+			again.users[user] = (again.users[user] or 0) + damage
+		end
+		pending[id] = again
+		return
+	end
+	if result and lostBy then
+		for player, session in ctx.sessions do
+			local data = session.data
+			if captured and data.guild.id == captured.id then
+				ctx.sendFx(player, "realm", { territory = id, kind = "capture" })
+				ctx.sendToast(player, `Your guild captured {territory.name}!`)
+				if queued.users[player] then
+					data.realm.captures += 1
+					ctx.addReport(data, {
+						title = `Captured {territory.name}`,
+						text = `Your guild took {territory.name} from {guildLabel(lostBy)}. You dealt {Format.short(queued.users[player])} damage in the final assault.`,
+						win = true,
+					})
+				end
+			elseif data.guild.id == lostBy.id then
+				ctx.sendToast(player, `Your guild lost {territory.name}.`)
+			end
+			ctx.refresh(player)
+		end
+	end
+end
+
+local function flushAll()
+	for id in pending do
+		task.spawn(flushLand, id)
+	end
+end
+
+local function station(player: Player, data, id: string)
+	local landId, slotText = string.match(id or "", "^([%w]+):(%d+)$")
+	local territory = territoryFrom(landId)
+	local slot = tonumber(slotText)
+	local soldier = slot and data.crew[slot]
+	if not territory or not soldier then
+		return
+	end
+	local doc = landOf(territory.id)
+	if not doc.holder or doc.holder.id ~= data.guild.id then
+		ctx.sendToast(player, "You can only station soldiers in your guild's territories.")
+		return
+	end
+	local tier = SocialConfig.Tiers[territory.tier]
+	if (garrisonTotals(doc)) >= tier.garrison then
+		ctx.sendToast(player, `The garrison is full ({tier.garrison} soldiers).`)
+		return
+	end
+	local mine = info(player)
+	if mine.busy then
+		return
+	end
+	mine.busy = true
+	-- The soldier leaves the warband first so nothing else can use them.
+	ctx.clearMember(data, slot)
+	data.crew[slot] = false
+	local _, defense = GameConfig.getSoldierStats(soldier)
+	local rank = GameConfig.getRarityRank(soldier.rarity)
+	local key = tostring(player.UserId)
+	local round = doc.round
+	local reason = ""
+	local result = changeLand(territory.id, function(land)
+		if not land.holder or land.holder.id ~= data.guild.id or land.round ~= round then
+			reason = "lost"
+			return nil
+		end
+		if (garrisonTotals(land)) >= tier.garrison then
+			reason = "full"
+			return nil
+		end
+		local entry = land.garrison[key] or { n = player.DisplayName, c = 0, r = 0, d = 0 }
+		entry.n = player.DisplayName
+		entry.c += 1
+		entry.r += rank
+		entry.d += defense
+		land.garrison[key] = entry
+		return land
+	end)
+	mine.busy = false
+	if not result then
+		local entry = { t = "", round = 0, s = soldier }
+		table.insert(data.realm.stationed, entry)
+		returnHome(data, entry)
+		ctx.sendToast(player, if reason == "full" then "The garrison is full." elseif reason == "lost" then "Your guild no longer holds this territory." else "Could not station the soldier right now. Try again.")
+		ctx.refresh(player)
+		return
+	end
+	table.insert(data.realm.stationed, { t = territory.id, round = result.round, s = soldier })
+	ctx.sendToast(player, `{soldier.name} now guards {territory.name}. Their gear is back in your armory.`)
+	ctx.sendFx(player, "realm", { territory = territory.id, kind = "station" })
+	ctx.refresh(player)
+end
+
+-- Takes your soldiers out of a garrison: all of them in a territory, or one.
+local function removeFromGarrison(player: Player, data, id: string, entries): boolean
+	local key = tostring(player.UserId)
+	local rank, defense, count = 0, 0, 0
+	for _, entry in entries do
+		local _, soldierDefense = GameConfig.getSoldierStats(entry.s)
+		rank += GameConfig.getRarityRank(entry.s.rarity)
+		defense += soldierDefense
+		count += 1
+	end
+	local result = changeLand(id, function(land)
+		local entry = land.garrison[key]
+		if not entry then
+			return land -- already gone (captured): write nothing new
+		end
+		entry.c -= count
+		entry.r -= rank
+		entry.d -= defense
+		if entry.c <= 0 then
+			land.garrison[key] = nil
+		end
+		return land
+	end)
+	return result ~= nil
+end
+
+local function recall(player: Player, data, id: string)
+	local landId, which = string.match(id or "", "^([%w]+):(%w+)$")
+	local territory = territoryFrom(landId)
+	if not territory then
+		return
+	end
+	local entries = {}
+	for index, entry in data.realm.stationed do
+		if entry.t == territory.id and (which == "all" or tostring(index) == which) then
+			table.insert(entries, entry)
+		end
+	end
+	if #entries == 0 then
+		return
+	end
+	local mine = info(player)
+	if mine.busy then
+		return
+	end
+	mine.busy = true
+	local ok = removeFromGarrison(player, data, territory.id, entries)
+	mine.busy = false
+	if not ok then
+		ctx.sendToast(player, "Could not recall right now. Try again.")
+		return
+	end
+	local home, waiting = 0, 0
+	for _, entry in entries do
+		if returnHome(data, entry) then
+			home += 1
+		else
+			waiting += 1
+		end
+	end
+	ctx.sendToast(player, if waiting > 0 then `{home} back in the warband. {waiting} wait for a free warband slot.` else `{home} soldier{if home == 1 then "" else "s"} back in the warband.`)
+	ctx.refresh(player)
+end
+
+local function live(player: Player, data, id: string)
+	local territory = territoryFrom(id)
+	local old = data.realm.home
+	if id ~= "" and not territory then
+		return
+	end
+	if id == old then
+		return
+	end
+	if territory and data.level < SocialConfig.Tiers[territory.tier].level then
+		ctx.sendToast(player, `You need level {SocialConfig.Tiers[territory.tier].level} to live there.`)
+		return
+	end
+	local mine = info(player)
+	if mine.busy then
+		return
+	end
+	mine.busy = true
+	local key = tostring(player.UserId)
+	local full = false
+	local ok = true
+	if territory then
+		ok = changeLand(territory.id, function(land)
+			if land.residents >= SocialConfig.ResidentsMax then
+				full = true
+				return nil
+			end
+			land.residents += 1
+			local named = 0
+			for _ in land.names do
+				named += 1
+			end
+			if named < SocialConfig.ResidentNamesKept then
+				land.names[key] = player.DisplayName
+			end
+			return land
+		end) ~= nil
+	end
+	if ok and old ~= "" and territoryFrom(old) then
+		changeLand(old, function(land)
+			land.residents = math.max(0, land.residents - 1)
+			land.names[key] = nil
+			return land
+		end)
+	end
+	mine.busy = false
+	if not ok then
+		ctx.sendToast(player, if full then `{territory.name} is full ({SocialConfig.ResidentsMax} residents).` else "Could not move right now. Try again.")
+		return
+	end
+	data.realm.home = id
+	ctx.sendToast(player, if territory then `You now live in {territory.name}.` else "You moved out.")
+	ctx.refresh(player)
+end
+
+local function donate(player: Player, data, id: string)
+	local landId, fortKey, what, amountText = string.match(id or "", "^([%w]+):(%a+):(%a+):(%d+)$")
+	local territory = territoryFrom(landId)
+	local amount = tonumber(amountText)
+	local fortIndex = nil
+	for index, fort in SocialConfig.Forts do
+		if fort.key == fortKey then
+			fortIndex = index
+		end
+	end
+	if not territory or not fortIndex or not amount or amount < 1 or (what ~= "gold" and what ~= "energy") then
+		return
+	end
+	local doc = landOf(territory.id)
+	if not doc.holder or doc.holder.id ~= data.guild.id then
+		ctx.sendToast(player, "Only your guild's territories can be fortified.")
+		return
+	end
+	local fort = doc.forts[fortKey]
+	if fort.l >= SocialConfig.FortMax then
+		ctx.sendToast(player, "Fully built.")
+		return
+	end
+	local needGold, needEnergy = SocialConfig.fortCost(territory.tier, fort.l)
+	local room = if what == "gold" then needGold - fort.g else needEnergy - fort.e
+	local have = if what == "gold" then math.floor(data.gold) else math.floor(data.energy)
+	amount = math.min(amount, room, have)
+	if amount <= 0 then
+		ctx.sendToast(player, if room <= 0 then `This level has all the {what} it needs.` else `You have no {what} to give.`)
+		return
+	end
+	local mine = info(player)
+	if mine.busy then
+		return
+	end
+	mine.busy = true
+	if what == "gold" then
+		data.gold -= amount
+	else
+		data.energy -= amount
+	end
+	local round = doc.round
+	local leveled = false
+	local given = 0
+	local result = changeLand(territory.id, function(land)
+		leveled = false
+		given = 0
+		if not land.holder or land.holder.id ~= data.guild.id or land.round ~= round then
+			return nil
+		end
+		local target = land.forts[fortKey]
+		if target.l >= SocialConfig.FortMax then
+			return nil
+		end
+		local gold, energy = SocialConfig.fortCost(territory.tier, target.l)
+		if what == "gold" then
+			given = math.min(amount, gold - target.g)
+			target.g += given
+		else
+			given = math.min(amount, energy - target.e)
+			target.e += given
+		end
+		if given <= 0 then
+			return nil
+		end
+		if target.g >= gold and target.e >= energy then
+			target.l += 1
+			target.g = 0
+			target.e = 0
+			leveled = true
+			local name = SocialConfig.Tiers[territory.tier].forts[fortIndex]
+			addHistory(land, `{name} reached level {target.l}.`)
+		end
+		return land
+	end)
+	mine.busy = false
+	local refund = amount - (if result then given else 0)
+	if what == "gold" then
+		data.gold += refund
+	else
+		data.energy += refund
+	end
+	if not result then
+		ctx.sendToast(player, "Could not donate right now. Try again.")
+		ctx.refresh(player)
+		return
+	end
+	data.realm.donated += if what == "gold" then given else 0
+	local name = SocialConfig.Tiers[territory.tier].forts[fortIndex]
+	ctx.sendFx(player, "realm", { territory = territory.id, kind = if leveled then "fortLevel" else "donate", fort = fortKey })
+	ctx.sendToast(player, if leveled then `{name} is now level {result.forts[fortKey].l}!` else `Gave {Format.short(given)} {what} to the {name}.`)
+	ctx.refresh(player)
+end
+
+local function isOfficer(player: Player, data): boolean
+	local cached = guildCache[data.guild.id]
+	local role = roleOf(cached and cached.doc, player.UserId)
+	return role == "leader" or role == "officer"
+end
+
+local function surrender(player: Player, data, id: string)
+	local territory = territoryFrom(id)
+	if not territory or data.guild.id == "" then
+		return
+	end
+	if not isOfficer(player, data) then
+		ctx.sendToast(player, "Only the guild leader and officers can give up a territory.")
+		return
+	end
+	local guild = { id = data.guild.id, name = data.guild.name, tag = data.guild.tag }
+	local result = changeLand(territory.id, function(land)
+		if not land.holder or land.holder.id ~= guild.id then
+			return nil
+		end
+		land.holder = nil
+		land.round += 1
+		land.since = now()
+		land.strength = 0
+		land.strengthAt = now()
+		land.garrison = {}
+		land.marked = false
+		resetForts(land)
+		addHistory(land, `{guildLabel(guild)} gave it up.`)
+		return land
+	end)
+	if result then
+		ctx.sendToast(player, `Your guild gave up {territory.name}.`)
+		ctx.refresh(player)
+	end
+end
+
+local function mark(player: Player, data, id: string)
+	local territory = territoryFrom(id)
+	if not territory or data.guild.id == "" then
+		return
+	end
+	if not isOfficer(player, data) then
+		ctx.sendToast(player, "Only the guild leader and officers can mark territories.")
+		return
+	end
+	local result = changeLand(territory.id, function(land)
+		if not land.holder or land.holder.id ~= data.guild.id then
+			return nil
+		end
+		land.marked = not land.marked
+		return land
+	end)
+	if result then
+		ctx.sendToast(player, if result.marked then `{territory.name} is marked for defense.` else `{territory.name} is no longer marked.`)
+		ctx.refresh(player)
+	end
+end
+
+-- Keeps your stationed soldiers, home and stipend in line with the map.
+local function syncRealm(player: Player, data)
+	if landsAt == 0 then
+		return
+	end
+	local came = {}
+	local leave = {}
+	for _, entry in table.clone(data.realm.stationed) do
+		local doc = entry.t ~= "" and lands[entry.t]
+		if doc then
+			if doc.round ~= entry.round or not doc.holder then
+				-- the territory changed hands: the garrison came home
+				came[entry.t] = (came[entry.t] or 0) + 1
+				entry.t = ""
+			elseif doc.holder.id ~= data.guild.id then
+				-- you left the guild that holds it
+				leave[entry.t] = leave[entry.t] or {}
+				table.insert(leave[entry.t], entry)
+			end
+		end
+	end
+	for id, entries in leave do
+		if removeFromGarrison(player, data, id, entries) then
+			for _, entry in entries do
+				entry.t = ""
+			end
+		end
+	end
+	placeWaiting(data)
+	for id, count in came do
+		local territory = territoryFrom(id)
+		ctx.sendToast(player, `{count} soldier{if count == 1 then "" else "s"} came home from {territory.name}: your guild lost it.`)
+	end
+	-- Stipend: once every two hours while you play, for each territory
+	-- your guild holds.
+	local period = SocialConfig.stipendPeriod(now())
+	if data.realm.stipendPaid < period then
+		data.realm.stipendPaid = period
+		local minutes, count = 0, 0
+		for _, territory in SocialConfig.Territories do
+			local doc = lands[territory.id]
+			if doc and doc.holder and doc.holder.id == data.guild.id and data.guild.id ~= "" then
+				minutes += SocialConfig.Tiers[territory.tier].stipendMinutes
+				count += 1
+			end
+		end
+		if minutes > 0 then
+			local stats = ctx.getStats(data)
+			local gold = math.floor(stats.incomePerHour * minutes / 60)
+			if gold > 0 then
+				data.gold += gold
+				ctx.sendToast(player, `Realm stipend: +{Format.short(gold)} gold from {count} territor{if count == 1 then "y" else "ies"}.`)
+			end
+		end
+	end
+end
+
+-- Bonuses from the realm: full for territories your guild holds, a share
+-- for the one you live in (when someone else's guild holds it).
+local function realmBonus(data)
+	local bonus = {}
+	local guildId = data.guild.id
+	for _, territory in SocialConfig.Territories do
+		local doc = lands[territory.id]
+		if doc and doc.holder then
+			local amount = 0
+			if guildId ~= "" and doc.holder.id == guildId then
+				amount = territory.amount
+			elseif data.realm.home == territory.id then
+				amount = territory.amount * SocialConfig.residentShare(fortLevel(doc, "homes"))
+			end
+			if amount > 0 then
+				bonus[territory.bonus] = (bonus[territory.bonus] or 0) + amount
+			end
+		end
+	end
+	return bonus
+end
+
+-- What the Realm Map page needs.
+local function realmState(player: Player, data)
+	local t = now()
+	local out = {}
+	local scores = {}
+	for _, territory in SocialConfig.Territories do
+		local doc = landOf(territory.id)
+		local queued = pending[territory.id]
+		local count, ranks = garrisonTotals(doc)
+		local forts = {}
+		for _, fort in SocialConfig.Forts do
+			forts[fort.key] = fortLevel(doc, fort.key)
+		end
+		local strength = strengthNow(territory, doc, t) - (if queued then queued.total else 0)
+		out[territory.id] = {
+			holder = doc.holder,
+			strength = math.max(0, math.floor(strength)),
+			max = landMax(territory, doc),
+			regen = SocialConfig.regenRate(fortLevel(doc, "heal")),
+			garrison = count,
+			defense = SocialConfig.garrisonDefense(ranks, fortLevel(doc, "guard")),
+			residents = doc.residents,
+			marked = doc.marked == true,
+			hot = t - (doc.hitAt or 0) < 300,
+			since = doc.since or 0,
+			forts = forts,
+		}
+		if doc.holder then
+			local score = scores[doc.holder.id] or { id = doc.holder.id, name = doc.holder.name, tag = doc.holder.tag, score = 0, held = 0 }
+			score.score += SocialConfig.Tiers[territory.tier].points
+			score.held += 1
+			scores[doc.holder.id] = score
+		end
+	end
+	local top = {}
+	for _, score in scores do
+		table.insert(top, score)
+	end
+	table.sort(top, function(a, b)
+		return a.score > b.score
+	end)
+	while #top > 3 do
+		table.remove(top)
+	end
+	-- Details of the territory open in the popup.
+	local view = nil
+	local viewId = viewing[player]
+	if viewId and territoryFrom(viewId) then
+		local doc = landOf(viewId)
+		local garrison = {}
+		for userId, entry in doc.garrison do
+			table.insert(garrison, { userId = tonumber(userId), name = entry.n, count = entry.c, defense = entry.d })
+		end
+		table.sort(garrison, function(a, b)
+			return a.defense > b.defense
+		end)
+		while #garrison > 12 do
+			table.remove(garrison)
+		end
+		local names = {}
+		for _, name in doc.names do
+			table.insert(names, name)
+		end
+		table.sort(names)
+		local forts = {}
+		for _, fort in SocialConfig.Forts do
+			local entry = doc.forts[fort.key]
+			forts[fort.key] = { l = entry.l, g = entry.g, e = entry.e }
+		end
+		view = { id = viewId, garrison = garrison, names = names, history = doc.history, forts = forts, round = doc.round }
+	end
+	local stationed = {}
+	for index, entry in data.realm.stationed do
+		local _, defense = GameConfig.getSoldierStats(entry.s)
+		table.insert(stationed, { index = index, t = entry.t, name = entry.s.name, class = entry.s.class, rarity = entry.s.rarity, defense = defense })
+	end
+	local stats = ctx.getStats(data)
+	local minutes = 0
+	for _, territory in SocialConfig.Territories do
+		local doc = lands[territory.id]
+		if doc and doc.holder and data.guild.id ~= "" and doc.holder.id == data.guild.id then
+			minutes += SocialConfig.Tiers[territory.tier].stipendMinutes
+		end
+	end
+	return {
+		lands = out,
+		top = top,
+		view = view,
+		held = heldBy(data.guild.id),
+		maxHeld = SocialConfig.maxHeld(myGuildLevel(data)),
+		home = data.realm.home,
+		stationed = stationed,
+		stipendIn = SocialConfig.StipendSeconds - t % SocialConfig.StipendSeconds,
+		stipendNext = math.floor(stats.incomePerHour * minutes / 60),
+		attackDamage = math.floor(stats.attack * SocialConfig.AttackPower),
+		siegeDamage = math.floor(stats.attack * SocialConfig.SiegePower),
+		guildId = data.guild.id,
+		officer = data.guild.id ~= "" and isOfficer(player, data),
+		attacks = data.realm.attacks,
+		captures = data.realm.captures,
+		loaded = landsAt > 0,
+	}
+end
+
+local function viewLand(player: Player, data, id: string)
+	if id == "" then
+		viewing[player] = nil
+		return
+	end
+	if not territoryFrom(id) then
+		return
+	end
+	viewing[player] = id
+	if os.clock() - (landAt[id] or 0) > SocialConfig.RealmViewSeconds then
+		readLand(id)
+	end
 	ctx.refresh(player)
 end
 
@@ -1027,6 +1869,40 @@ function Social.init(context)
 			end
 			task.spawn(refreshRealm)
 			task.spawn(refreshDirectory)
+		end
+	end)
+	-- Realm: send queued attacks, keep open territories fresh, and line up
+	-- garrisons, homes and stipends with the map.
+	task.spawn(function()
+		local tick = 0
+		while true do
+			task.wait(SocialConfig.RealmFlushSeconds)
+			tick += 1
+			flushAll()
+			local open = {}
+			for player, id in viewing do
+				if player.Parent then
+					open[id] = open[id] or {}
+					table.insert(open[id], player)
+				else
+					viewing[player] = nil
+				end
+			end
+			for id, players in open do
+				if os.clock() - (landAt[id] or 0) >= SocialConfig.RealmViewSeconds then
+					task.spawn(function()
+						readLand(id)
+						for _, player in players do
+							ctx.refresh(player)
+						end
+					end)
+				end
+			end
+			if tick % 4 == 0 then
+				for player, session in ctx.sessions do
+					task.spawn(syncRealm, player, session.data)
+				end
+			end
 		end
 	end)
 end
@@ -1062,9 +1938,18 @@ function Social.register(actions)
 	actions.GuildBrowse = function()
 		refreshDirectory(true)
 	end
-	actions.Siege = siege
-	actions.RealmRefresh = function()
-		refreshRealm(true)
+	actions.RealmClaim = claim
+	actions.RealmAttack = attackLand
+	actions.RealmStation = station
+	actions.RealmRecall = recall
+	actions.RealmLive = live
+	actions.RealmDonate = donate
+	actions.RealmSurrender = surrender
+	actions.RealmMark = mark
+	actions.RealmView = viewLand
+	actions.RealmRefresh = function(player: Player, data)
+		refreshRealm()
+		syncRealm(player, data)
 	end
 end
 
@@ -1073,6 +1958,7 @@ function Social.onJoin(player: Player, data)
 	task.spawn(function()
 		collectRaids(player, data)
 		syncGuild(player, data)
+		syncRealm(player, data)
 		if #info(player).targets == 0 and data.level >= SocialConfig.RaidMinLevel then
 			lookForTargets(player, data)
 		end
@@ -1083,6 +1969,7 @@ end
 
 function Social.onLeave(player: Player, data)
 	perPlayer[player] = nil
+	viewing[player] = nil
 	publishProfile(player, data)
 end
 
@@ -1094,9 +1981,9 @@ function Social.bonus(data)
 		for key, amount in SocialConfig.guildBonus(data.guild.level or 1) do
 			bonus[key] = (bonus[key] or 0) + amount
 		end
-		for key, amount in realmBonus(data.guild.id) do
-			bonus[key] = (bonus[key] or 0) + amount
-		end
+	end
+	for key, amount in realmBonus(data) do
+		bonus[key] = (bonus[key] or 0) + amount
 	end
 	return bonus
 end
@@ -1161,33 +2048,6 @@ function Social.state(player: Player, data)
 		end
 	end
 
-	local territories = {}
-	for _, territory in SocialConfig.Territories do
-		local holderId, holder = topOf(realm.last[territory.id])
-		local scores = {}
-		for gid, score in (realm.current[territory.id] or {}).scores or {} do
-			table.insert(scores, { id = gid, name = score.name, tag = score.tag, p = score.p })
-		end
-		table.sort(scores, function(a, b)
-			return a.p > b.p
-		end)
-		local mineScore = 0
-		for _, score in scores do
-			if score.id == data.guild.id then
-				mineScore = score.p
-			end
-		end
-		while #scores > 3 do
-			table.remove(scores)
-		end
-		territories[territory.id] = {
-			holder = if holder then { id = holderId, name = holder.name, tag = holder.tag } else nil,
-			leaders = scores,
-			mine = mineScore,
-		}
-	end
-
-	local stats = ctx.getStats(data)
 	return {
 		raid = {
 			targets = targets,
@@ -1203,13 +2063,7 @@ function Social.state(player: Player, data)
 		},
 		guild = guild,
 		guildList = directory.list,
-		realm = {
-			week = realm.week,
-			secondsLeft = SocialConfig.getWeekSecondsLeft(t),
-			territories = territories,
-			points = SocialConfig.siegePoints(data.level, stats.attack),
-			sieges = data.raid.sieges,
-		},
+		realm = realmState(player, data),
 		socialBonus = Social.bonus(data),
 	}
 end

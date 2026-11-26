@@ -447,7 +447,7 @@ function GuildPage.draw(state, ui)
 	else
 		Kit.setBar(w.xpBar, 1, 1, "MAX LEVEL")
 	end
-	w.bannerNote.Text = `You are the guild's {guild.myRole}. Donate gold to level the guild and siege the realm map together.`
+	w.bannerNote.Text = `You are the guild's {guild.myRole}. Donate gold to level the guild and fight for the realm map together.`
 
 	local bonus = state.socialBonus or {}
 	local lines = {}
